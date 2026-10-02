@@ -211,7 +211,7 @@ test('webhook con formato propio del cotizador usando mapeo', async () => {
     auto: { grupo: 'camioneta' }, // alias de la categoría D
     retiro: { fecha: '10/03/2027 09:00', lugar: 'aeropuerto' }, // alias de USH
     devolucion: { fecha: '12/03/2027 09:00' },
-    importe: '$ 150000',
+    importe: '$ 150.000',
   };
   const r = await call('POST', '/api/public/v1/quotes/inbound', payload, { 'X-API-Key': apiKey });
   assert.equal(r.status, 201, JSON.stringify(r.data));
@@ -300,4 +300,78 @@ test('devolución anticipada no genera cargos por demora', async () => {
   const back = await call('POST', `/api/reservations/${r.data.id}/checkin`, { in_km: v.km + 10, in_fuel: 8, in_at: '2027-08-09T20:00' });
   assert.equal(back.status, 200, JSON.stringify(back.data));
   assert.equal(back.data.contract.charges.lines.length, 0);
+});
+
+test('formulario web: reconoce campos con otros nombres sin configurar el mapeo', async () => {
+  const { autoDetect, parseAmount } = require('../src/integration');
+
+  // Estilo 1: nombres en inglés / camelCase
+  const a = autoDetect(
+    { fullName: 'Ana Smith', yourEmail: 'ana@x.com', phoneNumber: '123', carType: 'SUV', pickupDate: '2027-02-01', pickupTime: '09:30', dropoffDate: '2027-02-05', dropoffTime: '18:00', pickupLocation: 'Airport', message: 'hola' },
+    { customer: {} },
+  );
+  assert.equal(a.customer.full_name, 'Ana Smith');
+  assert.equal(a.customer.email, 'ana@x.com');
+  assert.equal(a.customer.phone, '123');
+  assert.equal(a.category_code, 'SUV');
+  assert.equal(a.pickup_at, '2027-02-01');
+  assert.equal(a.pickup_time, '09:30');
+  assert.equal(a.return_at, '2027-02-05');
+  assert.equal(a.return_time, '18:00');
+  assert.equal(a.pickup_branch, 'Airport');
+  assert.equal(a.notes, 'hola');
+
+  // Estilo 2: nombre y apellido separados, fechas "desde/hasta", fecha de nacimiento que no debe confundirse
+  const b = autoDetect(
+    { 'Nombre': 'Juan', 'Apellido': 'Pérez', 'E-mail': 'j@x.com', 'Celular / WhatsApp': '999', 'Fecha de nacimiento': '01/01/1990', 'Desde': '10/03/2027', 'Hasta': '15/03/2027', 'Vehículo': 'Pick-up' },
+    { customer: {} },
+  );
+  assert.equal(b.customer.full_name, 'Juan Pérez');
+  assert.equal(b.customer.phone, '999');
+  assert.equal(b.pickup_at, '10/03/2027');
+  assert.equal(b.return_at, '15/03/2027');
+  assert.equal(b.category_code, 'Pick-up');
+
+  // Estilo 3: campos sin nombres claros: las dos primeras fechas son retiro y devolución
+  const c = autoDetect({ campo1: 'Luis', campo2: '20/05/2027', campo3: '22/05/2027' }, { customer: {} });
+  assert.equal(c.pickup_at, '20/05/2027');
+  assert.equal(c.return_at, '22/05/2027');
+
+  // Importes en formato argentino e internacional
+  assert.equal(parseAmount('$ 150.000'), 150000);
+  assert.equal(parseAmount('150.000,50'), 150000.5);
+  assert.equal(parseAmount('150,000.50'), 150000.5);
+  assert.equal(parseAmount('1234.5'), 1234.5);
+  assert.equal(parseAmount(98000), 98000);
+});
+
+test('formulario web con nombres de campo distintos crea la reserva igual', async () => {
+  const body = new URLSearchParams({
+    nombre_y_apellido: 'Sofía Distinta',
+    correo: 'sofia@example.com',
+    whatsapp: '+54 9 2901 222222',
+    tipo_de_vehiculo: 'Compacto',
+    fecha_desde: '05-06-2027',
+    hora_desde: '8 hs',
+    fecha_hasta: '08-06-2027',
+    hora_hasta: '20:00',
+    lugar_de_entrega: 'Aeropuerto',
+    adicionales: 'GPS, Portaequipaje',
+  });
+  const res = await fetch(`${base}/api/public/webform`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json', 'X-Requested-With': 'fetch' },
+    body,
+  });
+  const data = await res.json();
+  assert.equal(res.status, 201, JSON.stringify(data));
+  const list = (await call('GET', `/api/reservations?q=${encodeURIComponent(data.code)}`)).data;
+  const r = (await call('GET', `/api/reservations/${list[0].id}`)).data;
+  assert.equal(r.customer_name, 'Sofía Distinta');
+  assert.equal(r.category_code, 'B');
+  assert.equal(r.pickup_at, '2027-06-05T08:00');
+  assert.equal(r.return_at, '2027-06-08T20:00');
+  assert.equal(r.pickup_branch_name, 'Aeropuerto Ushuaia');
+  assert.deepEqual(r.extras.map((x) => x.name), ['GPS']);
+  assert.match(r.notes, /Portaequipaje/);
 });

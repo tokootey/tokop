@@ -19,7 +19,7 @@ const fail = (status, message, details) => {
 function normDateTime(value, defaultTime = '10:00') {
   if (value === undefined || value === null || value === '') return null;
   let s = String(value).trim();
-  const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2}):(\d{2}))?/);
+  const dmy = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})(?:[ T,]+(\d{1,2}):(\d{2}))?/);
   if (dmy) {
     const [, d, m, y, hh, mm] = dmy;
     s = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}T${hh ? hh.padStart(2, '0') + ':' + mm : defaultTime}`;

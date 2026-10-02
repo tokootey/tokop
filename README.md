@@ -51,10 +51,13 @@ El formulario sigue funcionando igual que hoy (por ejemplo, si manda un mail) y 
 
 **Opción B.** Cambiar el `action` del formulario a `https://TU-SERVIDOR/api/public/webform` (método POST). Al enviar, el cliente vuelve a la página de "gracias" que configures.
 
-**Ajustar los campos.** En el *mapeo de campos* se indica qué atributo `name` del formulario corresponde a cada dato (nombre, email, fecha y hora de retiro, vehículo, lugar, etc.). Cómo traducir lo que escribe el cliente:
+**No hace falta saber cómo se llaman los campos del formulario.** El sistema los reconoce solo por su nombre, en español o en inglés: nombre / nombre y apellido / name, email / correo, teléfono / celular / WhatsApp, fecha y hora de retiro / desde / pickup, de devolución / hasta / dropoff, lugar, vehículo / categoría, vuelo y comentarios. Si los nombres no dicen nada, toma las dos primeras fechas como retiro y devolución, sin confundirlas con la fecha de nacimiento.
+
+En *Cotizador → Bandeja*, "Ver datos" muestra lo que llegó y cómo se interpretó. Si algún dato se interpretó mal, se puede forzar en el *mapeo de campos*, indicando qué atributo `name` corresponde a ese dato. Cómo traducir lo que escribe el cliente:
 
 - La **categoría** y el **lugar** se reconocen por código, por nombre o por los **alias** que cargues en *Tarifas y sucursales*. Por ejemplo, "SUV, camioneta" → categoría D, y "aeropuerto" → USH.
-- Las fechas pueden llegar como `15/01/2027` o `2027-01-15`. Si la hora viene en un campo aparte, se usan `pickup_time` y `return_time`.
+- Las fechas pueden llegar como `15/01/2027`, `15-01-2027` o `2027-01-15`. Si la hora viene en un campo aparte (`10:00`, `8 hs`), se une a la fecha.
+- Los adicionales que no existen en el sistema no frenan la reserva: quedan anotados en las notas.
 - Con el recuadro **Probar con datos del formulario** podés ver cómo se interpreta un envío antes de activarlo.
 
 **Seguridad.** Sólo se aceptan envíos desde los sitios autorizados (encabezado `Origin`). Además hay un campo trampa antispam (`_gotcha`) y un límite de 20 envíos cada 10 minutos por IP.

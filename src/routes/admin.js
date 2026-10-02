@@ -4,7 +4,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { getSettings, setSetting, newApiKey, DEFAULT_SETTINGS } = require('../db');
 const { hashPassword, requireAdmin } = require('../auth');
-const { getMapping, getWebformMapping, mapPayload, ingestQuote, reprocessInbox } = require('../integration');
+const { getMapping, getWebformMapping, interpret, ingestQuote, reprocessInbox } = require('../integration');
 const { emit } = require('../webhooks');
 const { fail } = require('../util');
 
@@ -148,9 +148,8 @@ function adminRoutes(db) {
 
   /** Previsualiza cómo se interpreta un JSON del cotizador con el mapeo actual (no crea nada). */
   router.post('/integration/preview', requireAdmin, (req, res) => {
-    const fallback = req.body.channel === 'web' ? getWebformMapping(db) : getMapping(db);
-    const mapping = req.body.mapping ? (typeof req.body.mapping === 'string' ? JSON.parse(req.body.mapping) : req.body.mapping) : fallback;
-    res.json(mapPayload(req.body.payload || {}, mapping));
+    const mapping = req.body.mapping ? (typeof req.body.mapping === 'string' ? JSON.parse(req.body.mapping) : req.body.mapping) : undefined;
+    res.json(interpret(db, req.body.payload || {}, req.body.channel === 'web' ? 'web' : 'cotizador', mapping));
   });
 
   /** Importa manualmente una cotización (pegando el JSON) como si la hubiera enviado el cotizador. */
@@ -165,7 +164,8 @@ function adminRoutes(db) {
   router.get('/integration/inbox/:id', (req, res) => {
     const row = db.prepare('SELECT * FROM quote_inbox WHERE id = ?').get(req.params.id);
     if (!row) fail(404, 'Registro inexistente');
-    res.json({ ...row, payload: JSON.parse(row.payload) });
+    const payload = JSON.parse(row.payload);
+    res.json({ ...row, payload, interpreted: interpret(db, payload, row.channel) });
   });
 
   router.post('/integration/test-webhook', requireAdmin, async (_req, res) => {

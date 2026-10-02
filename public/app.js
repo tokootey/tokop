@@ -1250,7 +1250,9 @@ on(/^\/cotizador$/, async (view) => {
           <label>Página de "gracias" a la que volver (opción B, opcional)<input name="webform_redirect_url" value="${esc(d.webform.redirect_url)}" placeholder="https://www.discoverushuaia.com.ar/gracias.html"/></label>
           <label><span>Mapeo de campos: dato del sistema → atributo <code>name</code> del campo en el formulario</span>
             <textarea class="code" name="webform_mapping">${esc(JSON.stringify(d.webform.mapping, null, 2))}</textarea></label>
-          <p class="muted">Si la fecha y la hora están en campos separados, usá <code>pickup_at</code> + <code>pickup_time</code>. La categoría y el lugar se reconocen por código, nombre o los <b>alias</b> cargados en Tarifas y sucursales.</p>
+          <p class="muted"><b>No hace falta completar el mapeo a mano:</b> los campos que no figuran acá se reconocen solos por su nombre
+          (nombre, email, teléfono, fecha y hora de retiro/devolución, lugar, vehículo, vuelo, comentarios…). El mapeo sólo sirve para forzar un campo puntual.
+          Si la fecha y la hora están en campos separados, usá <code>pickup_at</code> + <code>pickup_time</code>. La categoría y el lugar se reconocen por código, nombre o los <b>alias</b> cargados en Tarifas y sucursales.</p>
           <div class="actions"><button class="btn primary">Guardar</button></div>
         </form>
       </div>
@@ -1258,7 +1260,7 @@ on(/^\/cotizador$/, async (view) => {
         <h2>Probar con datos del formulario</h2>
         <p class="muted">Pegá un ejemplo de lo que envía el formulario (JSON, o texto tipo <code>nombre=Ana&amp;email=…</code>) para ver cómo se interpreta.</p>
         <textarea class="code" id="wf-sample" style="min-height:140px">${esc(
-          JSON.stringify(
+          state.cotSample || JSON.stringify(
             {
               nombre: 'Ana López',
               email: 'ana@example.com',
@@ -1371,7 +1373,21 @@ on(/^\/cotizador$/, async (view) => {
     $$('[data-view]', body).forEach((b) =>
       b.addEventListener('click', async () => {
         const row = await GET(`/integration/inbox/${b.dataset.view}`);
-        openModal(`Solicitud #${row.id}`, `<pre>${esc(JSON.stringify(row.payload, null, 2))}</pre>`);
+        openModal(
+          `Solicitud #${row.id}`,
+          `<div class="grid cols-2"><div><h3>Lo que llegó</h3><pre>${esc(JSON.stringify(row.payload, null, 2))}</pre></div>
+           <div><h3>Cómo se interpretó</h3><pre>${esc(JSON.stringify(row.interpreted, null, 2))}</pre></div></div>
+           <p class="muted">${esc(row.message || '')}</p>
+           <div class="actions"><button class="btn" id="use-sample">Usar como ejemplo en el probador</button></div>`,
+          null,
+          { wide: true },
+        );
+        $('#use-sample').addEventListener('click', () => {
+          state.cotTab = row.channel === 'web' ? 'web' : 'api';
+          state.cotSample = JSON.stringify(row.payload, null, 2);
+          closeModal();
+          route();
+        });
       }),
     );
   }
