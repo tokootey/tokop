@@ -3,7 +3,7 @@
 const express = require('express');
 const crypto = require('node:crypto');
 const { getSettings, setSetting, newApiKey, DEFAULT_SETTINGS } = require('../db');
-const { hashPassword, requireAdmin } = require('../auth');
+const { hashPassword, requireAdmin, assertPassword, audit } = require('../auth');
 const { getMapping, getWebformMapping, interpret, ingestQuote, reprocessInbox } = require('../integration');
 const { emit } = require('../webhooks');
 const { fail } = require('../util');
@@ -34,22 +34,27 @@ function adminRoutes(db) {
     for (const [k, v] of Object.entries(req.body || {})) {
       if (k in DEFAULT_SETTINGS && !SECRET_KEYS.includes(k) && !INTEGRATION_KEYS.includes(k)) setSetting(db, k, v);
     }
+    audit(db, req, 'configuracion_modificada', Object.keys(req.body || {}).join(', '));
     res.json({ ok: true });
   });
 
   // --- Usuarios ---
   router.get('/users', requireAdmin, (_req, res) => {
-    res.json(db.prepare('SELECT id, name, email, role, active, created_at FROM users ORDER BY name').all());
+    res.json(db.prepare('SELECT id, name, email, role, active, must_change_password, created_at FROM users ORDER BY name').all());
   });
 
   router.post('/users', requireAdmin, (req, res) => {
-    const { name, email, password, role } = req.body || {};
+    const { name, password, role } = req.body || {};
+    const email = String((req.body && req.body.email) || '').trim().toLowerCase();
     if (!name || !email || !password) fail(400, 'Nombre, email y contraseña son obligatorios');
-    if (String(password).length < 6) fail(400, 'La contraseña debe tener al menos 6 caracteres');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, 'El email no es válido');
+    assertPassword(password, email);
     try {
+      // La contraseña la eligió el administrador: la persona la cambia en su primer ingreso.
       const r = db
-        .prepare('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)')
+        .prepare('INSERT INTO users (name, email, password_hash, role, must_change_password) VALUES (?, ?, ?, ?, 1)')
         .run(name, email, hashPassword(password), role === 'admin' ? 'admin' : 'operador');
+      audit(db, req, 'usuario_creado', `${email} (${role === 'admin' ? 'admin' : 'operador'})`);
       res.status(201).json({ id: Number(r.lastInsertRowid) });
     } catch (err) {
       if (/UNIQUE/.test(err.message)) fail(409, 'Ya existe un usuario con ese email');
@@ -71,11 +76,19 @@ function adminRoutes(db) {
       u.id,
     );
     if (password) {
-      if (String(password).length < 6) fail(400, 'La contraseña debe tener al menos 6 caracteres');
-      db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(password), u.id);
-      db.prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(u.id, req.token);
+      assertPassword(password, u.email);
+      // Una contraseña puesta por el administrador se cambia en el próximo ingreso (salvo la propia).
+      db.prepare('UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?').run(hashPassword(password), u.id === req.user.id ? 0 : 1, u.id);
+      db.prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(u.id, req.sessionHash || '');
     }
+    if (active === 0 || active === false) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(u.id);
+    audit(db, req, 'usuario_modificado', `${u.email}${password ? ' (contraseña nueva)' : ''}${active === 0 || active === false ? ' (desactivado)' : ''}`);
     res.json({ ok: true });
+  });
+
+  // --- Registro de actividad ---
+  router.get('/audit', requireAdmin, (_req, res) => {
+    res.json(db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT 300').all());
   });
 
   // --- Integración con el cotizador ---
@@ -124,25 +137,31 @@ function adminRoutes(db) {
     }
     if (b.webform_enabled !== undefined) setSetting(db, 'webform_enabled', b.webform_enabled ? '1' : '0');
     if (b.webform_allowed_origins !== undefined) setSetting(db, 'webform_allowed_origins', b.webform_allowed_origins);
-    if (b.webform_redirect_url !== undefined) setSetting(db, 'webform_redirect_url', b.webform_redirect_url);
+    if (b.webform_redirect_url !== undefined) {
+      if (b.webform_redirect_url && !/^https:\/\//i.test(b.webform_redirect_url)) fail(400, 'La página de "gracias" debe empezar con https://');
+      setSetting(db, 'webform_redirect_url', b.webform_redirect_url);
+    }
     if (b.quote_price_source !== undefined) setSetting(db, 'quote_price_source', b.quote_price_source === 'sistema' ? 'sistema' : 'cotizador');
     if (b.quote_auto_confirm !== undefined) setSetting(db, 'quote_auto_confirm', b.quote_auto_confirm ? '1' : '0');
     if (b.webhook_url !== undefined) {
       if (b.webhook_url && !/^https?:\/\//i.test(b.webhook_url)) fail(400, 'La URL del webhook debe empezar con http:// o https://');
       setSetting(db, 'webhook_url', b.webhook_url);
     }
+    audit(db, req, 'integracion_modificada', Object.keys(b).join(', '));
     res.json({ ok: true });
   });
 
-  router.post('/integration/regenerate-key', requireAdmin, (_req, res) => {
+  router.post('/integration/regenerate-key', requireAdmin, (req, res) => {
     const key = newApiKey();
     setSetting(db, 'api_key', key);
+    audit(db, req, 'api_key_regenerada');
     res.json({ api_key: key });
   });
 
-  router.post('/integration/regenerate-secret', requireAdmin, (_req, res) => {
+  router.post('/integration/regenerate-secret', requireAdmin, (req, res) => {
     const secret = crypto.randomBytes(24).toString('hex');
     setSetting(db, 'webhook_secret', secret);
+    audit(db, req, 'secreto_webhook_regenerado');
     res.json({ webhook_secret: secret });
   });
 

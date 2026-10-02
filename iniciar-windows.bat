@@ -16,7 +16,7 @@ if not exist node_modules (
 if not exist data\rentacar.db call npm run seed
 echo.
 echo La app se abre en el navegador: http://localhost:3000
-echo Usuario: admin@rentacar.local   Contrasena: admin123
+echo Usuario: admin@rentacar.local   Contrasena inicial: admin123 ^(la primera vez te pide cambiarla^)
 echo Para cerrarla, cerra esta ventana.
 echo.
 start "" cmd /c "timeout /t 3 >nul & start http://localhost:3000"

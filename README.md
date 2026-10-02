@@ -25,7 +25,7 @@ Aplicación web para el día a día del rent a car (flota, reservas, contratos, 
 3. Abrí la carpeta y hacé doble clic en:
    - **Windows:** `iniciar-windows.bat`. Si aparece un aviso azul de Windows, tocá *Más información* → *Ejecutar de todas formas*.
    - **Mac:** `iniciar-mac.command`. Si macOS lo bloquea: clic derecho → *Abrir*.
-4. La primera vez tarda un minuto. Después se abre el navegador con la app, cargada con datos de ejemplo. Usuario `admin@rentacar.local`, contraseña `admin123`.
+4. La primera vez tarda un minuto. Después se abre el navegador con la app, cargada con datos de ejemplo. Usuario `admin@rentacar.local`, contraseña `admin123`. La primera vez la app te pide elegir una contraseña propia.
 
 La app queda abierta mientras esté abierta la ventana negra. Así solo la ves vos, en tu computadora. Para que funcione con el sitio web hay que publicarla (sección *Publicarla en internet*).
 
@@ -66,6 +66,44 @@ La app ya está preparada para publicarse en [Render](https://render.com). Lleva
 6. Para ver la contraseña del administrador, entrá al servicio y abrí la pestaña **Environment**. El usuario es `admin@rentacar.local` y la contraseña es el valor de `ADMIN_PASSWORD`.
 7. Entrá a la app con ese usuario y contraseña. Ya podés cargar autos, tarifas y usuarios.
 8. En **Cotizador → Formulario web**, copiá la línea `<script …>`. Ya trae la dirección real de la app. Mandásela a quien administra el sitio web para que la pegue en la página del cotizador.
+
+## Seguridad y datos de los clientes
+
+**Acceso**
+- Cada persona entra con su propio usuario. La contraseña de fábrica (`admin123`) y las que asigna el administrador se tienen que cambiar en el primer ingreso.
+- Las contraseñas tienen que tener al menos 8 caracteres, con letras y números, y no pueden ser fáciles de adivinar. Se guardan cifradas (scrypt).
+- Después de 5 intentos fallidos, ese usuario queda bloqueado 15 minutos. Además hay un límite de intentos por conexión.
+
+**Sesión**
+- La sesión es una cookie `HttpOnly` y `SameSite=Strict`, que ningún script puede leer.
+- En la base solo se guarda el hash del token.
+- La sesión vence a las 12 horas sin uso y, como máximo, a los 7 días.
+- Cambiar la contraseña o desactivar un usuario cierra sus otras sesiones.
+
+**Navegador**
+- Encabezados de seguridad: política de contenido estricta (solo código propio), protección contra que otro sitio incruste la app, `nosniff`, sin referer y datos de la API sin caché. Con HTTPS se suman HSTS y la redirección automática de http a https.
+- Los pedidos que modifican datos tienen que venir de la propia app (protección CSRF).
+- Todo lo que escriben los clientes, por ejemplo en el formulario web, se muestra como texto. Nunca se ejecuta como código; está probado con ataques reales en los tests.
+
+**Permisos**
+- Solo los administradores pueden borrar clientes, autos y mantenimientos, y ver el registro de actividad.
+- **Anonimizar cliente** (en *Clientes*): sirve para un pedido de baja de datos personales. Borra para siempre sus datos personales y conserva las reservas y los importes para la contabilidad.
+
+**Registro de actividad** (en *Usuarios*): ingresos, intentos fallidos, bloqueos, cambios de contraseña, altas y bajas de usuarios, borrados, anonimizaciones y cambios de configuración. Cada evento queda con fecha, usuario e IP.
+
+**Fotos y documentos**
+- Se verifica el contenido real del archivo: tiene que ser una foto o un PDF, no alcanza con que lo diga.
+- Solo los ve un usuario con sesión iniciada, y se muestran aislados, para que un archivo manipulado no pueda ejecutar nada.
+
+**Formulario web y API**
+- El formulario web solo acepta envíos desde los sitios autorizados. Recorta los campos demasiado largos y no le muestra errores internos al público.
+- La API key del cotizador solo se acepta en el encabezado `X-API-Key`, nunca en la dirección.
+
+**Recomendaciones al publicar**
+- Usar siempre HTTPS. En Render ya viene incluido, con `TRUST_PROXY=1`.
+- Hacer copias de seguridad de la carpeta `data/`.
+- Dar de baja enseguida a quien deje de trabajar.
+- Revisar de vez en cuando el registro de actividad.
 
 ## Conexión con el cotizador de discoverushuaia.com.ar
 

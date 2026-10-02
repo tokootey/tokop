@@ -1,16 +1,17 @@
 'use strict';
 
 const express = require('express');
-const { requireAdmin } = require('../auth');
+const { requireAdmin, audit } = require('../auth');
 const { fail, pick, normDate } = require('../util');
 
 /**
  * CRUD genérico para tablas maestras.
  * `adminWrite`: sólo administradores pueden crear/editar/borrar (tarifas, sucursales).
  */
-function crud(db, { table, fields, required = [], order = 'id', search = [], adminWrite = false, listSql, dateFields = [], afterWrite }) {
+function crud(db, { table, fields, required = [], order = 'id', search = [], adminWrite = false, listSql, dateFields = [], afterWrite, adminDelete = false }) {
   const router = express.Router();
   const guard = adminWrite ? [requireAdmin] : [];
+  const deleteGuard = adminWrite || adminDelete ? [requireAdmin] : [];
 
   const clean = (body) => {
     const data = pick(body, fields);
@@ -56,10 +57,11 @@ function crud(db, { table, fields, required = [], order = 'id', search = [], adm
     res.json(row);
   });
 
-  router.delete('/:id', ...guard, (req, res) => {
+  router.delete('/:id', ...deleteGuard, (req, res) => {
     try {
       const r = db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(req.params.id);
       if (!r.changes) fail(404, 'No encontrado');
+      audit(db, req, 'registro_borrado', `${table} #${req.params.id}`);
     } catch (err) {
       if (/FOREIGN KEY/i.test(err.message)) fail(409, 'No se puede borrar: tiene registros asociados. Podés desactivarlo.');
       throw err;
@@ -79,6 +81,26 @@ function syncVehicleMaintenance(db, vehicleId) {
 
 function catalogRoutes(db) {
   const router = express.Router();
+
+  /**
+   * Anonimizar un cliente (pedido de baja de datos personales): se borran sus datos personales
+   * pero se conservan las reservas y los importes para la contabilidad.
+   */
+  router.post('/customers/:id/anonymize', requireAdmin, (req, res) => {
+    const c = db.prepare('SELECT id FROM customers WHERE id = ?').get(Number(req.params.id));
+    if (!c) fail(404, 'Cliente inexistente');
+    db.prepare(
+      `UPDATE customers SET full_name = ?, doc_type = NULL, doc_number = NULL, email = NULL, phone = NULL, address = NULL,
+        birth_date = NULL, license_number = NULL, license_expiry = NULL, notes = NULL, anonymized_at = ? WHERE id = ?`,
+    ).run(`Cliente anonimizado #${c.id}`, new Date().toISOString(), c.id);
+    db.prepare("UPDATE reservations SET notes = NULL, flight = NULL WHERE customer_id = ?").run(c.id);
+    // Las solicitudes del sitio web guardan el formulario original, que también tiene sus datos.
+    db.prepare(
+      "UPDATE quote_inbox SET payload = '{}', message = 'Datos anonimizados' WHERE reservation_id IN (SELECT id FROM reservations WHERE customer_id = ?)",
+    ).run(c.id);
+    audit(db, req, 'cliente_anonimizado', `cliente #${c.id}`);
+    res.json(db.prepare('SELECT * FROM customers WHERE id = ?').get(c.id));
+  });
 
   router.use(
     '/branches',
@@ -118,6 +140,7 @@ function catalogRoutes(db) {
       order: 'plate',
       search: ['plate', 'brand', 'model'],
       dateFields: ['insurance_expiry', 'vtv_expiry'],
+      adminDelete: true,
       listSql: `SELECT v.*, c.name AS category_name, c.code AS category_code, b.name AS branch_name
                 FROM vehicles v JOIN categories c ON c.id = v.category_id LEFT JOIN branches b ON b.id = v.branch_id`,
     }),
@@ -131,6 +154,7 @@ function catalogRoutes(db) {
       order: 'full_name',
       search: ['full_name', 'doc_number', 'email', 'phone'],
       dateFields: ['birth_date', 'license_expiry'],
+      adminDelete: true,
     }),
   );
   router.use(
@@ -144,6 +168,7 @@ function catalogRoutes(db) {
       dateFields: ['start_date', 'end_date'],
       listSql: `SELECT m.*, v.plate, v.brand, v.model FROM maintenance m JOIN vehicles v ON v.id = m.vehicle_id`,
       afterWrite: (m) => syncVehicleMaintenance(db, m.vehicle_id),
+      adminDelete: true,
     }),
   );
 

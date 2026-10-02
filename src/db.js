@@ -24,6 +24,17 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS audit_log (
+  id INTEGER PRIMARY KEY,
+  at TEXT NOT NULL,
+  user_id INTEGER,
+  email TEXT,
+  ip TEXT,
+  action TEXT NOT NULL,
+  detail TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_audit_at ON audit_log(at);
+
 CREATE TABLE IF NOT EXISTS branches (
   id INTEGER PRIMARY KEY,
   code TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -288,11 +299,21 @@ function openDb(file = process.env.DB_FILE || path.join(__dirname, '..', 'data',
   db.exec('PRAGMA foreign_keys = ON;');
   if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
   db.exec(SCHEMA);
+  migrate(db);
   const insert = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) insert.run(k, v);
   if (!getSetting(db, 'api_key')) setSetting(db, 'api_key', newApiKey());
   if (!getSetting(db, 'webhook_secret')) setSetting(db, 'webhook_secret', crypto.randomBytes(24).toString('hex'));
   return db;
+}
+
+/** Columnas agregadas después de la primera versión (las bases existentes se actualizan solas). */
+function migrate(db) {
+  const has = (table, col) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
+  if (!has('users', 'must_change_password')) db.exec('ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0');
+  if (!has('sessions', 'created_at')) db.exec('ALTER TABLE sessions ADD COLUMN created_at TEXT');
+  if (!has('sessions', 'last_seen')) db.exec('ALTER TABLE sessions ADD COLUMN last_seen TEXT');
+  if (!has('customers', 'anonymized_at')) db.exec('ALTER TABLE customers ADD COLUMN anonymized_at TEXT');
 }
 
 const newApiKey = () => 'rk_' + crypto.randomBytes(24).toString('hex');

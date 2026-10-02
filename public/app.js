@@ -20,8 +20,9 @@ const money = (n) => {
     return `${cur} ${Number(n || 0).toFixed(2)}`;
   }
 };
-const fmtDT = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)} ${s.slice(11, 16)}` : '');
-const fmtD = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : '');
+// Las fechas también se escapan: se muestran dentro de HTML.
+const fmtDT = (s) => (s ? esc(`${String(s).slice(8, 10)}/${String(s).slice(5, 7)}/${String(s).slice(0, 4)} ${String(s).slice(11, 16)}`) : '');
+const fmtD = (s) => (s ? esc(`${String(s).slice(8, 10)}/${String(s).slice(5, 7)}/${String(s).slice(0, 4)}`) : '');
 const pad = (n) => String(n).padStart(2, '0');
 const localISO = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n, d.getHours(), d.getMinutes());
@@ -54,12 +55,13 @@ const fuel = (n) => (n === null || n === undefined ? '' : `${n}/8`);
 async function api(method, path, body) {
   const res = await fetch(`/api${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}) },
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (res.status === 401 && path !== '/auth/login') {
-    logout(false);
-    throw new Error('Sesión vencida');
+  if (res.status === 401 && path !== '/auth/login' && path !== '/auth/password') {
+    if (state.user) logout(false); // la sesión venció mientras se usaba la app
+    throw new Error('Sesión vencida, volvé a ingresar');
   }
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
@@ -186,6 +188,8 @@ async function startSession() {
   } catch {
     return showLogin();
   }
+  if (state.user.must_change_password) return showForcedPasswordChange();
+  $('#pwchange-screen')?.remove();
   $('#login').classList.add('hidden');
   $('#shell').classList.remove('hidden');
   $('#user-name').textContent = state.user.name;
@@ -206,34 +210,84 @@ async function checkStale() {
 }
 
 function showLogin() {
+  $('#pwchange-screen')?.remove();
   $('#shell').classList.add('hidden');
   $('#login').classList.remove('hidden');
 }
 
 function logout(callApi = true) {
-  if (callApi && state.token) POST('/auth/logout').catch(() => {});
-  state.token = null;
-  try {
-    localStorage.removeItem('token');
-  } catch {}
+  if (callApi) POST('/auth/logout').catch(() => {});
+  state.user = null;
+  closeModal();
+  const pw = $('#login-form [name=password]');
+  if (pw) pw.value = '';
   showLogin();
 }
 
 $('#login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   $('#login-error').textContent = '';
+  const btn = e.target.querySelector('[type=submit]');
+  btn.disabled = true;
   try {
-    const { token } = await api('POST', '/auth/login', formData(e.target));
-    state.token = token;
-    try {
-      localStorage.setItem('token', token);
-    } catch {}
+    await api('POST', '/auth/login', formData(e.target));
     startSession();
   } catch (err) {
     $('#login-error').textContent = err.message;
+  } finally {
+    btn.disabled = false;
   }
 });
 $('#logout').addEventListener('click', () => logout());
+$('#change-pw').addEventListener('click', () =>
+  openModal('Cambiar mi contraseña', passwordFormHtml(), async (d) => {
+    await submitPasswordChange(d);
+    toast('Contraseña cambiada. Las otras sesiones abiertas se cerraron.');
+  }),
+);
+
+const PASSWORD_HINT = 'Mínimo 8 caracteres, con letras y números. Evitá datos fáciles de adivinar.';
+
+function passwordFormHtml(submit = 'Cambiar contraseña') {
+  return `<form><div class="form-grid">
+    <label class="full">Contraseña actual<input name="current" type="password" required autocomplete="current-password"/></label>
+    <label>Contraseña nueva<input name="password" type="password" required minlength="8" autocomplete="new-password"/></label>
+    <label>Repetir contraseña nueva<input name="password2" type="password" required minlength="8" autocomplete="new-password"/></label>
+    <p class="muted full" style="margin:0">${PASSWORD_HINT}</p>
+  </div><div class="actions" style="margin-top:16px"><button class="btn primary" type="submit">${esc(submit)}</button></div></form>`;
+}
+
+async function submitPasswordChange(d) {
+  if (d.password !== d.password2) throw new Error('Las contraseñas nuevas no coinciden');
+  await api('POST', '/auth/password', { current: d.current, password: d.password });
+}
+
+/** Primer ingreso con una contraseña de fábrica o puesta por el administrador: hay que cambiarla. */
+function showForcedPasswordChange() {
+  $('#shell').classList.add('hidden');
+  $('#login').classList.add('hidden');
+  $('#pwchange-screen')?.remove();
+  const wrap = document.createElement('div');
+  wrap.id = 'pwchange-screen';
+  wrap.className = 'login';
+  wrap.innerHTML = `<div class="card login-card"><h1>Elegí tu contraseña</h1>
+    <p class="muted">Por seguridad, antes de empezar cambiá la contraseña que te dieron por una propia.</p>
+    ${passwordFormHtml('Guardar y entrar')}<p class="error" id="pwchange-error"></p>
+    <button type="button" class="btn link" id="pwchange-out">Salir</button></div>`;
+  document.body.appendChild(wrap);
+  $('#pwchange-out', wrap).addEventListener('click', () => logout());
+  $('form', wrap).addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('#pwchange-error').textContent = '';
+    try {
+      await submitPasswordChange(formData(e.target));
+      toast('Contraseña guardada');
+      startSession();
+    } catch (err) {
+      $('#pwchange-error').textContent = err.message;
+    }
+  });
+}
 
 /* ============================================================
    Router
@@ -894,7 +948,8 @@ async function uploadFiles(reservationId, stage, fileList) {
     const name = blob === f ? f.name : f.name.replace(/\.[^.]+$/, '') + '.jpg';
     const res = await fetch(`/api/reservations/${reservationId}/files?stage=${stage}&name=${encodeURIComponent(name)}`, {
       method: 'POST',
-      headers: { 'Content-Type': type, Authorization: `Bearer ${state.token}` },
+      headers: { 'Content-Type': type },
+      credentials: 'same-origin',
       body: blob,
     });
     if (!res.ok) {
@@ -907,11 +962,11 @@ async function uploadFiles(reservationId, stage, fileList) {
   return done;
 }
 
-/** Las fotos piden sesión, así que se descargan con el token y se muestran como blob. */
+/** Las fotos piden sesión: se descargan con la cookie y se muestran como blob. */
 const fileUrls = new Map();
 async function fileUrl(id) {
   if (fileUrls.has(id)) return fileUrls.get(id);
-  const res = await fetch(`/api/files/${id}`, { headers: { Authorization: `Bearer ${state.token}` } });
+  const res = await fetch(`/api/files/${id}`, { credentials: 'same-origin' });
   if (!res.ok) throw new Error('No se pudo abrir el archivo');
   const url = URL.createObjectURL(await res.blob());
   fileUrls.set(id, url);
@@ -977,6 +1032,7 @@ function printContract(r) {
   const s = state.settings;
   const c = r.contract;
   const w = window.open('', '_blank');
+  if (!w) return toast('El navegador bloqueó la ventana del contrato: permití las ventanas emergentes para esta página.', true);
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Contrato ${esc(c.number)}</title>
     <style>body{font-family:system-ui,sans-serif;font-size:13px;max-width:780px;margin:24px auto;color:#111}h1{font-size:20px;margin:0}
     table{width:100%;border-collapse:collapse;margin:10px 0}td,th{border:1px solid #bbb;padding:6px;text-align:left}th{background:#f2f2f2;width:30%}
@@ -998,8 +1054,10 @@ function printContract(r) {
     </table>
     <p style="white-space:pre-wrap">${esc(s.contract_terms || '')}</p>
     <div class="sign"><div>Firma del cliente</div><div>Por ${esc(s.company_name)}</div></div>
-    <script>window.onload=()=>window.print()<\/script></body></html>`);
+    </body></html>`);
   w.document.close();
+  w.focus();
+  setTimeout(() => w.print(), 250);
 }
 
 /* ============================================================
@@ -1187,7 +1245,8 @@ const VEHICLE_FIELDS = [
 ];
 
 /** Pantalla de listado + alta/edición/baja genérica. */
-function crudPage({ title, endpoint, fields, columns, searchable, after, before, extraActions, canWrite = () => true, nav }) {
+function crudPage({ title, endpoint, fields, columns, searchable, after, before, extraActions, canWrite = () => true, canDelete, nav }) {
+  const mayDelete = () => (canDelete ? canDelete() : canWrite());
   return async (view) => {
     if (before) await before();
     view.innerHTML = `<div class="page-head"><h1>${esc(title)}</h1>${canWrite() ? '<button class="btn primary" data-new>+ Agregar</button>' : ''}</div>
@@ -1201,7 +1260,7 @@ function crudPage({ title, endpoint, fields, columns, searchable, after, before,
           ${rows
             .map(
               (r) => `<tr data-id="${r.id}">${columns.map((c) => `<td>${c.render ? c.render(r) : esc(r[c.key])}</td>`).join('')}
-              <td class="right nowrap">${extraActions ? extraActions(r) : ''}${canWrite() ? '<button class="btn small" data-edit>Editar</button> <button class="btn small danger" data-del>Borrar</button>' : ''}</td></tr>`,
+              <td class="right nowrap">${extraActions ? extraActions(r) : ''}${canWrite() ? '<button class="btn small" data-edit>Editar</button>' : ''}${mayDelete() ? ' <button class="btn small danger" data-del>Borrar</button>' : ''}</td></tr>`,
             )
             .join('')}</tbody></table>`
         : '<div class="card muted">Todavía no hay registros.</div>';
@@ -1254,11 +1313,12 @@ on(
   crudPage({
     title: 'Flota',
     endpoint: 'vehicles',
+    canDelete: () => isAdmin(),
     fields: VEHICLE_FIELDS,
     searchable: true,
     columns: [
       { label: 'Patente', render: (r) => `<b>${esc(r.plate)}</b>` },
-      { label: 'Vehículo', render: (r) => `${esc(r.brand || '')} ${esc(r.model || '')} ${r.year ? `<small class="muted">${r.year}</small>` : ''}` },
+      { label: 'Vehículo', render: (r) => `${esc(r.brand || '')} ${esc(r.model || '')} ${r.year ? `<small class="muted">${esc(r.year)}</small>` : ''}` },
       { label: 'Categoría', render: (r) => esc(r.category_code) },
       { label: 'Sucursal', key: 'branch_name' },
       { label: 'Km', render: (r) => Number(r.km).toLocaleString('es-AR') },
@@ -1288,14 +1348,16 @@ on(
     fields: CUSTOMER_FIELDS,
     searchable: true,
     canWrite: () => true,
+    canDelete: () => isAdmin(),
     columns: [
-      { label: 'Nombre', render: (r) => `<b>${esc(r.full_name)}</b>` },
+      { label: 'Nombre', render: (r) => `<b>${esc(r.full_name)}</b>${r.anonymized_at ? ' <span class="badge">anonimizado</span>' : ''}` },
       { label: 'Documento', render: (r) => `${esc(r.doc_type || '')} ${esc(r.doc_number || '')}` },
       { label: 'Teléfono', key: 'phone' },
       { label: 'Email', key: 'email' },
       { label: 'Licencia', render: (r) => (r.license_number ? `${esc(r.license_number)} <small class="muted">${fmtD(r.license_expiry)}</small>` : '<span class="badge b-pendiente">Falta</span>') },
     ],
-    extraActions: (r) => `<button class="btn small" data-hist="${r.id}">Reservas</button> `,
+    extraActions: (r) =>
+      `<button class="btn small" data-hist="${r.id}">Reservas</button> ${isAdmin() && !r.anonymized_at ? `<button class="btn small" data-anon="${r.id}">Anonimizar</button> ` : ''}`,
     nav: (tr, r) => {
       const b = tr.querySelector('[data-hist]');
       if (b)
@@ -1303,6 +1365,22 @@ on(
           const rows = await GET(`/reservations?customer_id=${r.id}&limit=50`);
           openModal(`Reservas de ${r.full_name}`, historyTable(rows));
         });
+      const a = tr.querySelector('[data-anon]');
+      if (a)
+        a.addEventListener('click', () =>
+          openModal(
+            `Anonimizar a ${r.full_name}`,
+            `<p>Se borran para siempre sus datos personales (nombre, documento, contacto, licencia, domicilio y notas).
+             Sus reservas, pagos y contratos se conservan sin datos personales, para la contabilidad.</p>
+             <p>Usalo cuando el cliente pida la baja de sus datos. <b>No se puede deshacer.</b></p>
+             <form><div class="actions"><button class="btn danger" type="submit">Anonimizar</button><button class="btn" type="button" data-close>Cancelar</button></div></form>`,
+            async () => {
+              await POST(`/customers/${r.id}/anonymize`);
+              toast('Cliente anonimizado');
+              route();
+            },
+          ),
+        );
     },
   }),
   'clientes',
@@ -1327,6 +1405,7 @@ on(
   crudPage({
     title: 'Mantenimiento y taller',
     endpoint: 'maintenance',
+    canDelete: () => isAdmin(),
     before: async () => {
       state.vehiclesCache = await GET('/vehicles');
     },
@@ -1378,7 +1457,7 @@ on(/^\/tarifas$/, async (view) => {
         { label: 'Diaria', render: (r) => money(r.daily_rate) },
         { label: 'Semanal', render: (r) => (r.weekly_rate ? money(r.weekly_rate) : '—') },
         { label: 'Garantía', render: (r) => money(r.deposit) },
-        { label: 'Km/día', render: (r) => r.km_per_day || 'Libres' },
+        { label: 'Km/día', render: (r) => esc(r.km_per_day || 'Libres') },
         { label: 'Alias', render: (r) => `<small class="muted">${esc(r.aliases || '')}</small>` },
         { label: 'Activa', render: (r) => (r.active ? '✔' : '—') },
       ],
@@ -1713,21 +1792,57 @@ on(/^\/config$/, async (view) => {
   $('[data-close]', view).remove();
 }, 'config');
 
+const AUDIT_LABEL = {
+  login: 'Ingreso',
+  login_fallido: 'Login fallido',
+  login_bloqueado: 'Login bloqueado por intentos',
+  logout: 'Salida',
+  cambio_clave: 'Cambio de contraseña',
+  cambio_clave_fallido: 'Cambio de contraseña fallido',
+  usuario_creado: 'Usuario creado',
+  usuario_modificado: 'Usuario modificado',
+  cliente_anonimizado: 'Cliente anonimizado',
+  registro_borrado: 'Registro borrado',
+  archivo_borrado: 'Foto o documento borrado',
+  configuracion_modificada: 'Configuración modificada',
+  integracion_modificada: 'Integración modificada',
+  api_key_regenerada: 'API key regenerada',
+  secreto_webhook_regenerado: 'Secreto de webhook regenerado',
+};
+
 on(/^\/usuarios$/, async (view) => {
-  const users = await GET('/users');
+  const [users, log] = await Promise.all([GET('/users'), GET('/audit')]);
   view.innerHTML = `<div class="page-head"><h1>Usuarios</h1><button class="btn primary" data-new>+ Agregar</button></div>
     <table><thead><tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Activo</th><th></th></tr></thead><tbody>${users
       .map(
         (u) =>
-          `<tr data-id="${u.id}"><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.role === 'admin' ? 'Administrador' : 'Operador'}</td><td>${u.active ? '✔' : '—'}</td><td class="right"><button class="btn small" data-edit>Editar</button></td></tr>`,
+          `<tr data-id="${u.id}"><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.role === 'admin' ? 'Administrador' : 'Operador'}</td><td>${u.active ? '✔' : '—'}${u.must_change_password ? ' <span class="badge b-pendiente">cambia la clave al entrar</span>' : ''}</td><td class="right"><button class="btn small" data-edit>Editar</button></td></tr>`,
       )
       .join('')}</tbody></table>
-    <p class="muted">Los operadores manejan reservas, flota y clientes. Los administradores además configuran tarifas, el cotizador y los usuarios.</p>`;
+    <p class="muted">Los operadores manejan reservas, flota y clientes. Los administradores además configuran tarifas, el cotizador y los usuarios, y son los únicos que pueden borrar o anonimizar clientes. Cada persona debería tener su propio usuario.</p>
+    <div class="card" style="margin-top:16px"><h2>Actividad reciente</h2>
+      <p class="muted">Ingresos, intentos fallidos y cambios importantes. Muchos "login fallido" seguidos pueden ser alguien probando contraseñas.</p>
+      <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Qué pasó</th><th>Usuario</th><th>Detalle</th><th>IP</th></tr></thead><tbody>${
+        log
+          .map(
+            (a) =>
+              `<tr><td class="nowrap">${esc(new Date(a.at).toLocaleString('es-AR', { hour12: false }))}</td><td>${esc(AUDIT_LABEL[a.action] || a.action)}</td><td>${esc(a.email || '')}</td><td><small>${esc(a.detail || '')}</small></td><td><small class="muted">${esc(a.ip || '')}</small></td></tr>`,
+          )
+          .join('') || '<tr><td colspan="5" class="muted">Sin actividad registrada.</td></tr>'
+      }</tbody></table></div></div>`;
   const roleField = { name: 'role', label: 'Rol', type: 'select', options: [['operador', 'Operador'], ['admin', 'Administrador']], required: true };
   $('[data-new]', view).addEventListener('click', () =>
     openModal(
       'Nuevo usuario',
-      formHtml([{ name: 'name', label: 'Nombre', required: true }, { name: 'email', label: 'Email', type: 'email', required: true }, { name: 'password', label: 'Contraseña', type: 'password', required: true }, roleField], { role: 'operador' }),
+      formHtml(
+        [
+          { name: 'name', label: 'Nombre', required: true },
+          { name: 'email', label: 'Email', type: 'email', required: true },
+          { name: 'password', label: 'Contraseña inicial (la persona la cambia al entrar)', type: 'password', required: true, attrs: 'minlength="8" autocomplete="new-password"' },
+          roleField,
+        ],
+        { role: 'operador' },
+      ) + `<p class="muted">${PASSWORD_HINT}</p>`,
       async (d) => {
         await POST('/users', d);
         toast('Usuario creado');
@@ -1740,7 +1855,8 @@ on(/^\/usuarios$/, async (view) => {
       const u = users.find((x) => x.id === Number(b.closest('tr').dataset.id));
       openModal(
         `Editar ${u.name}`,
-        formHtml([{ name: 'name', label: 'Nombre', required: true }, roleField, { name: 'active', label: 'Activo', type: 'checkbox' }, { name: 'password', label: 'Nueva contraseña (dejar vacío para no cambiar)', type: 'password' }], u),
+        formHtml([{ name: 'name', label: 'Nombre', required: true }, roleField, { name: 'active', label: 'Activo', type: 'checkbox' }, { name: 'password', label: 'Nueva contraseña (dejar vacío para no cambiar)', type: 'password', attrs: 'minlength="8" autocomplete="new-password"' }], u) +
+          `<p class="muted">${PASSWORD_HINT} Si le ponés una contraseña nueva, la persona la tiene que cambiar en su próximo ingreso y se cierran sus sesiones abiertas.</p>`,
         async (d) => {
           await PUT(`/users/${u.id}`, d);
           toast('Usuario actualizado');
@@ -1754,8 +1870,8 @@ on(/^\/usuarios$/, async (view) => {
 /* ============================================================
    Inicio
    ============================================================ */
+// Limpia el token que guardaban las versiones anteriores (ahora la sesión es una cookie protegida).
 try {
-  state.token = localStorage.getItem('token');
+  localStorage.removeItem('token');
 } catch {}
-if (state.token) startSession();
-else showLogin();
+startSession();

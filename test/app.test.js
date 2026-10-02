@@ -10,13 +10,14 @@ const { rentalDays } = require('../src/pricing');
 let server;
 let base;
 let db;
-let token;
+let token; // cookie de sesión ("rc_session=...")
+const ADMIN_PASSWORD = 'Ushuaia2026Segura';
 let apiKey;
 
 async function call(method, path, body, headers = {}) {
   const res = await fetch(base + path, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...headers },
+    headers: { 'Content-Type': 'application/json', ...(token ? { Cookie: token } : {}), ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
@@ -26,7 +27,16 @@ async function call(method, path, body, headers = {}) {
   } catch {
     data = text;
   }
-  return { status: res.status, data };
+  return { status: res.status, data, headers: res.headers };
+}
+
+/** Inicia sesión y devuelve la cookie de sesión. */
+async function loginAs(email, password) {
+  const res = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
+  const data = await res.json();
+  if (res.status !== 200) return { status: res.status, data };
+  const cookie = res.headers.get('set-cookie').split(';')[0];
+  return { status: 200, data, cookie, raw: res.headers.get('set-cookie') };
 }
 
 test.before(async () => {
@@ -36,9 +46,13 @@ test.before(async () => {
   server = createApp(db).listen(0);
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}`;
-  const login = await call('POST', '/api/auth/login', { email: 'admin@rentacar.local', password: 'admin123' });
-  assert.equal(login.status, 200);
-  token = login.data.token;
+  // El administrador de fábrica tiene que cambiar la contraseña antes de usar la app.
+  const first = await loginAs('admin@rentacar.local', 'admin123');
+  assert.equal(first.status, 200);
+  assert.equal(first.data.must_change_password, true);
+  token = first.cookie;
+  assert.equal((await call('GET', '/api/reservations')).status, 403);
+  assert.equal((await call('POST', '/api/auth/password', { current: 'admin123', password: ADMIN_PASSWORD })).status, 200);
   apiKey = getSetting(db, 'api_key');
 });
 
@@ -272,9 +286,10 @@ test('formulario web: fecha y hora separadas, alias, origen y anti-spam', async 
 });
 
 test('operador no puede modificar tarifas', async () => {
-  await call('POST', '/api/users', { name: 'Op', email: 'op@x.com', password: 'secreto1', role: 'operador' });
+  assert.equal((await call('POST', '/api/users', { name: 'Op', email: 'op@x.com', password: 'Inicial2026x', role: 'operador' })).status, 201);
   const saved = token;
-  token = (await call('POST', '/api/auth/login', { email: 'op@x.com', password: 'secreto1' })).data.token;
+  token = (await loginAs('op@x.com', 'Inicial2026x')).cookie;
+  assert.equal((await call('POST', '/api/auth/password', { current: 'Inicial2026x', password: 'Operador2026x' })).status, 200);
   const r = await call('PUT', '/api/categories/1', { daily_rate: 1 });
   const integ = await call('GET', '/api/integration');
   const res = await call('GET', '/api/reservations');
@@ -360,7 +375,7 @@ test('formulario web con nombres de campo distintos crea la reserva igual', asyn
   });
   const res = await fetch(`${base}/api/public/webform`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json', 'X-Requested-With': 'fetch' },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json', 'X-Requested-With': 'fetch', Origin: 'https://www.discoverushuaia.com.ar' },
     body,
   });
   const data = await res.json();
@@ -387,7 +402,7 @@ test('fotos de entrega y devolución: subir, listar, ver y borrar', async () => 
   try {
     const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4b40000000049454e44ae426082', 'hex');
     const up = (body, type, extra = '') =>
-      fetch(`${b2}/api/reservations/1/files?stage=entrega&name=frente.png${extra}`, { method: 'POST', headers: { 'Content-Type': type, Authorization: `Bearer ${token}` }, body });
+      fetch(`${b2}/api/reservations/1/files?stage=entrega&name=frente.png${extra}`, { method: 'POST', headers: { 'Content-Type': type, Cookie: token }, body });
 
     const ok = await up(png, 'image/png');
     assert.equal(ok.status, 201);
@@ -403,12 +418,12 @@ test('fotos de entrega y devolución: subir, listar, ver y borrar', async () => 
     assert.ok(r.files.some((x) => x.id === f.id && x.name === 'frente.png'));
     assert.ok(r.log.some((l) => l.action === 'archivo_subido'));
 
-    const got = await fetch(`${b2}/api/files/${f.id}`, { headers: { Authorization: `Bearer ${token}` } });
+    const got = await fetch(`${b2}/api/files/${f.id}`, { headers: { Cookie: token } });
     assert.equal(got.status, 200);
     assert.equal(got.headers.get('content-type'), 'image/png');
     assert.deepEqual(Buffer.from(await got.arrayBuffer()), png);
 
-    const del = await fetch(`${b2}/api/files/${f.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+    const del = await fetch(`${b2}/api/files/${f.id}`, { method: 'DELETE', headers: { Cookie: token } });
     assert.equal(del.status, 204);
     assert.equal(fs.readdirSync(path.join(dir, '1')).length, 0);
   } finally {
