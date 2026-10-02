@@ -47,7 +47,18 @@ function createApp(db, options = {}) {
   app.use('/api/public/v1', publicRoutes(db));
 
   app.post('/api/auth/login', (req, res) => res.json(login(db, req.body.email, req.body.password)));
-  app.get('/api/health', (_req, res) => res.json({ ok: true }));
+  // Huella de las pantallas al arrancar: si cambian en disco (se bajó una versión nueva encima),
+  // este proceso quedó viejo y hay que reiniciarlo.
+  const uiFile = path.join(__dirname, '..', 'public', 'app.js');
+  const uiHash = () => {
+    try {
+      return require('node:crypto').createHash('sha1').update(require('node:fs').readFileSync(uiFile)).digest('hex');
+    } catch {
+      return null;
+    }
+  };
+  const bootHash = uiHash();
+  app.get('/api/health', (_req, res) => res.json({ ok: true, stale: bootHash !== uiHash() }));
 
   const auth = requireUser(db);
   app.get('/api/auth/me', auth, (req, res) => res.json(req.user));
