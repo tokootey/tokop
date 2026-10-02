@@ -43,6 +43,12 @@ function getReservation(db, id) {
     r.contract.charges = r.contract.charges ? JSON.parse(r.contract.charges) : null;
   }
   r.payments = db.prepare('SELECT * FROM payments WHERE reservation_id = ? ORDER BY created_at, id').all(r.id);
+  r.files = db
+    .prepare(
+      `SELECT f.id, f.stage, f.name, f.mime, f.size, f.created_at, u.name AS user_name
+       FROM reservation_files f LEFT JOIN users u ON u.id = f.created_by WHERE f.reservation_id = ? ORDER BY f.id`,
+    )
+    .all(r.id);
   r.balance = balance(r);
   r.log = db
     .prepare('SELECT l.*, u.name AS user_name FROM reservation_log l LEFT JOIN users u ON u.id = l.user_id WHERE reservation_id = ? ORDER BY l.id')

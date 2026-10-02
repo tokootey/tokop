@@ -97,6 +97,7 @@ function formData(form) {
   const out = {};
   for (const el of form.elements) {
     if (!el.name || el.disabled) continue;
+    if (el.type === 'file') continue;
     if (el.type === 'checkbox') out[el.name] = el.checked ? 1 : 0;
     else if (el.type === 'number') out[el.name] = el.value === '' ? null : Number(el.value);
     else out[el.name] = el.value === '' ? null : el.value;
@@ -145,6 +146,10 @@ function field(f, value) {
   const v = value === undefined || value === null ? (f.default ?? '') : value;
   const cls = f.full ? ' class="full"' : '';
   const req = f.required ? ' required' : '';
+  if (f.type === 'photos') {
+    return `<label class="full">${esc(f.label)}<input name="${f.name}" type="file" accept="image/*,application/pdf" multiple/>
+      <small class="muted">Desde el celular podés sacar la foto en el momento o elegirla de la galería. Se pueden elegir varias.</small></label>`;
+  }
   if (f.type === 'checkbox') {
     return `<label class="check${f.full ? ' full' : ''}"><input type="checkbox" name="${f.name}" ${Number(v) ? 'checked' : ''}/> ${esc(f.label)}</label>`;
   }
@@ -665,6 +670,7 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
         }
         <div class="actions no-print" style="margin-top:12px"><button class="btn" data-act="pay">+ Registrar pago / garantía</button></div>
       </div>
+      ${filesCardHtml(r)}
       <div class="card"><h2>Historial</h2>
         <table><tbody>${r.log
           .map((l) => `<tr><td class="nowrap"><small>${esc(l.at.slice(0, 16))}</small></td><td>${esc(l.action)}</td><td><small class="muted">${esc(l.user_name || 'sistema')}</small></td><td><small>${esc(logDetail(l.detail))}</small></td></tr>`)
@@ -710,13 +716,19 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
             { name: 'out_km', label: 'Km de salida', type: 'number', required: true },
             { name: 'out_fuel', label: 'Combustible (octavos)', type: 'select', options: FUEL_OPTS, required: true },
             { name: 'out_notes', label: 'Observaciones / estado del vehículo', type: 'textarea', full: true },
+            { name: 'fotos', label: 'Fotos del auto al entregarlo (frente, laterales, cola, interior, tablero con km y combustible)', type: 'photos' },
           ],
           { vehicle_id: first.id, out_at: localISO(new Date()), out_km: first.km, out_fuel: first.fuel ?? 8 },
           'Entregar y abrir contrato',
         ),
-        async (d) => {
+        async (d, form) => {
           await POST(`/reservations/${r.id}/checkout`, { ...d, vehicle_id: Number(d.vehicle_id), out_fuel: Number(d.out_fuel) });
           toast('Vehículo entregado. Contrato abierto.');
+          try {
+            await uploadFiles(r.id, 'entrega', form.fotos.files);
+          } catch (e) {
+            toast(`La entrega quedó registrada, pero falló una foto: ${e.message}. Podés subirla desde la reserva.`, true);
+          }
           reload();
         },
       );
@@ -738,14 +750,20 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
             { name: 'in_fuel', label: `Combustible (salió con ${c.out_fuel}/8)`, type: 'select', options: FUEL_OPTS, required: true },
             { name: 'damage_charge', label: 'Cargo por daños', type: 'number', default: 0 },
             { name: 'in_notes', label: 'Observaciones / daños detectados', type: 'textarea', full: true },
+            { name: 'fotos', label: 'Fotos del auto al recibirlo (daños, km y combustible)', type: 'photos' },
             { name: 'send_to_maintenance', label: 'Enviar el vehículo a taller', type: 'checkbox', full: true },
           ],
           { in_at: localISO(new Date()), return_branch_id: r.return_branch_id, in_fuel: c.out_fuel },
           'Cerrar contrato',
         ),
-        async (d) => {
+        async (d, form) => {
           await POST(`/reservations/${r.id}/checkin`, { ...d, return_branch_id: Number(d.return_branch_id), in_fuel: Number(d.in_fuel) });
           toast('Devolución registrada');
+          try {
+            await uploadFiles(r.id, 'devolucion', form.fotos.files);
+          } catch (e) {
+            toast(`La devolución quedó registrada, pero falló una foto: ${e.message}. Podés subirla desde la reserva.`, true);
+          }
           reload();
         },
       ),
@@ -795,8 +813,32 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
         },
       ),
     print: () => printContract(r),
+    photos: () =>
+      openModal(
+        'Agregar fotos o documentos',
+        formHtml(
+          [
+            {
+              name: 'stage',
+              label: 'Corresponden a',
+              type: 'select',
+              required: true,
+              options: [['entrega', 'Entrega del auto'], ['devolucion', 'Devolución del auto'], ['otro', 'Otros documentos']],
+            },
+            { name: 'fotos', label: 'Archivos', type: 'photos' },
+          ],
+          { stage: r.status === 'finalizada' ? 'devolucion' : r.status === 'en_curso' ? 'entrega' : 'otro' },
+          'Subir',
+        ),
+        async (d, form) => {
+          if (!form.fotos.files.length) throw new Error('Elegí al menos una foto o documento');
+          await uploadFiles(r.id, d.stage, form.fotos.files);
+          reload();
+        },
+      ),
   };
   $$('[data-act]', view).forEach((b) => b.addEventListener('click', () => handlers[b.dataset.act]()));
+  wireFiles(view, r, reload);
 }, 'reservas');
 
 function logDetail(d) {
@@ -807,6 +849,113 @@ function logDetail(d) {
   } catch {
     return d;
   }
+}
+
+/* ---------- Fotos y documentación del alquiler ---------- */
+const STAGE_LABEL = { entrega: 'Entrega', devolucion: 'Devolución', otro: 'Otros documentos' };
+
+/** Achica las fotos antes de subirlas (las del celular pesan varios MB); los PDF van tal cual. */
+async function shrinkImage(file, max = 1600, quality = 0.82) {
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type) || !window.createImageBitmap) return file;
+  try {
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    if (scale === 1 && file.size < 1.5e6) return file;
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * scale);
+    c.height = Math.round(bmp.height * scale);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', quality));
+    return blob || file;
+  } catch {
+    return file;
+  }
+}
+
+async function uploadFiles(reservationId, stage, fileList) {
+  const files = [...(fileList || [])];
+  if (!files.length) return 0;
+  let done = 0;
+  for (const f of files) {
+    toast(`Subiendo ${done + 1} de ${files.length}…`);
+    const blob = await shrinkImage(f);
+    const type = blob.type || f.type || 'application/octet-stream';
+    const name = blob === f ? f.name : f.name.replace(/\.[^.]+$/, '') + '.jpg';
+    const res = await fetch(`/api/reservations/${reservationId}/files?stage=${stage}&name=${encodeURIComponent(name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': type, Authorization: `Bearer ${state.token}` },
+      body: blob,
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(`${f.name}: ${data.error || (res.status === 413 ? 'el archivo es demasiado grande' : `error ${res.status}`)}`);
+    }
+    done++;
+  }
+  toast(`${done} archivo${done > 1 ? 's' : ''} guardado${done > 1 ? 's' : ''}`);
+  return done;
+}
+
+/** Las fotos piden sesión, así que se descargan con el token y se muestran como blob. */
+const fileUrls = new Map();
+async function fileUrl(id) {
+  if (fileUrls.has(id)) return fileUrls.get(id);
+  const res = await fetch(`/api/files/${id}`, { headers: { Authorization: `Bearer ${state.token}` } });
+  if (!res.ok) throw new Error('No se pudo abrir el archivo');
+  const url = URL.createObjectURL(await res.blob());
+  fileUrls.set(id, url);
+  return url;
+}
+
+function filesCardHtml(r) {
+  const groups = ['entrega', 'devolucion', 'otro']
+    .map((stage) => {
+      const list = r.files.filter((f) => f.stage === stage);
+      if (!list.length && stage === 'otro') return '';
+      return `<h3 style="margin-top:12px">${STAGE_LABEL[stage]} <small class="muted">(${list.length})</small></h3>
+        <div class="thumbs">${
+          list.length
+            ? list
+                .map(
+                  (f) =>
+                    `<button type="button" class="thumb" data-file="${f.id}" title="${esc(f.name)} · ${esc(f.created_at.slice(0, 16))}">${
+                      f.mime.startsWith('image/') ? `<img alt="${esc(f.name)}" data-thumb="${f.id}"/>` : '<span>PDF</span>'
+                    }</button>`,
+                )
+                .join('')
+            : '<span class="muted">Sin fotos todavía.</span>'
+        }</div>`;
+    })
+    .join('');
+  return `<div class="card"><h2>Fotos y documentación</h2>${groups}
+    <div class="actions no-print" style="margin-top:12px"><button class="btn" data-act="photos">+ Agregar fotos o documentos</button></div></div>`;
+}
+
+function wireFiles(view, r, reload) {
+  $$('[data-thumb]', view).forEach((img) =>
+    fileUrl(Number(img.dataset.thumb))
+      .then((u) => (img.src = u))
+      .catch(() => (img.alt = 'No disponible')),
+  );
+  $$('[data-file]', view).forEach((b) =>
+    b.addEventListener('click', async () => {
+      const f = r.files.find((x) => x.id === Number(b.dataset.file));
+      const url = await run(() => fileUrl(f.id));
+      openModal(
+        `${STAGE_LABEL[f.stage]} · ${f.name}`,
+        `${f.mime.startsWith('image/') ? `<img src="${url}" alt="${esc(f.name)}" style="width:100%;border-radius:8px"/>` : '<p>Documento PDF.</p>'}
+         <p class="muted">Subido el ${esc(fmtDT(f.created_at.replace(' ', 'T')))}${f.user_name ? ` por ${esc(f.user_name)}` : ''}.</p>
+         <div class="actions"><a class="btn" href="${url}" target="_blank" rel="noopener">Abrir en otra pestaña</a>
+         <button class="btn danger" type="button" id="file-del">Borrar</button></div>`,
+      );
+      $('#file-del').addEventListener('click', async () => {
+        if (!confirm('¿Borrar este archivo?')) return;
+        await run(() => DEL(`/files/${f.id}`), 'Archivo borrado');
+        closeModal();
+        reload();
+      });
+    }),
+  );
 }
 
 const FUEL_OPTS = [0, 1, 2, 3, 4, 5, 6, 7, 8].map((n) => [n, n === 8 ? '8/8 (lleno)' : n === 0 ? '0/8 (vacío)' : `${n}/8`]);
