@@ -17,6 +17,17 @@ Aplicación web para el día a día del rent a car (flota, reservas, contratos, 
 | **Cotizador** | Conexión con el formulario web y con la API del cotizador, bandeja de solicitudes recibidas y avisos salientes. |
 | **Usuarios** | Perfil *operador* (mostrador) y perfil *administrador* (también configura tarifas, el cotizador y los usuarios). |
 
+## Ver la app en tu computadora (sin saber programar)
+
+1. Instalá **Node.js** desde [nodejs.org](https://nodejs.org) (botón **LTS**, siguiente, siguiente, finalizar).
+2. En esta página de GitHub tocá el botón verde **Code** → **Download ZIP**. Descomprimí el archivo (clic derecho → *Extraer todo*).
+3. Abrí la carpeta y hacé doble clic en:
+   - **Windows:** `iniciar-windows.bat`. Si aparece un aviso azul de Windows, tocá *Más información* → *Ejecutar de todas formas*.
+   - **Mac:** `iniciar-mac.command`. Si macOS lo bloquea: clic derecho → *Abrir*.
+4. La primera vez tarda un minuto. Después se abre el navegador con la app, cargada con datos de ejemplo. Usuario `admin@rentacar.local`, contraseña `admin123`.
+
+La app queda abierta mientras esté abierta la ventana negra. Así solo la ves vos, en tu computadora. Para que funcione con el sitio web hay que publicarla (sección *Publicarla en internet*).
+
 ## Puesta en marcha
 
 Requiere **Node.js 22.5 o superior** (usa la base SQLite que ya trae Node, sin instalar ningún motor de base de datos).
