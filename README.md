@@ -49,6 +49,10 @@ Para que el sitio web pueda enviar las cotizaciones, el sistema tiene que estar 
 npm test         # pruebas automáticas
 ```
 
+## Versión de prueba para compartir
+
+`npm run demo` genera `demo/rentacar-demo.html`: la app completa en un solo archivo, que funciona entera en el navegador, sin servidor. Usa el mismo código, con SQLite para el navegador (sql.js) y datos de ejemplo. Sirve para mandar un link y que alguien la pruebe. Cada persona ve sus propios datos, guardados solo en su navegador, y no recibe pedidos del sitio web.
+
 ## Publicarla en internet (paso a paso, sin saber programar)
 
 La app ya está preparada para publicarse en [Render](https://render.com). Lleva unos 10 minutos.
