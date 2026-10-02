@@ -128,6 +128,10 @@ dl.info dd { margin: 0; }
 .pl-bar.confirmada { background: #1f6feb; }
 .pl-bar.en_curso { background: #1a9b5b; }
 .pl-bar.finalizada { background: #8b94a6; }
+/* Arrastrar para crear: el gesto horizontal es nuestro, el vertical sigue desplazando la página */
+.pl-track.pl-drag { cursor: crosshair; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.pl-sel { position: absolute; top: 4px; height: 26px; border-radius: 6px; background: rgba(31, 111, 235, .18); border: 2px dashed var(--primary); color: var(--primary-dark); font-size: 11px; font-weight: 600; padding: 4px 6px; white-space: nowrap; overflow: visible; pointer-events: none; z-index: 1; }
+.pl-sel.bad { background: rgba(209, 55, 58, .15); border-color: var(--danger); color: var(--danger); }
 .pl-bar.mant { background: repeating-linear-gradient(45deg, #d1373a, #d1373a 6px, #e25b5d 6px, #e25b5d 12px); cursor: default; }
 .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); align-items: center; flex-wrap: wrap; }
 .legend span::before { content: ''; display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -2px; background: var(--c); }
