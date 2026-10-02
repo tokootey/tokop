@@ -4,7 +4,10 @@
  * Arma una versión de prueba de la app en UN solo archivo HTML, que funciona entera en el navegador
  * (sin servidor): sirve para mandar un link y que otra persona la pruebe.
  *
- *   node scripts/build-demo.js [salida.html]      (por defecto: demo/rentacar-demo.html)
+ *   node scripts/build-demo.js [salida.html] [--standalone]
+ *
+ * Por defecto genera demo/rentacar-demo.html. Con --standalone agrega <!doctype html>, <head> y <body>
+ * para subirlo como index.html a cualquier hosting estático (Netlify, GitHub Pages, etc.).
  *
  * Incluye el mismo código de src/ y public/, SQLite compilado para el navegador (sql.js)
  * y scripts/demo/runtime.js, que reemplaza a Node y Express.
@@ -13,7 +16,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..');
-const out = path.resolve(process.argv[2] || path.join(root, 'demo', 'rentacar-demo.html'));
+const args = process.argv.slice(2);
+const standalone = args.includes('--standalone');
+const outArg = args.find((a) => !a.startsWith('--'));
+const out = path.resolve(outArg || path.join(root, 'demo', 'rentacar-demo.html'));
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 // Evita que un "</script" dentro del código cierre la etiqueta antes de tiempo.
 const safe = (code) => code.replace(/<\/script/gi, '<\\/script');
@@ -92,6 +98,9 @@ ${safe(read('public/app.js'))}
 </script>
 `;
 
+const page = standalone
+  ? html.replace(/^<title>/, '<!doctype html>\n<html lang="es">\n<head>\n<meta charset="utf-8">\n<title>').replace('</style>\n', '</style>\n</head>\n<body>\n') + '</body>\n</html>\n'
+  : html;
 fs.mkdirSync(path.dirname(out), { recursive: true });
-fs.writeFileSync(out, html);
-console.log(`Demo generada: ${out} (${(html.length / 1024 / 1024).toFixed(2)} MB)`);
+fs.writeFileSync(out, page);
+console.log(`Demo generada: ${out} (${(page.length / 1024 / 1024).toFixed(2)} MB)`);
