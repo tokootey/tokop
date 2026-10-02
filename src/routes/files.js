@@ -5,6 +5,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const express = require('express');
 const { fail, nowLocal } = require('../util');
+const { audit } = require('../auth');
 
 /** Tipos aceptados: fotos de celular (incluidas las HEIC de iPhone) y PDF. */
 const TYPES = {
@@ -16,6 +17,26 @@ const TYPES = {
   'application/pdf': 'pdf',
 };
 const STAGES = ['entrega', 'devolucion', 'otro'];
+
+/** Comprueba por los primeros bytes que el archivo sea realmente del tipo que dice ser. */
+function looksLike(mime, b) {
+  const ascii = (from, to) => Buffer.from(b.subarray(from, to)).toString('latin1');
+  switch (mime) {
+    case 'image/jpeg':
+      return b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+    case 'image/png':
+      return ascii(0, 8) === '\x89PNG\r\n\x1a\n';
+    case 'image/webp':
+      return ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP';
+    case 'image/heic':
+    case 'image/heif':
+      return ascii(4, 8) === 'ftyp';
+    case 'application/pdf':
+      return ascii(0, 5) === '%PDF-';
+    default:
+      return false;
+  }
+}
 const MAX_BYTES = 20 * 1024 * 1024;
 
 /**
@@ -34,6 +55,7 @@ function fileRoutes(db, uploadsDir) {
     const mime = String(req.get('content-type') || '').split(';')[0].trim().toLowerCase();
     if (!TYPES[mime]) fail(415, 'Formato no admitido: subí fotos (JPG, PNG, HEIC) o PDF');
     if (!Buffer.isBuffer(req.body) || !req.body.length) fail(400, 'El archivo está vacío');
+    if (!looksLike(mime, req.body)) fail(415, 'El archivo no es una foto o un PDF válido');
     const stage = STAGES.includes(req.query.stage) ? req.query.stage : 'otro';
     const name = String(req.query.name || `foto.${TYPES[mime]}`).replace(/[\\/\r\n]/g, '_').slice(0, 120);
 
@@ -62,7 +84,9 @@ function fileRoutes(db, uploadsDir) {
     const abs = path.join(uploadsDir, f.path);
     if (!fs.existsSync(abs)) fail(404, 'El archivo ya no está en el servidor');
     res.set('Content-Type', f.mime);
-    res.set('Cache-Control', 'private, max-age=86400');
+    res.set('Cache-Control', 'private, no-store');
+    // Se muestra aislado: un archivo manipulado no puede ejecutar código en la app.
+    res.set('Content-Security-Policy', "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox");
     res.set('Content-Disposition', `inline; filename="${encodeURIComponent(f.name)}"`);
     res.sendFile(abs);
   });
@@ -73,10 +97,11 @@ function fileRoutes(db, uploadsDir) {
     db.prepare('DELETE FROM reservation_files WHERE id = ?').run(f.id);
     fs.rmSync(path.join(uploadsDir, f.path), { force: true });
     logAction(f.reservation_id, req.user.id, 'archivo_borrado', `${f.stage}: ${f.name}`);
+    audit(db, req, 'archivo_borrado', `reserva #${f.reservation_id}: ${f.name}`);
     res.status(204).end();
   });
 
   return router;
 }
 
-module.exports = { fileRoutes, TYPES, STAGES };
+module.exports = { fileRoutes, looksLike, TYPES, STAGES };

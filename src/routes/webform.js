@@ -13,6 +13,21 @@ const { ingestQuote } = require('../integration');
  *  - límite de envíos por IP.
  * Las solicitudes web siempre entran como reserva "pendiente" para que el mostrador las confirme.
  */
+const MAX_FIELDS = 60;
+const MAX_KEY = 80;
+const MAX_VALUE = 1000;
+
+/** Limita la cantidad y el largo de los campos que llegan del público. */
+function clean(body) {
+  const out = {};
+  for (const [k, v] of Object.entries(body || {}).slice(0, MAX_FIELDS)) {
+    const key = String(k).slice(0, MAX_KEY);
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+    out[key] = Array.isArray(v) ? v.slice(0, 20).map((x) => String(x).slice(0, MAX_VALUE)) : String(v).slice(0, MAX_VALUE);
+  }
+  return out;
+}
+
 function webformRoutes(db) {
   const router = express.Router();
   const hits = new Map();
@@ -21,6 +36,9 @@ function webformRoutes(db) {
 
   const rateLimited = (ip) => {
     const now = Date.now();
+    if (hits.size > 5000) {
+      for (const [k, list] of hits) if (!list.some((t) => now - t < WINDOW_MS)) hits.delete(k);
+    }
     const list = (hits.get(ip) || []).filter((t) => now - t < WINDOW_MS);
     list.push(now);
     hits.set(ip, list);
@@ -42,13 +60,13 @@ function webformRoutes(db) {
         .send(
           `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>` +
             `<body style="font-family:system-ui;max-width:520px;margin:60px auto;padding:0 16px;text-align:center"><h1>${title}</h1><p>${msg}</p>` +
-            `<p><a href="javascript:history.back()">Volver</a></p></body>`,
+            `<p>Ya podés cerrar esta página.</p></body>`,
         );
     }
     return res.status(status).json({ ok, ...data });
   }
 
-  router.post('/', express.urlencoded({ extended: true, limit: '200kb' }), (req, res) => {
+  router.post('/', express.urlencoded({ extended: false, limit: '100kb', parameterLimit: MAX_FIELDS * 2 }), (req, res) => {
     const settings = getSettings(db);
     if (settings.webform_enabled !== '1') return reply(req, res, settings, 403, false, { error: 'Formulario web deshabilitado' });
 
@@ -57,12 +75,14 @@ function webformRoutes(db) {
       .split(',')
       .map((s) => s.trim().replace(/\/$/, ''))
       .filter(Boolean);
-    if (origin && allowed.length && !allowed.includes(origin.replace(/\/$/, ''))) {
+    // Con sitios autorizados configurados, el envío tiene que venir de uno de ellos.
+    // (Los navegadores siempre mandan Origin al enviar un formulario a otro sitio.)
+    if (allowed.length && (!origin || !allowed.includes(origin.replace(/\/$/, '')))) {
       return reply(req, res, settings, 403, false, { error: 'Origen no permitido' });
     }
     if (rateLimited(req.ip)) return reply(req, res, settings, 429, false, { error: 'Demasiados envíos, probá en unos minutos' });
 
-    const payload = { ...(req.body || {}) };
+    const payload = clean(req.body);
     if (payload._gotcha) return reply(req, res, settings, 200, true, {});
     delete payload._gotcha;
 
@@ -71,7 +91,8 @@ function webformRoutes(db) {
       return reply(req, res, settings, 201, true, { code: result.reservation.code });
     } catch (err) {
       // La solicitud queda igual en la bandeja (con error) para que el mostrador la gestione a mano.
-      return reply(req, res, settings, 202, true, { pending_review: true, message: err.message });
+      // Al público no se le muestran detalles internos.
+      return reply(req, res, settings, 202, true, { pending_review: true });
     }
   });
 
