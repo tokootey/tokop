@@ -191,7 +191,18 @@ async function startSession() {
   $('#user-name').textContent = state.user.name;
   $$('.admin-only').forEach((el) => el.classList.toggle('hidden', state.user.role !== 'admin'));
   await loadCatalogs();
+  checkStale();
   route();
+}
+
+/** Si el programa de la ventana negra es más viejo que estas pantallas, avisar cómo reiniciarlo. */
+async function checkStale() {
+  const h = await fetch('/api/health').then((r) => r.json()).catch(() => ({}));
+  if (!h.stale) return;
+  const bar = document.createElement('div');
+  bar.className = 'stale-bar';
+  bar.innerHTML = '<b>La app se actualizó, pero sigue abierto el programa anterior.</b> Cerrá todas las ventanas negras y volvé a abrir <b>iniciar-windows</b>. Mientras tanto, algunas pantallas pueden fallar.';
+  document.body.appendChild(bar);
 }
 
 function showLogin() {
@@ -908,6 +919,7 @@ async function fileUrl(id) {
 }
 
 function filesCardHtml(r) {
+  r.files = r.files || [];
   const groups = ['entrega', 'devolucion', 'otro']
     .map((stage) => {
       const list = r.files.filter((f) => f.stage === stage);
