@@ -356,15 +356,30 @@ on(/^\/reservas$/, async (view) => {
    ============================================================ */
 const branchOptions = () => state.branches.filter((b) => b.active).map((b) => [b.id, b.name]);
 
-on(/^\/reservas\/nueva$/, async (view) => {
+on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   const now = new Date();
   now.setMinutes(0, 0, 0);
-  const p0 = addDays(now, 1);
+  let p0 = addDays(now, 1);
   p0.setHours(10);
-  const r0 = addDays(p0, 3);
+  let r0 = addDays(p0, 3);
   const sel = { category_id: null, customer_id: null };
+  // Datos que llegan al arrastrar sobre el Planning: ?vehiculo=ID&desde=AAAA-MM-DD&hasta=AAAA-MM-DD
+  const pre = new URLSearchParams(query || '');
+  let preVehicle = null;
+  if (pre.get('vehiculo')) preVehicle = await GET(`/vehicles/${Number(pre.get('vehiculo'))}`).catch(() => null);
+  const dayAt10 = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(d || '') ? new Date(`${d}T10:00`) : null);
+  if (dayAt10(pre.get('desde')) && dayAt10(pre.get('hasta'))) {
+    p0 = dayAt10(pre.get('desde'));
+    r0 = dayAt10(pre.get('hasta'));
+  }
+  if (preVehicle) sel.category_id = preVehicle.category_id;
   view.innerHTML = `
     <div class="page-head"><h1>Nueva reserva</h1></div>
+    ${
+      preVehicle
+        ? `<div class="card" style="border-color:var(--primary);margin-bottom:16px">Reserva para <b>${esc(preVehicle.plate)}</b> ${esc(preVehicle.brand || '')} ${esc(preVehicle.model || '')}, del ${fmtD(localISO(p0))} al ${fmtD(localISO(r0))}, elegida desde el Planning. Completá el cliente y guardá.</div>`
+        : ''
+    }
     <form id="new-res" class="stack">
       <div class="card">
         <h2>1 · Fechas y lugares</h2>
@@ -420,6 +435,7 @@ on(/^\/reservas\/nueva$/, async (view) => {
     </form>`;
   const form = $('#new-res');
   const pb = form.pickup_branch_id;
+  if (preVehicle && preVehicle.branch_id && branchOptions().some(([id]) => id === preVehicle.branch_id)) pb.value = preVehicle.branch_id;
   form.return_branch_id.value = pb.value;
   pb.addEventListener('change', () => (form.return_branch_id.value = pb.value));
 
@@ -477,6 +493,7 @@ on(/^\/reservas\/nueva$/, async (view) => {
       '<option value="">Asignar después</option>' +
       list.map((v) => `<option value="${v.id}">${esc(v.plate)} · ${esc(v.brand)} ${esc(v.model)} (${esc(v.branch_name || '')})</option>`).join('');
     if (list.some((v) => String(v.id) === current)) s.value = current;
+    else if (preVehicle && list.some((v) => v.id === preVehicle.id)) s.value = preVehicle.id;
   };
 
   $('#cats').addEventListener('click', (e) => {
@@ -875,7 +892,7 @@ on(/^\/planning$/, async (view) => {
     rows += `<div class="pl-row group"><div class="pl-label">${esc(cat.code)} · ${esc(cat.name)}</div><div></div></div>`;
     for (const v of vehicles) {
       rows += `<div class="pl-row"><div class="pl-label"><b>${esc(v.plate)}</b> <small>${esc(v.brand)} ${esc(v.model)}</small></div>
-        <div class="pl-track" style="${track}">${p.maintenance.filter((m) => m.vehicle_id === v.id).map(mbar).join('')}${p.reservations
+        <div class="pl-track${['mantenimiento', 'fuera_servicio'].includes(v.status) ? '' : ' pl-drag'}" data-vehicle="${v.id}" style="${track}">${p.maintenance.filter((m) => m.vehicle_id === v.id).map(mbar).join('')}${p.reservations
           .filter((r) => r.vehicle_id === v.id)
           .map(bar)
           .join('')}</div></div>`;
@@ -892,7 +909,7 @@ on(/^\/planning$/, async (view) => {
       <div class="actions"><button class="btn" data-nav="-7">◀ Semana</button><button class="btn" data-nav="0">Hoy</button><button class="btn" data-nav="7">Semana ▶</button></div></div>
     <div class="legend" style="margin-bottom:10px">
       <span style="--c:#e0a100">Pendiente</span><span style="--c:#1f6feb">Confirmada</span><span style="--c:#1a9b5b">En curso</span>
-      <span style="--c:#8b94a6">Finalizada</span><span style="--c:#d1373a">Taller</span><span>· Hacé clic en una barra para abrir la reserva</span></div>
+      <span style="--c:#8b94a6">Finalizada</span><span style="--c:#d1373a">Taller</span><span>· Tocá una barra para abrir la reserva · <b>Deslizá el dedo (o arrastrá con el mouse) sobre la fila de un auto para crear una reserva</b></span></div>
     <div class="planning">
       <div class="pl-row head"><div class="pl-label"><small>Vehículo</small></div><div class="pl-days" style="grid-template-columns:repeat(${days},1fr)">${dayCells}</div></div>
       ${rows || '<p class="muted" style="padding:16px">No hay vehículos cargados.</p>'}
@@ -905,7 +922,76 @@ on(/^\/planning$/, async (view) => {
       route();
     }),
   );
+  enableDragToBook($('.planning', view), p, days);
 }, 'planning');
+
+/**
+ * Crear una reserva arrastrando (dedo o mouse) sobre la fila de un auto en el Planning.
+ * Se marcan días completos: del primer día marcado a las 10:00 al día siguiente del último, a las 10:00.
+ * Si el tramo pisa otra reserva o el taller, se marca en rojo y no se crea.
+ */
+function enableDragToBook(container, p, days) {
+  const dayStr = (i) => localISO(addDays(planningFrom, i)).slice(0, 10);
+  const todayIdx = Math.round((new Date(localISO(new Date()).slice(0, 10) + 'T00:00') - planningFrom) / 86400000);
+  let drag = null;
+
+  const dayAt = (track, clientX) => {
+    const r = track.getBoundingClientRect();
+    return Math.min(days - 1, Math.max(0, Math.floor(((clientX - r.left) / r.width) * days)));
+  };
+
+  // ¿El tramo [desde, hasta) se superpone con una reserva activa o un taller de ese auto?
+  const clash = (vehicleId, from, to) =>
+    p.reservations.some((r) => r.vehicle_id === vehicleId && ['pendiente', 'confirmada', 'en_curso'].includes(r.status) && r.pickup_at < to && r.return_at > from) ||
+    p.maintenance.some((m) => m.vehicle_id === vehicleId && (m.start_date || '') <= to.slice(0, 10) && (m.end_date || '9999-12-31') >= from.slice(0, 10));
+
+  const paint = () => {
+    const a = Math.min(drag.startDay, drag.endDay);
+    const b = Math.max(drag.startDay, drag.endDay);
+    drag.from = `${dayStr(a)}T10:00`;
+    drag.to = `${dayStr(b + 1)}T10:00`;
+    drag.past = a < todayIdx;
+    drag.bad = drag.past || clash(drag.vehicleId, drag.from, drag.to);
+    const n = b - a + 1;
+    drag.el.style.left = `${(a / days) * 100}%`;
+    drag.el.style.width = `${(n / days) * 100}%`;
+    drag.el.classList.toggle('bad', drag.bad);
+    drag.el.textContent = drag.past ? 'No se puede reservar en el pasado' : drag.bad ? 'Ocupado en esas fechas' : `${n} día${n > 1 ? 's' : ''} · ${fmtD(drag.from)} → ${fmtD(drag.to)}`;
+  };
+
+  container.addEventListener('pointerdown', (e) => {
+    const track = e.target.closest('.pl-drag');
+    if (!track || e.target.closest('.pl-bar') || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    const startDay = dayAt(track, e.clientX);
+    drag = { track, vehicleId: Number(track.dataset.vehicle), startDay, endDay: startDay, x0: e.clientX, moved: false, el: document.createElement('div') };
+    drag.el.className = 'pl-sel';
+    track.appendChild(drag.el);
+    track.setPointerCapture(e.pointerId);
+    paint();
+  });
+
+  container.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    if (Math.abs(e.clientX - drag.x0) > 6) drag.moved = true;
+    const d = dayAt(drag.track, e.clientX);
+    if (d !== drag.endDay) {
+      drag.endDay = d;
+      paint();
+    }
+  });
+
+  const finish = (e) => {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    d.el.remove();
+    if (e.type === 'pointercancel' || !d.moved) return;
+    if (d.bad) return toast(d.past ? 'No se puede reservar en días que ya pasaron' : 'Ese auto ya está ocupado (o en taller) en esas fechas', true);
+    location.hash = `#/reservas/nueva?vehiculo=${d.vehicleId}&desde=${d.from.slice(0, 10)}&hasta=${d.to.slice(0, 10)}`;
+  };
+  container.addEventListener('pointerup', finish);
+  container.addEventListener('pointercancel', finish);
+}
 
 /* ============================================================
    Pantallas de ABM (flota, clientes, tarifas, mantenimiento)
