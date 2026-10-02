@@ -1,0 +1,19 @@
+{
+  "name": "tokop-rentacar",
+  "version": "1.0.0",
+  "description": "Gestión de rent a car (flota, reservas, contratos, tarifas) integrable con cotizadores externos",
+  "main": "src/server.js",
+  "private": true,
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
+    "seed": "node --disable-warning=ExperimentalWarning src/seed.js",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
