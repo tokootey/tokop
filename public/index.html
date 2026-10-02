@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rent a Car · Gestión</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="login" class="login hidden">
+      <form id="login-form" class="card login-card">
+        <h1>Rent a Car</h1>
+        <p class="muted">Ingresá con tu usuario</p>
+        <label>Email <input name="email" type="email" required autocomplete="username" /></label>
+        <label>Contraseña <input name="password" type="password" required autocomplete="current-password" /></label>
+        <button class="btn primary" type="submit">Ingresar</button>
+        <p id="login-error" class="error"></p>
+      </form>
+    </div>
+
+    <div id="shell" class="shell hidden">
+      <aside class="sidebar">
+        <div class="brand" id="brand">Rent a Car</div>
+        <nav id="nav">
+          <a href="#/panel" data-route="panel">Panel</a>
+          <a href="#/reservas/nueva" data-route="nueva">+ Nueva reserva</a>
+          <a href="#/reservas" data-route="reservas">Reservas</a>
+          <a href="#/planning" data-route="planning">Planning</a>
+          <a href="#/flota" data-route="flota">Flota</a>
+          <a href="#/clientes" data-route="clientes">Clientes</a>
+          <a href="#/mantenimiento" data-route="mantenimiento">Mantenimiento</a>
+          <a href="#/tarifas" data-route="tarifas">Tarifas y sucursales</a>
+          <a href="#/cotizador" data-route="cotizador" class="admin-only">Cotizador</a>
+          <a href="#/config" data-route="config" class="admin-only">Configuración</a>
+          <a href="#/usuarios" data-route="usuarios" class="admin-only">Usuarios</a>
+        </nav>
+        <div class="user-box">
+          <span id="user-name"></span>
+          <button id="logout" class="btn link">Salir</button>
+        </div>
+      </aside>
+      <main id="view" class="view"></main>
+    </div>
+
+    <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-box card">
+        <div class="modal-head">
+          <h2 id="modal-title"></h2>
+          <button class="btn link" data-close>✕</button>
+        </div>
+        <div id="modal-body"></div>
+      </div>
+    </div>
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
