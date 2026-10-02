@@ -375,3 +375,44 @@ test('formulario web con nombres de campo distintos crea la reserva igual', asyn
   assert.deepEqual(r.extras.map((x) => x.name), ['GPS']);
   assert.match(r.notes, /Portaequipaje/);
 });
+
+test('fotos de entrega y devolución: subir, listar, ver y borrar', async () => {
+  const os = require('node:os');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fotos-'));
+  const app2 = createApp(db, { uploadsDir: dir }).listen(0);
+  await new Promise((r) => app2.once('listening', r));
+  const b2 = `http://127.0.0.1:${app2.address().port}`;
+  try {
+    const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4b40000000049454e44ae426082', 'hex');
+    const up = (body, type, extra = '') =>
+      fetch(`${b2}/api/reservations/1/files?stage=entrega&name=frente.png${extra}`, { method: 'POST', headers: { 'Content-Type': type, Authorization: `Bearer ${token}` }, body });
+
+    const ok = await up(png, 'image/png');
+    assert.equal(ok.status, 201);
+    const f = await ok.json();
+    assert.equal(f.stage, 'entrega');
+    assert.equal(f.size, png.length);
+
+    assert.equal((await up(Buffer.from('hola'), 'text/plain')).status, 415);
+    const noAuth = await fetch(`${b2}/api/reservations/1/files`, { method: 'POST', headers: { 'Content-Type': 'image/png' }, body: png });
+    assert.equal(noAuth.status, 401);
+
+    const r = (await call('GET', '/api/reservations/1')).data;
+    assert.ok(r.files.some((x) => x.id === f.id && x.name === 'frente.png'));
+    assert.ok(r.log.some((l) => l.action === 'archivo_subido'));
+
+    const got = await fetch(`${b2}/api/files/${f.id}`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.equal(got.status, 200);
+    assert.equal(got.headers.get('content-type'), 'image/png');
+    assert.deepEqual(Buffer.from(await got.arrayBuffer()), png);
+
+    const del = await fetch(`${b2}/api/files/${f.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+    assert.equal(del.status, 204);
+    assert.equal(fs.readdirSync(path.join(dir, '1')).length, 0);
+  } finally {
+    app2.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

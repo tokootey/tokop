@@ -8,6 +8,7 @@ const { operationsRoutes } = require('./routes/operations');
 const { adminRoutes } = require('./routes/admin');
 const { publicRoutes } = require('./routes/public');
 const { webformRoutes } = require('./routes/webform');
+const { fileRoutes } = require('./routes/files');
 const { HttpError } = require('./util');
 
 /** Crea el usuario administrador inicial si no hay ninguno. */
@@ -20,7 +21,15 @@ function ensureAdmin(db) {
   return { email, password };
 }
 
-function createApp(db) {
+/**
+ * @param {object} [options]
+ * @param {string} [options.uploadsDir] carpeta de fotos y documentos (por defecto, junto a la base de datos).
+ */
+function createApp(db, options = {}) {
+  const uploadsDir =
+    options.uploadsDir ||
+    process.env.UPLOADS_DIR ||
+    path.join(path.dirname(process.env.DB_FILE || path.join(__dirname, '..', 'data', 'rentacar.db')), 'uploads');
   const app = express();
   app.disable('x-powered-by');
   if (process.env.TRUST_PROXY) app.set('trust proxy', process.env.TRUST_PROXY);
@@ -46,7 +55,7 @@ function createApp(db) {
     db.prepare('DELETE FROM sessions WHERE token = ?').run(req.token);
     res.json({ ok: true });
   });
-  app.use('/api', auth, catalogRoutes(db), operationsRoutes(db), adminRoutes(db));
+  app.use('/api', auth, catalogRoutes(db), operationsRoutes(db), fileRoutes(db, uploadsDir), adminRoutes(db));
 
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Ruta inexistente')));
 
@@ -55,6 +64,7 @@ function createApp(db) {
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, _req, res, _next) => {
+    if (err.type === 'entity.too.large') return res.status(413).json({ error: 'El archivo es demasiado grande (máximo 20 MB)' });
     if (err instanceof SyntaxError) return res.status(400).json({ error: 'JSON inválido' });
     if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, details: err.details });
     if (/UNIQUE constraint/i.test(err.message)) return res.status(409).json({ error: 'Ya existe un registro con ese código / dato único' });

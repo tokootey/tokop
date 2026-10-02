@@ -189,6 +189,19 @@ CREATE TABLE IF NOT EXISTS quote_inbox (
   channel TEXT NOT NULL DEFAULT 'cotizador'
 );
 
+CREATE TABLE IF NOT EXISTS reservation_files (
+  id INTEGER PRIMARY KEY,
+  reservation_id INTEGER NOT NULL REFERENCES reservations(id) ON DELETE CASCADE,
+  stage TEXT NOT NULL DEFAULT 'otro',
+  name TEXT,
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  path TEXT NOT NULL,
+  created_by INTEGER,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS ix_reservation_files ON reservation_files(reservation_id);
+
 CREATE TABLE IF NOT EXISTS webhook_log (
   id INTEGER PRIMARY KEY,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,

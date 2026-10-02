@@ -12,6 +12,7 @@ Aplicación web para el día a día del rent a car (flota, reservas, contratos, 
 | **Planning** | Grilla de vehículos por días (estilo Rently): reservas por estado, autos en taller y reservas sin auto asignado. |
 | **Flota** | Vehículos, estado, km, combustible, sucursal, vencimientos de seguro y VTV, historial de cada auto. |
 | **Clientes** | Datos, documento, licencia (no deja entregar sin licencia o con licencia vencida) e historial. |
+| **Fotos y documentación** | Al entregar y al recibir un auto se sacan o se suben fotos (y PDF) del estado del vehículo. Quedan en la reserva, separadas en Entrega y Devolución, con quién y cuándo las subió. Las fotos del celular se achican solas antes de subirse. |
 | **Mantenimiento** | Mientras hay un mantenimiento abierto, el auto sale de la flota disponible. Al cerrarlo, vuelve a la flota. |
 | **Tarifas y sucursales** | Categorías (tarifa diaria y semanal, garantía, km incluidos), adicionales (por día o por alquiler, con tope), temporadas (+%) y lugares de entrega. |
 | **Cotizador** | Conexión con el formulario web y con la API del cotizador, bandeja de solicitudes recibidas y avisos salientes. |
@@ -40,9 +41,9 @@ npm start        # http://localhost:3000
 
 Usuario inicial: `admin@rentacar.local` / `admin123`. **Cambiá la contraseña** desde *Usuarios*. También podés definir otro usuario antes del primer inicio con `ADMIN_EMAIL` y `ADMIN_PASSWORD`.
 
-Variables de entorno: `PORT` (por defecto 3000), `DB_FILE` (por defecto `data/rentacar.db`), `TRUST_PROXY` (por ejemplo `1` si el sistema está detrás de un proxy o de Nginx).
+Variables de entorno: `PORT` (por defecto 3000), `DB_FILE` (por defecto `data/rentacar.db`), `UPLOADS_DIR` (fotos y documentos; por defecto `uploads/` junto a la base de datos), `TRUST_PROXY` (por ejemplo `1` si el sistema está detrás de un proxy o de Nginx).
 
-Para que el sitio web pueda enviar las cotizaciones, el sistema tiene que estar publicado en internet con HTTPS. Sirve cualquier VPS, Render, Railway o Fly.io. Hacé una copia de seguridad del archivo `data/rentacar.db`.
+Para que el sitio web pueda enviar las cotizaciones, el sistema tiene que estar publicado en internet con HTTPS. Sirve cualquier VPS, Render, Railway o Fly.io. Hacé una copia de seguridad de la carpeta `data/`, que tiene la base (`rentacar.db`) y las fotos (`uploads/`).
 
 ```bash
 npm test         # pruebas automáticas
