@@ -37,6 +37,20 @@ Para que el sitio web pueda enviar las cotizaciones, el sistema tiene que estar 
 npm test         # pruebas automáticas
 ```
 
+## Publicarla en internet (paso a paso, sin saber programar)
+
+La app ya está preparada para publicarse en [Render](https://render.com). Lleva unos 10 minutos.
+
+1. Entrá a [render.com](https://render.com) y tocá **Get Started**. Registrate con **GitHub**, con la misma cuenta donde está este repositorio.
+2. Arriba a la derecha tocá **New** y después **Blueprint**.
+3. Elegí el repositorio **tokootey/tokop**. Si no aparece, tocá *Configure account* y dale acceso.
+4. Render lee la configuración sola (archivo `render.yaml`) y muestra lo que va a crear. Tocá **Apply** o **Deploy Blueprint**.
+   - Se usa un plan pago básico con un disco de 1 GB, para que los datos no se borren. Render muestra el precio antes de confirmar.
+5. Esperá a que diga **Live**, en verde. Arriba vas a ver la dirección de la app, por ejemplo `https://rentacar-ushuaia.onrender.com`.
+6. Para ver la contraseña del administrador, entrá al servicio y abrí la pestaña **Environment**. El usuario es `admin@rentacar.local` y la contraseña es el valor de `ADMIN_PASSWORD`.
+7. Entrá a la app con ese usuario y contraseña. Ya podés cargar autos, tarifas y usuarios.
+8. En **Cotizador → Formulario web**, copiá la línea `<script …>`. Ya trae la dirección real de la app. Mandásela a quien administra el sitio web para que la pegue en la página del cotizador.
+
 ## Conexión con el cotizador de discoverushuaia.com.ar
 
 En **Cotizador → Formulario web** hay dos formas de conectarlo.
