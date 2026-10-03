@@ -16,7 +16,7 @@ const TYPES = {
   'image/heif': 'heif',
   'application/pdf': 'pdf',
 };
-const STAGES = ['entrega', 'devolucion', 'otro'];
+const STAGES = ['entrega', 'devolucion', 'contrato', 'otro'];
 
 /** Comprueba por los primeros bytes que el archivo sea realmente del tipo que dice ser. */
 function looksLike(mime, b) {

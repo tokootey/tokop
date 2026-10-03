@@ -673,7 +673,10 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
   }
   if (r.status === 'en_curso') actions.push('<button class="btn ok" data-act="checkin">Registrar devolución</button>');
   if (['cancelada', 'no_show'].includes(r.status)) actions.push('<button class="btn" data-act="reopen">Reabrir</button>');
-  if (!['cancelada', 'no_show'].includes(r.status)) actions.push('<button class="btn" data-act="print">Imprimir contrato</button>');
+  if (!['cancelada', 'no_show'].includes(r.status)) {
+    actions.push('<button class="btn primary" data-act="pdf">Contrato PDF</button>');
+    actions.push('<button class="btn" data-act="print">Imprimir contrato</button>');
+  }
 
   view.innerHTML = `
     <div class="page-head">
@@ -878,6 +881,26 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
         },
       ),
     print: () => printContract(r),
+    pdf: async () => {
+      if (!window.jspdf) return toast('No se pudo cargar el generador de PDF. Recargá la página e intentá de nuevo.', true);
+      let built;
+      try {
+        built = buildContractPdf(r);
+      } catch (e) {
+        console.error(e);
+        return toast('No se pudo generar el PDF del contrato.', true);
+      }
+      const blob = built.doc.output('blob');
+      downloadBlob(blob, built.filename);
+      // Copia archivada en la reserva, en "Fotos y documentación" → Contratos.
+      try {
+        await uploadFiles(r.id, 'contrato', [new File([blob], built.filename, { type: 'application/pdf' })]);
+        toast('Contrato PDF descargado y guardado en la reserva');
+      } catch (e) {
+        toast(`El PDF se descargó, pero no se pudo guardar una copia en la reserva: ${e.message}`, true);
+      }
+      reload();
+    },
     photos: () =>
       openModal(
         'Agregar fotos o documentos',
@@ -917,7 +940,7 @@ function logDetail(d) {
 }
 
 /* ---------- Fotos y documentación del alquiler ---------- */
-const STAGE_LABEL = { entrega: 'Entrega', devolucion: 'Devolución', otro: 'Otros documentos' };
+const STAGE_LABEL = { entrega: 'Entrega', devolucion: 'Devolución', contrato: 'Contratos', otro: 'Otros documentos' };
 
 /** Achica las fotos antes de subirlas (las del celular pesan varios MB); los PDF van tal cual. */
 async function shrinkImage(file, max = 1600, quality = 0.82) {
@@ -975,10 +998,10 @@ async function fileUrl(id) {
 
 function filesCardHtml(r) {
   r.files = r.files || [];
-  const groups = ['entrega', 'devolucion', 'otro']
+  const groups = ['entrega', 'devolucion', 'contrato', 'otro']
     .map((stage) => {
       const list = r.files.filter((f) => f.stage === stage);
-      if (!list.length && stage === 'otro') return '';
+      if (!list.length && (stage === 'otro' || stage === 'contrato')) return '';
       return `<h3 style="margin-top:12px">${STAGE_LABEL[stage]} <small class="muted">(${list.length})</small></h3>
         <div class="thumbs">${
           list.length
@@ -1028,8 +1051,11 @@ function wireFiles(view, r, reload) {
 const FUEL_OPTS = [0, 1, 2, 3, 4, 5, 6, 7, 8].map((n) => [n, n === 8 ? '8/8 (lleno)' : n === 0 ? '0/8 (vacío)' : `${n}/8`]);
 const PAYMENT_KINDS = { pago: 'Pago', devolucion: 'Devolución de dinero', garantia: 'Garantía (depósito)', devolucion_garantia: 'Devolución de garantía' };
 
-/** Completa las {palabras} de las condiciones con los datos de este alquiler. */
-function contractTerms(r) {
+/**
+ * Condiciones del contrato con las {palabras} completadas, como lista de cláusulas { title, body } en texto plano.
+ * La usan el contrato impreso y el PDF.
+ */
+function contractTermsList(r) {
   const s = state.settings;
   const km = Number(r.category_km_per_day) || 0;
   const values = {
@@ -1050,12 +1076,17 @@ function contractTerms(r) {
     .map((p) => p.trim())
     .filter(Boolean)
     .map((p) => {
-      const filled = p.replace(/\{(\w+)\}/g, (m, k) => (k in values ? String(values[k]) : m));
+      const filled = p.replace(/\{(\w+)\}/g, (m, k) => (k in values ? String(values[k]) : m)).replace(/\s+/g, ' ');
       const title = filled.match(/^(\d+\.\s*[^.]{2,60}\.)\s*/);
-      return title ? `<p><b>${esc(title[1])}</b> ${esc(filled.slice(title[0].length))}</p>` : `<p>${esc(filled)}</p>`;
-    })
-    .join('');
+      return title ? { title: title[1], body: filled.slice(title[0].length) } : { title: '', body: filled };
+    });
 }
+
+/** Condiciones en HTML para el contrato impreso. */
+const contractTerms = (r) =>
+  contractTermsList(r)
+    .map((t) => `<p>${t.title ? `<b>${esc(t.title)}</b> ` : ''}${esc(t.body)}</p>`)
+    .join('');
 
 /** Medidor de combustible en octavos: los llenos marcados, o vacío para completar a mano. */
 const fuelGauge = (n) =>

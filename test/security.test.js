@@ -247,3 +247,21 @@ test('instalación anterior con la contraseña de fábrica: obliga a cambiarla a
   ensureAdmin(db);
   assert.equal(db.prepare("SELECT must_change_password AS m FROM users WHERE email = 'viejo@x.com'").get().m, 1);
 });
+
+test('contrato en PDF: se archiva en la reserva como "contrato" y sólo se aceptan PDF reales', async () => {
+  const pdf = Buffer.from('%PDF-1.3\n%prueba\n');
+  const ok = await req('POST', '/api/reservations/2/files?stage=contrato&name=Pre-contrato.pdf', { cookie: admin, headers: { 'Content-Type': 'application/pdf' }, raw: pdf });
+  assert.equal(ok.status, 201);
+  assert.equal(ok.data.stage, 'contrato');
+  const fake = await req('POST', '/api/reservations/2/files?stage=contrato', { cookie: admin, headers: { 'Content-Type': 'application/pdf' }, raw: Buffer.from('<html>no soy un pdf</html>') });
+  assert.equal(fake.status, 415);
+  const r = (await req('GET', '/api/reservations/2', { cookie: admin })).data;
+  assert.ok(r.files.some((f) => f.stage === 'contrato' && f.mime === 'application/pdf'));
+  // Las librerías del PDF se sirven desde la propia app (la política de seguridad no permite otros sitios).
+  const lib = await fetch(`${base}/vendor/jspdf.umd.min.js`);
+  assert.equal(lib.status, 200);
+  assert.match(lib.headers.get('content-type'), /javascript/);
+  // Sólo se sirven esas dos librerías, no cualquier archivo de node_modules.
+  const other = await fetch(`${base}/vendor/express.js`);
+  assert.doesNotMatch(other.headers.get('content-type') || '', /javascript/);
+});

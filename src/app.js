@@ -91,6 +91,12 @@ function createApp(db, options = {}) {
 
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Ruta inexistente')));
 
+  // Librerías para generar el contrato en PDF en el navegador (servidas desde la app: la política de seguridad no admite otros sitios).
+  const vendor = {
+    'jspdf.umd.min.js': path.join(path.dirname(require.resolve('jspdf')), 'jspdf.umd.min.js'),
+    'jspdf.plugin.autotable.min.js': path.join(path.dirname(require.resolve('jspdf-autotable')), 'jspdf.plugin.autotable.min.js'),
+  };
+  app.get('/vendor/:file', (req, res, next) => (vendor[req.params.file] ? res.sendFile(vendor[req.params.file]) : next()));
   app.use(express.static(path.join(__dirname, '..', 'public')));
   app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
 
