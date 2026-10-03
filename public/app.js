@@ -164,7 +164,7 @@ function field(f, value) {
       .join('');
     return `<label${cls}>${esc(f.label)}<select name="${f.name}"${req}>${f.required ? '' : '<option value=""></option>'}${opts}</select></label>`;
   }
-  if (f.type === 'textarea') return `<label${cls}>${esc(f.label)}<textarea name="${f.name}"${req}>${esc(v)}</textarea></label>`;
+  if (f.type === 'textarea') return `<label${cls}>${esc(f.label)}<textarea name="${f.name}"${req}${f.rows ? ` rows="${Number(f.rows)}"` : ''}>${esc(v)}</textarea></label>`;
   const step = f.type === 'number' ? ` step="${f.step || 'any'}"` : '';
   return `<label${cls}>${esc(f.label)}<input name="${f.name}" type="${f.type || 'text'}" value="${esc(v)}"${step}${req} ${f.attrs || ''}/></label>`;
 }
@@ -673,7 +673,7 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
   }
   if (r.status === 'en_curso') actions.push('<button class="btn ok" data-act="checkin">Registrar devolución</button>');
   if (['cancelada', 'no_show'].includes(r.status)) actions.push('<button class="btn" data-act="reopen">Reabrir</button>');
-  if (c) actions.push('<button class="btn" data-act="print">Imprimir contrato</button>');
+  if (!['cancelada', 'no_show'].includes(r.status)) actions.push('<button class="btn" data-act="print">Imprimir contrato</button>');
 
   view.innerHTML = `
     <div class="page-head">
@@ -1028,36 +1028,187 @@ function wireFiles(view, r, reload) {
 const FUEL_OPTS = [0, 1, 2, 3, 4, 5, 6, 7, 8].map((n) => [n, n === 8 ? '8/8 (lleno)' : n === 0 ? '0/8 (vacío)' : `${n}/8`]);
 const PAYMENT_KINDS = { pago: 'Pago', devolucion: 'Devolución de dinero', garantia: 'Garantía (depósito)', devolucion_garantia: 'Devolución de garantía' };
 
+/** Completa las {palabras} de las condiciones con los datos de este alquiler. */
+function contractTerms(r) {
+  const s = state.settings;
+  const km = Number(r.category_km_per_day) || 0;
+  const values = {
+    empresa: s.company_name || 'la Empresa',
+    tolerancia: Number(s.grace_hours) || 0,
+    edad_minima: Number(s.min_driver_age) || 21,
+    cargo_combustible: Number(s.fuel_charge_per_eighth) > 0 ? money(s.fuel_charge_per_eighth) : 'el valor del combustible faltante más un cargo por servicio',
+    kilometraje:
+      km > 0
+        ? `El alquiler incluye ${km} km por día (${km * (r.days || 1)} km en total). Cada km excedente se cobrará ${money(r.category_extra_km_rate)}.`
+        : 'El alquiler tiene kilometraje libre.',
+    franquicia: Number(s.deductible_amount) > 0 ? money(s.deductible_amount) : 'el monto de la franquicia de la póliza vigente',
+    garantia: money(r.deposit),
+    jurisdiccion: s.jurisdiction || 'la ciudad donde se celebra este contrato',
+  };
+  return String(s.contract_terms || '')
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => {
+      const filled = p.replace(/\{(\w+)\}/g, (m, k) => (k in values ? String(values[k]) : m));
+      const title = filled.match(/^(\d+\.\s*[^.]{2,60}\.)\s*/);
+      return title ? `<p><b>${esc(title[1])}</b> ${esc(filled.slice(title[0].length))}</p>` : `<p>${esc(filled)}</p>`;
+    })
+    .join('');
+}
+
+/** Medidor de combustible en octavos: los llenos marcados, o vacío para completar a mano. */
+const fuelGauge = (n) =>
+  `<span class="gauge">${Array.from({ length: 8 }, (_, i) => `<i class="${n !== null && n !== undefined && i < n ? 'on' : ''}"></i>`).join('')}</span>${
+    n !== null && n !== undefined ? ` ${n}/8` : ' ___/8'
+  }`;
+
+/** Dibujo del auto visto desde arriba, para marcar los daños con una X. */
+const CAR_SVG = `<svg viewBox="0 0 220 110" width="220" height="110" aria-label="Diagrama del vehículo">
+  <rect x="20" y="15" width="180" height="80" rx="28" fill="none" stroke="#333" stroke-width="2"/>
+  <path d="M70 22 L60 88 M150 22 L160 88" stroke="#999"/>
+  <rect x="78" y="26" width="64" height="58" rx="6" fill="none" stroke="#999"/>
+  <rect x="34" y="6" width="26" height="10" rx="3" fill="#333"/><rect x="160" y="6" width="26" height="10" rx="3" fill="#333"/>
+  <rect x="34" y="94" width="26" height="10" rx="3" fill="#333"/><rect x="160" y="94" width="26" height="10" rx="3" fill="#333"/>
+  <text x="8" y="58" font-size="9" fill="#555" transform="rotate(-90 8 58)">TRASERA</text>
+  <text x="214" y="42" font-size="9" fill="#555" transform="rotate(90 214 42)">FRENTE</text>
+</svg>`;
+
 function printContract(r) {
   const s = state.settings;
   const c = r.contract;
+  const delivered = Boolean(c);
   const w = window.open('', '_blank');
   if (!w) return toast('El navegador bloqueó la ventana del contrato: permití las ventanas emergentes para esta página.', true);
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Contrato ${esc(c.number)}</title>
-    <style>body{font-family:system-ui,sans-serif;font-size:13px;max-width:780px;margin:24px auto;color:#111}h1{font-size:20px;margin:0}
-    table{width:100%;border-collapse:collapse;margin:10px 0}td,th{border:1px solid #bbb;padding:6px;text-align:left}th{background:#f2f2f2;width:30%}
-    .sign{display:flex;justify-content:space-between;margin-top:70px}.sign div{border-top:1px solid #000;width:40%;text-align:center;padding-top:4px}
-    .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:8px;margin-bottom:12px}</style></head><body>
-    <div class="head"><div><h1>${esc(s.company_name)}</h1><div>${esc(s.company_address || '')}</div><div>${esc(s.company_phone || '')} ${s.company_tax_id ? '· CUIT ' + esc(s.company_tax_id) : ''}</div></div>
-    <div style="text-align:right"><b>CONTRATO DE ALQUILER</b><br>N° ${esc(c.number)}<br>Reserva ${esc(r.code)}</div></div>
-    <table>
-      <tr><th>Cliente</th><td>${esc(r.customer_name)} · ${esc(r.customer_doc || '')}</td></tr>
-      <tr><th>Contacto</th><td>${esc(r.customer_phone || '')} · ${esc(r.customer_email || '')}</td></tr>
-      <tr><th>Vehículo</th><td>${esc(r.vehicle_brand)} ${esc(r.vehicle_model)} · Patente <b>${esc(r.vehicle_plate)}</b> · Cat. ${esc(r.category_code)}</td></tr>
-      <tr><th>Retiro</th><td>${fmtDT(c.out_at)} · ${esc(r.pickup_branch_name || '')} · ${c.out_km} km · Combustible ${c.out_fuel}/8</td></tr>
-      <tr><th>Devolución pactada</th><td>${fmtDT(r.return_at)} · ${esc(r.return_branch_name || '')}</td></tr>
-      ${c.in_at ? `<tr><th>Devolución real</th><td>${fmtDT(c.in_at)} · ${c.in_km} km · Combustible ${c.in_fuel}/8</td></tr>` : ''}
-      <tr><th>Adicionales</th><td>${r.extras.map((x) => esc(x.name)).join(', ') || '—'}</td></tr>
-      <tr><th>Importe</th><td>${money(r.total)}${c.final_total && c.final_total !== r.total ? ` · Final con cargos: <b>${money(c.final_total)}</b>` : ''}</td></tr>
-      <tr><th>Garantía</th><td>${money(r.balance.deposit_held || r.deposit)}</td></tr>
-      ${c.out_notes ? `<tr><th>Estado a la salida</th><td>${esc(c.out_notes)}</td></tr>` : ''}
-    </table>
-    <p style="white-space:pre-wrap">${esc(s.contract_terms || '')}</p>
-    <div class="sign"><div>Firma del cliente</div><div>Por ${esc(s.company_name)}</div></div>
-    </body></html>`);
+  const q = r.pricing || {};
+  const line = (label, value) => `<tr><th>${label}</th><td>${value || '<span class="blank"></span>'}</td></tr>`;
+  const priceRows = [
+    q.base !== undefined ? [`Alquiler ${esc(r.days)} día(s)${q.per_day ? ` × ${money(q.per_day)}` : ''}`, money(q.base)] : null,
+    q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
+    ...(q.extras || []).map((x) => [esc(x.name) + (x.quantity > 1 ? ` ×${esc(x.quantity)}` : ''), money(x.amount)]),
+    q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
+    q.discount ? [`Descuento ${esc(q.discount_pct)}%`, '−' + money(q.discount)] : null,
+    q.tax_rate ? [`IVA ${esc(q.tax_rate)}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
+  ].filter(Boolean);
+  const charges = c && c.charges && c.charges.lines.length ? c.charges.lines : [];
+  const outKm = delivered ? c.out_km : r.vehicle_km;
+  const outFuel = delivered ? c.out_fuel : r.vehicle_fuel;
+  const title = delivered ? 'CONTRATO DE ALQUILER DE VEHÍCULO' : 'CONTRATO DE ALQUILER DE VEHÍCULO (PRE-CONTRATO)';
+
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${delivered ? 'Contrato ' + esc(c.number) : 'Pre-contrato ' + esc(r.code)}</title>
+<style>
+  @page { size: A4; margin: 12mm; }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #111; margin: 0 auto; max-width: 190mm; padding: 8px; }
+  h1 { font-size: 17px; margin: 0; } h2 { font-size: 12px; margin: 10px 0 4px; text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid #111; padding-bottom: 2px; }
+  .head { display: flex; justify-content: space-between; gap: 12px; border-bottom: 2px solid #111; padding-bottom: 6px; }
+  .head .right { text-align: right; } .muted { color: #555; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+  table { width: 100%; border-collapse: collapse; } th, td { border: 1px solid #999; padding: 4px 6px; text-align: left; vertical-align: top; }
+  th { background: #f0f0f0; width: 36%; font-weight: 600; }
+  .price td:last-child { text-align: right; white-space: nowrap; } .price tr.total td { font-weight: 700; font-size: 12px; }
+  .blank { display: inline-block; min-width: 120px; border-bottom: 1px solid #555; height: 12px; }
+  .gauge { display: inline-flex; gap: 2px; vertical-align: middle; } .gauge i { width: 9px; height: 11px; border: 1px solid #333; display: inline-block; } .gauge i.on { background: #333; }
+  .state { display: grid; grid-template-columns: 230px 1fr; gap: 10px; align-items: start; }
+  .notes { border: 1px solid #999; min-height: 64px; padding: 4px 6px; white-space: pre-wrap; }
+  .sign { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 36px; }
+  .sign div { border-top: 1px solid #111; padding-top: 3px; text-align: center; } .sign small { display: block; color: #555; margin-top: 10px; text-align: left; }
+  .terms { columns: 2; column-gap: 16px; font-size: 9.5px; line-height: 1.35; text-align: justify; } .terms p { margin: 0 0 5px; break-inside: avoid; }
+  .page2 { break-before: page; }
+  .badge { display: inline-block; border: 1px solid #111; padding: 1px 6px; font-weight: 700; }
+</style></head><body>
+<div class="head">
+  <div><h1>${esc(s.company_name || '')}</h1>
+    <div>${esc(s.company_address || '')}</div>
+    <div>${esc(s.company_phone || '')}${s.company_tax_id ? ' · CUIT ' + esc(s.company_tax_id) : ''}</div></div>
+  <div class="right"><b>${title}</b><br>
+    ${delivered ? `N° <b>${esc(c.number)}</b>` : '<span class="badge">Sin entregar todavía</span>'}<br>
+    Reserva ${esc(r.code)} · Emitido ${esc(new Date().toLocaleDateString('es-AR'))}</div>
+</div>
+
+<div class="grid">
+  <div><h2>Cliente / conductor principal</h2><table>
+    ${line('Nombre y apellido', esc(r.customer_name))}
+    ${line('Documento', r.customer_doc ? `${esc(r.customer_doc_type || 'DNI')} ${esc(r.customer_doc)}` : '')}
+    ${line('Domicilio', esc(r.customer_address || ''))}
+    ${line('Teléfono', esc(r.customer_phone || ''))}
+    ${line('Email', esc(r.customer_email || ''))}
+    ${line('Fecha de nacimiento', fmtD(r.customer_birth_date))}
+    ${line('Licencia N°', esc(r.customer_license || ''))}
+    ${line('Vencimiento licencia', fmtD(r.customer_license_expiry))}
+  </table>
+  <h2>Conductor adicional</h2><table>
+    ${line('Nombre y apellido', '')}${line('Documento', '')}${line('Licencia N° / vence', '')}
+  </table></div>
+  <div><h2>Vehículo</h2><table>
+    ${line('Marca y modelo', r.vehicle_plate ? `${esc(r.vehicle_brand || '')} ${esc(r.vehicle_model || '')}` : '')}
+    ${line('Patente', r.vehicle_plate ? `<b>${esc(r.vehicle_plate)}</b>` : '')}
+    ${line('Color / año', r.vehicle_plate ? `${esc(r.vehicle_color || '')} ${r.vehicle_year ? '· ' + esc(r.vehicle_year) : ''}` : '')}
+    ${line('Categoría', `${esc(r.category_code)} · ${esc(r.category_name)}`)}
+  </table>
+  <h2>Período del alquiler</h2><table>
+    ${line('Retiro', `${fmtDT(r.pickup_at)} · ${esc(r.pickup_branch_name || '')}`)}
+    ${line('Devolución pactada', `${fmtDT(r.return_at)} · ${esc(r.return_branch_name || '')}`)}
+    ${line('Días', esc(r.days))}
+    ${r.flight ? line('Vuelo / referencia', esc(r.flight)) : ''}
+  </table></div>
+</div>
+
+<div class="grid">
+  <div><h2>Entrega del vehículo</h2><table>
+    ${line('Fecha y hora', delivered ? fmtDT(c.out_at) : '')}
+    ${line('Kilómetros', outKm !== null && outKm !== undefined && outKm !== '' ? `${Number(outKm).toLocaleString('es-AR')} km${delivered ? '' : ' <span class="muted">(según flota, verificar)</span>'}` : '')}
+    ${line('Combustible', fuelGauge(outFuel))}
+  </table></div>
+  <div><h2>Devolución del vehículo</h2><table>
+    ${line('Fecha y hora', c && c.in_at ? fmtDT(c.in_at) : '')}
+    ${line('Kilómetros', c && c.in_at ? `${Number(c.in_km).toLocaleString('es-AR')} km` : '')}
+    ${line('Combustible', fuelGauge(c && c.in_at ? c.in_fuel : null))}
+  </table></div>
+</div>
+
+<h2>Estado del vehículo (marcar con X los daños)</h2>
+<div class="state">${CAR_SVG}
+  <div><div class="muted">Observaciones a la entrega:</div><div class="notes">${esc(c && c.out_notes ? c.out_notes : '')}</div>
+  <div class="muted" style="margin-top:4px">Observaciones a la devolución:</div><div class="notes">${esc(c && c.in_notes ? c.in_notes : '')}</div></div>
+</div>
+
+<div class="grid">
+  <div><h2>Precio</h2><table class="price">
+    ${priceRows.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('')}
+    <tr class="total"><td>Total del alquiler</td><td>${money(r.total)}</td></tr>
+    ${charges.map((l) => `<tr><td>${esc(l.concept)}</td><td>${money(l.amount)}</td></tr>`).join('')}
+    ${c && c.final_total !== null && c.final_total !== undefined && c.final_total !== r.total ? `<tr class="total"><td>Total final con cargos</td><td>${money(c.final_total)}</td></tr>` : ''}
+  </table></div>
+  <div><h2>Pagos y garantía</h2><table class="price">
+    <tr><td>Pagado</td><td>${money(r.balance.paid)}</td></tr>
+    <tr><td>Saldo pendiente</td><td>${money(r.balance.pending)}</td></tr>
+    <tr><td>Garantía requerida</td><td>${money(r.deposit)}</td></tr>
+    <tr><td>Garantía recibida</td><td>${money(r.balance.deposit_held)}</td></tr>
+    <tr><td>Adicionales</td><td>${r.extras.map((x) => esc(x.name)).join(', ') || '—'}</td></tr>
+  </table></div>
+</div>
+
+<p style="margin-top:10px">El Cliente declara haber leído y aceptado las condiciones generales que forman parte de este contrato (página siguiente) y recibir el vehículo en el estado indicado.</p>
+<div class="sign">
+  <div>Firma del cliente<small>Aclaración:<br>DNI:</small></div>
+  <div>Conductor adicional<small>Aclaración:<br>DNI:</small></div>
+  <div>Por ${esc(s.company_name || 'la Empresa')}<small>Aclaración:</small></div>
+</div>
+
+<div class="page2">
+  <div class="head"><div><b>${esc(s.company_name || '')}</b></div><div class="right">Condiciones generales · ${delivered ? 'Contrato N° ' + esc(c.number) : 'Reserva ' + esc(r.code)}</div></div>
+  <h2>Condiciones generales del alquiler</h2>
+  <div class="terms">${contractTerms(r)}</div>
+  <div class="sign" style="grid-template-columns:1fr 1fr">
+    <div>Firma del cliente (conformidad)<small>Aclaración:<br>DNI:</small></div>
+    <div>Por ${esc(s.company_name || 'la Empresa')}</div>
+  </div>
+</div>
+</body></html>`);
   w.document.close();
   w.focus();
-  setTimeout(() => w.print(), 250);
+  setTimeout(() => w.print(), 300);
 }
 
 /* ============================================================
@@ -1778,7 +1929,9 @@ on(/^\/config$/, async (view) => {
       { name: 'one_way_fee', label: 'Recargo por devolver en otro lugar', type: 'number' },
       { name: 'fuel_charge_per_eighth', label: 'Cargo por cada 1/8 de combustible faltante', type: 'number' },
       { name: 'min_driver_age', label: 'Edad mínima del conductor', type: 'number' },
-      { name: 'contract_terms', label: 'Condiciones impresas en el contrato', type: 'textarea', full: true },
+      { name: 'deductible_amount', label: 'Franquicia del seguro (vacío = la de la póliza)', type: 'number' },
+      { name: 'jurisdiction', label: 'Jurisdicción del contrato (tribunales de...)', full: true },
+      { name: 'contract_terms', label: 'Condiciones generales del contrato (un párrafo por cláusula, separadas por una línea en blanco)', type: 'textarea', full: true, rows: 16 },
     ],
     s,
   )}</div>`;
@@ -1790,6 +1943,18 @@ on(/^\/config$/, async (view) => {
     await loadCatalogs();
   });
   $('[data-close]', view).remove();
+  const terms = $('[name=contract_terms]', view);
+  const help = document.createElement('div');
+  help.className = 'full';
+  help.innerHTML = `<p class="muted" style="margin:0 0 8px">Estas palabras se completan solas en cada contrato: <code>{empresa}</code> <code>{tolerancia}</code> <code>{edad_minima}</code>
+    <code>{cargo_combustible}</code> <code>{kilometraje}</code> <code>{franquicia}</code> <code>{garantia}</code> <code>{jurisdiccion}</code>.
+    Son condiciones de uso habitual: conviene que las revise un abogado antes de usarlas.</p>
+    <button type="button" class="btn small" id="terms-reset">Restaurar condiciones sugeridas</button>`;
+  terms.closest('label').after(help);
+  $('#terms-reset', view).addEventListener('click', () => {
+    if (!confirm('¿Reemplazar el texto actual por las condiciones sugeridas? (se aplica al guardar)')) return;
+    terms.value = s.contract_terms_default || '';
+  });
 }, 'config');
 
 const AUDIT_LABEL = {

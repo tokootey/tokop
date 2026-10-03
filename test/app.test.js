@@ -431,3 +431,36 @@ test('fotos de entrega y devolución: subir, listar, ver y borrar', async () => 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('contrato: condiciones generales sugeridas y datos completos para imprimir', async () => {
+  const { getSetting, CONTRACT_TERMS } = require('../src/db');
+  const s = (await call('GET', '/api/settings')).data;
+  assert.match(s.contract_terms, /SALIDA DEL PAÍS/);
+  assert.equal(s.contract_terms_default, CONTRACT_TERMS);
+  assert.equal(s.jurisdiction, 'la ciudad de Ushuaia, Provincia de Tierra del Fuego');
+  // El detalle de la reserva trae lo que necesita el contrato, aunque el auto no se haya entregado.
+  const r = (await call('GET', '/api/reservations/2')).data;
+  for (const k of ['customer_doc_type', 'customer_license', 'customer_license_expiry', 'vehicle_km', 'vehicle_fuel', 'category_km_per_day']) {
+    assert.ok(k in r, `falta ${k}`);
+  }
+  assert.equal(getSetting(db, 'contract_terms'), CONTRACT_TERMS);
+});
+
+test('contrato: el texto viejo se reemplaza al abrir la base', () => {
+  const os = require('node:os');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { openDb: open, setSetting, getSetting, CONTRACT_TERMS } = require('../src/db');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ctr-')), 'x.db');
+  const d1 = open(file);
+  setSetting(d1, 'contract_terms', 'El cliente declara recibir el vehículo en las condiciones detalladas y se compromete a devolverlo en el mismo estado, en la fecha, hora y lugar pactados.');
+  d1.close();
+  const d2 = open(file);
+  assert.equal(getSetting(d2, 'contract_terms'), CONTRACT_TERMS);
+  // Un texto propio no se toca.
+  setSetting(d2, 'contract_terms', 'Mis condiciones');
+  d2.close();
+  const d3 = open(file);
+  assert.equal(getSetting(d3, 'contract_terms'), 'Mis condiciones');
+  d3.close();
+});
