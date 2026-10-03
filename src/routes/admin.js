@@ -2,7 +2,7 @@
 
 const express = require('express');
 const crypto = require('node:crypto');
-const { getSettings, setSetting, newApiKey, DEFAULT_SETTINGS } = require('../db');
+const { getSettings, setSetting, newApiKey, DEFAULT_SETTINGS, CONTRACT_TERMS } = require('../db');
 const { hashPassword, requireAdmin, assertPassword, audit } = require('../auth');
 const { getMapping, getWebformMapping, interpret, ingestQuote, reprocessInbox } = require('../integration');
 const { emit } = require('../webhooks');
@@ -27,6 +27,7 @@ function adminRoutes(db) {
   router.get('/settings', (_req, res) => {
     const s = getSettings(db);
     for (const k of [...SECRET_KEYS, ...INTEGRATION_KEYS]) delete s[k];
+    s.contract_terms_default = CONTRACT_TERMS; // para "Restaurar condiciones sugeridas"
     res.json(s);
   });
 

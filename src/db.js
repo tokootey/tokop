@@ -265,6 +265,44 @@ const WEBFORM_MAPPING = {
   notes: 'comentarios',
 };
 
+const OLD_CONTRACT_TERMS =
+  'El cliente declara recibir el vehículo en las condiciones detalladas y se compromete a devolverlo en el mismo estado, en la fecha, hora y lugar pactados.';
+
+/**
+ * Condiciones generales sugeridas para el contrato (editables en Configuración).
+ * Las palabras entre llaves se completan con los datos de cada alquiler:
+ * {empresa} {tolerancia} {edad_minima} {cargo_combustible} {kilometraje} {franquicia} {garantia} {jurisdiccion}
+ */
+const CONTRACT_TERMS = `1. OBJETO. {empresa} (en adelante, "la Empresa") entrega en alquiler al Cliente el vehículo descripto en este contrato, en buen estado de funcionamiento y limpieza, con la documentación obligatoria, rueda de auxilio, gato, llave de rueda, matafuego y balizas.
+
+2. PLAZO Y DEVOLUCIÓN. El Cliente devolverá el vehículo en la fecha, hora y lugar pactados. Hay una tolerancia de {tolerancia} horas; pasado ese plazo se cobrará un día adicional por cada día o fracción de demora. La devolución anticipada no da derecho a reintegro, salvo acuerdo por escrito con la Empresa.
+
+3. CONDUCTORES. Solo pueden conducir el Cliente y los conductores adicionales registrados en este contrato, mayores de {edad_minima} años y con licencia de conducir vigente para la categoría del vehículo. Está prohibido conducir bajo los efectos del alcohol, estupefacientes o medicamentos que afecten la conducción.
+
+4. USO DEL VEHÍCULO. Queda prohibido: subalquilarlo o prestarlo; usarlo para transporte comercial de pasajeros o carga, competencias, pruebas, remolque o enseñanza de manejo; circular fuera de caminos habilitados; llevar más personas que las permitidas; fumar dentro del vehículo y llevar animales sin transportín.
+
+5. SALIDA DEL PAÍS. El vehículo no puede salir del territorio argentino, incluido el paso por Chile para llegar al continente, sin autorización previa y por escrito de la Empresa, la documentación aduanera y el seguro internacional correspondientes, con los cargos que se informen.
+
+6. COMBUSTIBLE. El vehículo se entrega con el nivel de combustible indicado en este contrato y debe devolverse con el mismo nivel. Cada octavo faltante se cobrará {cargo_combustible}.
+
+7. KILOMETRAJE. {kilometraje}
+
+8. SEGURO Y FRANQUICIA. El vehículo cuenta con seguro según la póliza vigente. El Cliente responde por los daños al vehículo hasta {franquicia} por evento, salvo que haya contratado la cobertura sin franquicia. Si el daño se produce por uso prohibido, conductor no autorizado, alcohol o estupefacientes, o incumplimiento de este contrato, el Cliente responde por el total del daño.
+
+9. ACCIDENTES, ROBO Y AVERÍAS. Ante un accidente, robo, hurto o avería, el Cliente debe avisar de inmediato a la Empresa y, si corresponde, hacer la denuncia policial y entregar la documentación dentro de las 24 horas. No debe reconocer culpa ni acordar con terceros, ni hacer reparaciones sin autorización de la Empresa.
+
+10. MULTAS, PEAJES Y ESTACIONAMIENTO. Las infracciones de tránsito, peajes y estacionamientos ocurridos durante el alquiler son a cargo del Cliente, aunque se notifiquen después de la devolución. La Empresa podrá informar los datos del conductor a la autoridad que lo requiera.
+
+11. GARANTÍA. El Cliente deja una garantía de {garantia} (en efectivo o preautorización de tarjeta), que se devolverá al recibir el vehículo en las condiciones pactadas, descontando los cargos pendientes.
+
+12. ESTADO DEL VEHÍCULO. El Cliente declara recibir el vehículo en el estado que consta en este contrato y en las fotos tomadas en la entrega, y se compromete a devolverlo igual, salvo el desgaste normal por el uso. Los daños no registrados en la entrega se considerarán ocurridos durante el alquiler. La limpieza extraordinaria se podrá cobrar aparte.
+
+13. CONDICIONES CLIMÁTICAS. En temporada invernal el Cliente debe circular con precaución, usar cadenas cuando el estado del camino o la autoridad lo exijan y respetar los cortes de ruta.
+
+14. DATOS PERSONALES. El Cliente presta su conformidad para que la Empresa trate sus datos personales con el fin de gestionar este alquiler, conforme a la Ley 25.326. Puede pedir el acceso, la rectificación o la supresión de sus datos a la Empresa.
+
+15. JURISDICCIÓN. Para cualquier diferencia que surja de este contrato, las partes se someten a los tribunales ordinarios de {jurisdiccion}.`;
+
 const DEFAULT_SETTINGS = {
   company_name: 'Mi Rent a Car',
   company_tax_id: '',
@@ -277,8 +315,9 @@ const DEFAULT_SETTINGS = {
   one_way_fee: '0',
   fuel_charge_per_eighth: '0',
   min_driver_age: '21',
-  contract_terms:
-    'El cliente declara recibir el vehículo en las condiciones detalladas y se compromete a devolverlo en el mismo estado, en la fecha, hora y lugar pactados.',
+  contract_terms: CONTRACT_TERMS,
+  deductible_amount: '',
+  jurisdiction: 'la ciudad de Ushuaia, Provincia de Tierra del Fuego',
   // Integración con cotizador
   api_key: '',
   quote_mapping: JSON.stringify(DEFAULT_MAPPING, null, 2),
@@ -302,6 +341,8 @@ function openDb(file = process.env.DB_FILE || path.join(__dirname, '..', 'data',
   migrate(db);
   const insert = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) insert.run(k, v);
+  // Instalaciones con el texto de contrato original: pasan a las condiciones completas.
+  if (getSetting(db, 'contract_terms') === OLD_CONTRACT_TERMS) setSetting(db, 'contract_terms', CONTRACT_TERMS);
   if (!getSetting(db, 'api_key')) setSetting(db, 'api_key', newApiKey());
   if (!getSetting(db, 'webhook_secret')) setSetting(db, 'webhook_secret', crypto.randomBytes(24).toString('hex'));
   return db;
@@ -336,4 +377,4 @@ function setSetting(db, key, value) {
   );
 }
 
-module.exports = { openDb, getSetting, getSettings, setSetting, newApiKey, DEFAULT_MAPPING, WEBFORM_MAPPING, DEFAULT_SETTINGS };
+module.exports = { openDb, getSetting, getSettings, setSetting, newApiKey, DEFAULT_MAPPING, WEBFORM_MAPPING, DEFAULT_SETTINGS, CONTRACT_TERMS };

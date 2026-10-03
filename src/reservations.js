@@ -20,8 +20,11 @@ function getReservation(db, id) {
   const r = db
     .prepare(
       `SELECT r.*, c.full_name AS customer_name, c.doc_number AS customer_doc, c.email AS customer_email, c.phone AS customer_phone,
-              cat.code AS category_code, cat.name AS category_name,
-              v.plate AS vehicle_plate, v.brand AS vehicle_brand, v.model AS vehicle_model,
+              c.doc_type AS customer_doc_type, c.address AS customer_address, c.birth_date AS customer_birth_date,
+              c.license_number AS customer_license, c.license_expiry AS customer_license_expiry,
+              cat.code AS category_code, cat.name AS category_name, cat.km_per_day AS category_km_per_day, cat.extra_km_rate AS category_extra_km_rate,
+              v.plate AS vehicle_plate, v.brand AS vehicle_brand, v.model AS vehicle_model, v.color AS vehicle_color, v.year AS vehicle_year,
+              v.km AS vehicle_km, v.fuel AS vehicle_fuel,
               pb.name AS pickup_branch_name, rb.name AS return_branch_name
        FROM reservations r
        JOIN customers c ON c.id = r.customer_id
