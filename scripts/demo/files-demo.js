@@ -15,7 +15,7 @@ const TYPES = {
   'image/heif': 'heif',
   'application/pdf': 'pdf',
 };
-const STAGES = ['entrega', 'devolucion', 'otro'];
+const STAGES = ['entrega', 'devolucion', 'contrato', 'otro'];
 const MAX_BYTES = 20 * 1024 * 1024;
 
 function fileRoutes(db) {

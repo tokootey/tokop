@@ -229,7 +229,7 @@
     return parts.join('/');
   }
   function makeRequire(from) {
-    return (name) => {
+    const req = (name) => {
       if (builtins[name]) return builtins[name];
       let p = resolve(from, name);
       if (!modules[p] && modules[p + '.js']) p += '.js';
@@ -240,6 +240,9 @@
       modules[p](module, module.exports, makeRequire(p), `/app/${p}`, `/app/${p}`.replace(/\/[^/]*$/, ''));
       return module.exports;
     };
+    // En la demo las librerías ya vienen dentro de la página: alcanza con una ruta simbólica.
+    req.resolve = (name) => `/node_modules/${name}/dist/index.js`;
+    return req;
   }
 
   /* ---------- Guardado en el navegador ---------- */

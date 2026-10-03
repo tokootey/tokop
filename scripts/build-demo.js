@@ -47,7 +47,7 @@ const sqljs = fs.readFileSync(require.resolve('sql.js/dist/sql-asm-memory-growth
 const index = read('public/index.html');
 const body = index
   .slice(index.indexOf('<body>') + 6, index.indexOf('</body>'))
-  .replace(/<script src="\/app\.js"><\/script>/, '')
+  .replace(/<script src="[^"]*"><\/script>\s*/g, '')
   .trim();
 
 const demoCss = `
@@ -92,6 +92,15 @@ ${safe(sqljs)}
 <script>
 ${safe(runtime)}
 ${safe(demoUi)}
+</script>
+<script>
+${safe(fs.readFileSync(path.join(path.dirname(require.resolve('jspdf')), 'jspdf.umd.min.js'), 'utf8'))}
+</script>
+<script>
+${safe(fs.readFileSync(path.join(path.dirname(require.resolve('jspdf-autotable')), 'jspdf.plugin.autotable.min.js'), 'utf8'))}
+</script>
+<script>
+${safe(read('public/contract-pdf.js'))}
 </script>
 <script>
 ${safe(read('public/app.js'))}
