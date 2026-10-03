@@ -1,0 +1,8 @@
+# Netlify publica la versión de prueba (demo) de la app: funciona entera en el navegador.
+# La app real necesita un servidor (ver "Publicarla en internet" en el README).
+[build]
+  command = "npm run demo -- site/index.html --standalone"
+  publish = "site"
+
+[build.environment]
+  NODE_VERSION = "22"

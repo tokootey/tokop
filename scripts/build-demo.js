@@ -112,4 +112,6 @@ const page = standalone
   : html;
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, page);
+// En un hosting estático (Netlify), cualquier dirección del sitio muestra la app.
+if (standalone) fs.writeFileSync(path.join(path.dirname(out), '_redirects'), '/*    /index.html   200\n');
 console.log(`Demo generada: ${out} (${(page.length / 1024 / 1024).toFixed(2)} MB)`);
