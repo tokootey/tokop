@@ -282,3 +282,18 @@ pre { background: #0f172a; color: #dbe4f3; padding: 12px; border-radius: 8px; ov
 @media (max-width: 800px) { table.mini th, table.mini td { padding: 7px 6px; font-size: 13px; } }
 /* Barra de búsqueda dentro de un recuadro: sin doble borde */
 .card .toolbar { padding: 0; border: none; box-shadow: none; background: none; }
+
+/* Importar datos */
+.import-intro p:first-child { margin-top: 0; }
+.import-intro details { margin: 8px 0 12px; }
+.import-intro summary, .card details summary { cursor: pointer; color: var(--primary); font-weight: 600; }
+.import-intro ul { margin: 8px 0 0; padding-left: 20px; line-height: 1.55; }
+.import-kinds { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0; }
+.imp-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 6px 0 14px; }
+.imp-count { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; background: var(--soft); }
+.imp-count b { font-size: 22px; }
+.imp-count span { font-size: 12.5px; color: var(--muted); }
+.imp-count.ok b { color: #0f6e43; }
+.imp-count.info b { color: #1450b5; }
+.imp-count.warn b { color: #8a5a00; }
+.imp-count.bad b { color: #a12427; }

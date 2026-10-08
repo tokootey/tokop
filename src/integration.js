@@ -198,6 +198,7 @@ function resolveExtras(db, extras, { lenient = false } = {}) {
 function parseAmount(value) {
   if (typeof value === 'number') return value;
   let s = String(value).replace(/[^\d.,-]/g, '');
+  if (!/\d/.test(s)) return undefined; // "consultar", "-", vacío: no es un importe
   const lastDot = s.lastIndexOf('.');
   const lastComma = s.lastIndexOf(',');
   if (lastDot >= 0 && lastComma >= 0) {
@@ -321,4 +322,4 @@ function reprocessInbox(db, inboxId) {
   return ingestQuote(db, JSON.parse(row.payload), row.id);
 }
 
-module.exports = { getMapping, getWebformMapping, joinDateTime, mapPayload, autoDetect, interpret, parseAmount, reservationFromQuote, ingestQuote, reprocessInbox, findByCodeOrName };
+module.exports = { getMapping, getWebformMapping, joinDateTime, normKey, fold, mapPayload, autoDetect, interpret, parseAmount, reservationFromQuote, ingestQuote, reprocessInbox, findByCodeOrName };

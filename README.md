@@ -68,6 +68,22 @@ La app ya está preparada para publicarse en [Render](https://render.com). Lleva
 7. Entrá a la app con ese usuario y contraseña. Ya podés cargar autos, tarifas y usuarios.
 8. En **Cotizador → Formulario web**, copiá la línea `<script …>`. Ya trae la dirección real de la app. Mandásela a quien administra el sitio web para que la pegue en la página del cotizador.
 
+## Pasar los datos del sistema anterior (Drive, Excel u otra página)
+
+Menú **Importar datos** (sólo administradores). Conviene seguir este orden: **1 · Flota**, **2 · Clientes**, **3 · Reservas**.
+
+1. Sacá los datos de la planilla: en Google Drive, *Archivo → Descargar → Valores separados por comas (.csv)*; en Excel, *Guardar como → CSV UTF-8*. También se pueden copiar las celdas (con la fila de títulos) y pegarlas.
+2. Tocá **Leer datos**: el sistema reconoce las columnas por su nombre ("Dominio", "Fecha entrega", "Seña", "DNI", "Venc. licencia"…) y te deja corregir cuál es cuál.
+3. Tocá **Probar (no guarda nada)**: muestra exactamente qué se va a crear, actualizar u omitir, y qué filas tienen errores o avisos.
+4. Tocá **Importar**.
+
+- Entiende fechas `15/01/2027`, `15-1-27 10:30`, `2027-01-15`, fechas de Excel y planillas en formato inglés (mes/día); horas `10hs`, `10:30`, `6:30 p. m.`; importes `$ 150.000`; combustible `3/4`, `lleno`, `50%`.
+- No duplica: clientes por documento, email o teléfono (dos personas con el mismo nombre y distinto DNI quedan separadas); autos por patente; reservas por su número anterior o por cliente + fechas. Se puede volver a importar el mismo archivo.
+- Si un cliente o auto ya existe se puede *completar sólo lo que falta*, *reemplazar* o *no tocarlo*.
+- Las reservas en curso abren su contrato, así la devolución se registra desde la app. Si un auto ya está ocupado en esas fechas, la reserva entra sin auto y con aviso. La seña se carga como pago.
+- Las columnas que no tienen lugar se guardan en "Observaciones" para no perder nada.
+- El archivo no se guarda; en la actividad de Usuarios queda sólo quién importó y cuántas filas (sin datos personales). Después de importar, borrá el CSV de la computadora y dejá de compartir la planilla vieja.
+
 ## Seguridad y datos de los clientes
 
 **Acceso**

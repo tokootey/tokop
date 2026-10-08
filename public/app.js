@@ -2045,6 +2045,7 @@ const AUDIT_LABEL = {
   integracion_modificada: 'Integración modificada',
   api_key_regenerada: 'API key regenerada',
   secreto_webhook_regenerado: 'Secreto de webhook regenerado',
+  importacion: 'Importación de datos',
 };
 
 on(/^\/usuarios$/, async (view) => {
@@ -2103,6 +2104,190 @@ on(/^\/usuarios$/, async (view) => {
     }),
   );
 }, 'usuarios');
+
+/* ============================================================
+   Importar datos de sistemas anteriores (sólo administradores)
+   ============================================================ */
+const IMPORT_KINDS = [
+  { key: 'flota', label: '1 · Flota', hint: 'Patente, marca, modelo, año, categoría, estado, km, vencimientos de seguro y VTV.' },
+  { key: 'clientes', label: '2 · Clientes', hint: 'Nombre, documento, email, teléfono, domicilio, licencia, fecha de nacimiento.' },
+  { key: 'reservas', label: '3 · Reservas', hint: 'Cliente, fechas y horas de entrega y devolución, patente o categoría, estado, total y seña.' },
+];
+const IMPORT_ACTION = {
+  creado: ['Nuevo', 'b-en_curso'],
+  actualizado: ['Actualizado', 'b-confirmada'],
+  sin_cambios: ['Sin cambios', 'b-finalizada'],
+  omitido: ['Ya existía', 'b-finalizada'],
+  error: ['Error', 'b-error'],
+};
+
+/** Lee el archivo como texto: las planillas de Google vienen en UTF-8; las de Excel a veces en Windows-1252. */
+async function readTextFile(file) {
+  const buf = await file.arrayBuffer();
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch {
+    return new TextDecoder('windows-1252').decode(buf);
+  }
+}
+
+on(/^\/importar$/, async (view) => {
+  if (!isAdmin()) {
+    view.innerHTML = '<div class="card"><p class="muted">Sólo los administradores pueden importar datos.</p></div>';
+    return;
+  }
+  const st = { kind: 'flota', text: '', fileName: '', analysis: null };
+  view.innerHTML = `<div class="page-head"><h1>Importar datos</h1></div>
+    <div class="card import-intro">
+      <p>Pasá acá lo que tenían en el Drive y en el sistema anterior. Conviene seguir este orden: <b>primero la flota, después los clientes y al final las reservas</b> (así cada reserva encuentra su auto y su cliente).</p>
+      <details><summary>¿Cómo saco los datos de la planilla?</summary>
+        <ul>
+          <li><b>Google Drive (Hojas de cálculo):</b> abrí la planilla → <i>Archivo</i> → <i>Descargar</i> → <i>Valores separados por comas (.csv)</i>. Si tiene varias pestañas, descargá cada una.</li>
+          <li><b>Excel:</b> <i>Archivo</i> → <i>Guardar como</i> → tipo <i>CSV UTF-8</i>.</li>
+          <li><b>Otra página o sistema:</b> buscá un botón "Exportar" / "Descargar Excel". Si no tiene, seleccioná la tabla con el mouse, copiala y pegala abajo.</li>
+          <li>También podés <b>copiar las celdas</b> directo de la planilla (incluida la fila de títulos) y pegarlas en el cuadro de texto.</li>
+        </ul>
+      </details>
+      <p class="muted">Los datos se procesan en este sistema y no se envían a ningún otro lado. El archivo no se guarda: sólo los registros importados. Después de importar, borrá el archivo descargado de tu computadora y dejá de compartir la planilla vieja.</p>
+    </div>
+    <div class="seg import-kinds">${IMPORT_KINDS.map((k) => `<button type="button" class="btn${k.key === st.kind ? ' primary' : ''}" data-kind="${k.key}">${k.label}</button>`).join('')}</div>
+    <div class="card">
+      <p class="muted" id="imp-hint"></p>
+      <div class="form-grid">
+        <label class="full">Archivo CSV<input type="file" id="imp-file" accept=".csv,.tsv,.txt,text/csv,text/plain"></label>
+        <label class="full">…o pegá acá las celdas copiadas<textarea id="imp-paste" rows="5" placeholder="Copiá de la planilla las columnas con sus títulos y pegalas acá"></textarea></label>
+      </div>
+      <div class="actions" style="margin-top:14px"><button class="btn primary" id="imp-analyze" type="button">Leer datos</button></div>
+    </div>
+    <div id="imp-step2"></div>
+    <div id="imp-report"></div>`;
+
+  const setKind = (kind) => {
+    st.kind = kind;
+    st.analysis = null;
+    $$('[data-kind]', view).forEach((b) => b.classList.toggle('primary', b.dataset.kind === kind));
+    $('#imp-hint').textContent = `Columnas que se reconocen: ${IMPORT_KINDS.find((k) => k.key === kind).hint} Las columnas pueden tener otros nombres: después podés corregir cuál es cuál.`;
+    $('#imp-step2').innerHTML = '';
+    $('#imp-report').innerHTML = '';
+  };
+  $$('[data-kind]', view).forEach((b) => b.addEventListener('click', () => setKind(b.dataset.kind)));
+  setKind(st.kind);
+
+  $('#imp-analyze').addEventListener('click', async () => {
+    const file = $('#imp-file').files[0];
+    const pasted = $('#imp-paste').value;
+    try {
+      if (file) {
+        if (/\.(xlsx?|ods|numbers)$/i.test(file.name)) throw new Error('Ese archivo es de Excel/Hojas de cálculo: guardalo como CSV (ver "¿Cómo saco los datos?") o copiá y pegá las celdas.');
+        if (file.size > 5 * 1024 * 1024) throw new Error('El archivo pesa más de 5 MB: dividilo en partes.');
+        st.text = await readTextFile(file);
+        st.fileName = file.name;
+      } else if (pasted.trim()) {
+        st.text = pasted;
+        st.fileName = 'datos pegados';
+      } else throw new Error('Elegí un archivo o pegá los datos');
+      st.analysis = await POST('/import/analyze', { kind: st.kind, text: st.text });
+      renderMapping();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  });
+
+  function renderMapping() {
+    const a = st.analysis;
+    const opt = (sel) => `<option value="">— no está —</option>${a.headers.map((h, i) => `<option value="${i}"${sel === i ? ' selected' : ''}>${esc(h)}</option>`).join('')}`;
+    const needsCategory = st.kind !== 'clientes';
+    $('#imp-step2').innerHTML = `<div class="card" style="margin-top:16px">
+      <h2>¿Qué es cada columna?</h2>
+      <p class="muted">${esc(st.fileName)} · ${a.total_rows} fila(s). Revisá lo que reconoció el sistema y corregí lo que haga falta.</p>
+      <div class="form-grid">${a.fields
+        .map((f) => `<label>${esc(f.label)}${f.required ? ' *' : ''}<select data-map="${f.key}">${opt(a.mapping[f.key])}</select></label>`)
+        .join('')}</div>
+      <h3 style="margin-top:18px">Primeras filas</h3>
+      <div class="table-wrap table-scroll"><table><thead><tr>${a.headers.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${a.preview
+        .map((r) => `<tr>${a.headers.map((_, i) => `<td class="nowrap">${esc(r[i] || '')}</td>`).join('')}</tr>`)
+        .join('')}</tbody></table></div>
+      <div class="form-grid" style="margin-top:18px">
+        ${
+          st.kind === 'reservas'
+            ? ''
+            : `<label>Si ya estaba cargado<select id="imp-mode"><option value="completar">Completar sólo los datos que faltan</option><option value="reemplazar">Reemplazar con los datos del archivo</option><option value="omitir">No tocarlo</option></select></label>`
+        }
+        ${
+          needsCategory
+            ? `<label>Categoría por defecto (si falta o no se reconoce)<select id="imp-cat"><option value="">— ninguna —</option>${(state.categories || [])
+                .map((c) => `<option value="${c.id}">${esc(c.code)} · ${esc(c.name)}</option>`)
+                .join('')}</select></label>`
+            : ''
+        }
+        <label class="check full"><input type="checkbox" id="imp-extra" checked> Guardar las columnas que no tienen lugar en "Observaciones" (para no perder nada)</label>
+      </div>
+      <p class="muted">${
+        st.kind === 'reservas'
+          ? 'Las reservas que ya se importaron antes (mismo número, o mismo cliente y fechas) se saltean, así que podés volver a importar el archivo sin duplicar. Los clientes que no estén cargados se crean.'
+          : 'Los registros repetidos se detectan solos (clientes por documento, email o teléfono; autos por patente), así que podés volver a importar sin duplicar.'
+      }</p>
+      <div class="actions" style="margin-top:14px"><button class="btn" id="imp-test" type="button">Probar (no guarda nada)</button><button class="btn primary" id="imp-run" type="button">Importar</button></div>
+    </div>`;
+    $('#imp-test').addEventListener('click', () => run(true));
+    $('#imp-run').addEventListener('click', () => run(false));
+  }
+
+  async function run(dryRun) {
+    const mapping = {};
+    $$('[data-map]', view).forEach((s) => {
+      if (s.value !== '') mapping[s.dataset.map] = Number(s.value);
+    });
+    const options = {
+      dry_run: dryRun,
+      mode: $('#imp-mode') ? $('#imp-mode').value : undefined,
+      default_category_id: $('#imp-cat') ? $('#imp-cat').value || null : null,
+      keep_extra: $('#imp-extra').checked,
+    };
+    if (!dryRun && !confirm(`¿Importar ${st.analysis.total_rows} fila(s) de ${IMPORT_KINDS.find((k) => k.key === st.kind).label.slice(4)}?`)) return;
+    const buttons = $$('#imp-test, #imp-run', view);
+    buttons.forEach((b) => (b.disabled = true));
+    try {
+      const r = await POST('/import/run', { kind: st.kind, text: st.text, mapping, options });
+      renderReport(r);
+      if (!dryRun) {
+        toast('Importación terminada');
+        $('#imp-file').value = '';
+        $('#imp-paste').value = '';
+      }
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      buttons.forEach((b) => (b.disabled = false));
+    }
+  }
+
+  function renderReport(r) {
+    const c = r.counts;
+    const pill = (n, label, cls) => `<div class="imp-count ${cls}"><b>${n}</b><span>${label}</span></div>`;
+    const issues = r.rows.filter((x) => x.action === 'error' || x.messages.length);
+    const rowHtml = (x) => {
+      const [label, cls] = IMPORT_ACTION[x.action] || [x.action, ''];
+      return `<tr><td class="nowrap">Fila ${x.line}</td><td><span class="badge ${cls}">${label}</span></td><td>${esc(x.label)}</td><td><small>${x.messages.map(esc).join('<br>')}</small></td></tr>`;
+    };
+    $('#imp-report').innerHTML = `<div class="card" style="margin-top:16px">
+      <h2>${r.dry_run ? 'Prueba: así quedaría (todavía no se guardó nada)' : 'Resultado de la importación'}</h2>
+      <div class="imp-counts">${pill(c.creado, r.dry_run ? 'se crearían' : 'nuevos', 'ok')}${pill(c.actualizado, r.dry_run ? 'se actualizarían' : 'actualizados', 'info')}${pill(c.omitido + c.sin_cambios, 'ya estaban', '')}${pill(c.error, 'con error', c.error ? 'bad' : '')}${pill(r.warnings, 'avisos', r.warnings ? 'warn' : '')}</div>
+      ${
+        r.dry_run
+          ? `<p class="muted">${c.error ? 'Las filas con error no se van a importar: corregilas en la planilla y volvé a leer el archivo, o importá igual y cargalas a mano.' : 'Si está todo bien, tocá <b>Importar</b>.'}</p>`
+          : `<p class="muted">Quedó registrado en la actividad de Usuarios. ${st.kind === 'reservas' ? 'Las reservas importadas dicen "importado" como origen.' : ''}</p>`
+      }
+      ${
+        issues.length
+          ? `<h3>Filas para revisar (${issues.length})</h3><div class="table-wrap table-scroll"><table><thead><tr><th>Fila</th><th>Resultado</th><th>Registro</th><th>Detalle</th></tr></thead><tbody>${issues.map(rowHtml).join('')}</tbody></table></div>`
+          : '<p>Ninguna fila tiene avisos.</p>'
+      }
+      <details style="margin-top:12px"><summary>Ver todas las filas (${r.rows.length})</summary><div class="table-wrap table-scroll"><table><tbody>${r.rows.map(rowHtml).join('')}</tbody></table></div></details>
+    </div>`;
+    $('#imp-report').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}, 'importar');
 
 /* ============================================================
    Inicio
