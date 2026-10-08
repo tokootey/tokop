@@ -384,4 +384,6 @@ module.exports = {
   checkin,
   addPayment,
   publicView,
+  nextCode,
+  log,
 };

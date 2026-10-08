@@ -10,6 +10,7 @@ const { adminRoutes } = require('./routes/admin');
 const { publicRoutes } = require('./routes/public');
 const { webformRoutes } = require('./routes/webform');
 const { fileRoutes } = require('./routes/files');
+const { importRoutes } = require('./routes/importer');
 const { HttpError } = require('./util');
 
 /** Crea el usuario administrador inicial si no hay ninguno. */
@@ -50,7 +51,9 @@ function createApp(db, options = {}) {
   if (tp) app.set('trust proxy', /^\d+$/.test(tp) ? Number(tp) : tp === 'true' ? true : tp);
   app.use(httpsRedirect);
   app.use(securityHeaders);
-  app.use(express.json({ limit: '1mb' }));
+  // Las importaciones de planillas traen más datos: su cuerpo se lee recién después de verificar la sesión.
+  const json = express.json({ limit: '1mb' });
+  app.use((req, res, next) => (req.path.startsWith('/api/import/') ? next() : json(req, res, next)));
 
   // CORS sólo para la API pública (el cotizador puede llamarla desde el navegador).
   app.use('/api/public', (req, res, next) => {
@@ -87,7 +90,7 @@ function createApp(db, options = {}) {
     changePassword(db, req);
     res.json({ ok: true });
   });
-  app.use('/api', sameOrigin, auth, requirePasswordChanged, catalogRoutes(db), operationsRoutes(db), fileRoutes(db, uploadsDir), adminRoutes(db));
+  app.use('/api', sameOrigin, auth, requirePasswordChanged, catalogRoutes(db), operationsRoutes(db), fileRoutes(db, uploadsDir), adminRoutes(db), importRoutes(db));
 
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Ruta inexistente')));
 
