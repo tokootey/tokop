@@ -321,48 +321,55 @@ window.addEventListener('hashchange', route);
    ============================================================ */
 on(/^\/panel$/, async (view) => {
   const d = await GET('/dashboard');
-  const list = (rows, kind) =>
+  // Lista de reservas del día: hora | cliente | auto, cada fila lleva a la reserva.
+  const list = (rows, kind, empty) =>
     rows.length
-      ? `<table><tbody>${rows
-          .map(
-            (r) => `<tr class="click" data-href="#/reservas/${r.id}">
-              <td class="nowrap">${fmtDT(kind === 'pickup' ? r.pickup_at : r.return_at).slice(11)}<br><small class="muted">${fmtD(kind === 'pickup' ? r.pickup_at : r.return_at)}</small></td>
-              <td><b>${esc(r.customer_name)}</b><br><small class="muted">${esc(r.code)} · ${esc(r.customer_phone || '')}</small></td>
-              <td>${esc(r.category_code)} ${r.vehicle_plate ? `· <b>${esc(r.vehicle_plate)}</b>` : '<span class="badge b-pendiente">sin auto</span>'}</td>
-              <td><small>${esc(kind === 'pickup' ? r.pickup_branch_name || '' : r.return_branch_name || '')}</small></td>
-            </tr>`,
-          )
-          .join('')}</tbody></table>`
-      : '<p class="muted">Nada por aquí.</p>';
+      ? `<div class="daylist">${rows
+          .map((r) => {
+            const at = kind === 'pickup' ? r.pickup_at : r.return_at;
+            const branch = kind === 'pickup' ? r.pickup_branch_name : r.return_branch_name;
+            return `<div class="dayrow click" data-href="#/reservas/${r.id}">
+              <div class="when"><b>${fmtDT(at).slice(11)}</b><small>${fmtD(at).slice(0, 5)}</small></div>
+              <div class="who"><b>${esc(r.customer_name)}</b><small>${esc(r.code)}${r.customer_phone ? ` · ${esc(r.customer_phone)}` : ''}${branch ? ` · ${esc(branch)}` : ''}</small></div>
+              <div class="what">${r.vehicle_plate ? `<span class="plate">${esc(r.vehicle_plate)}</span>` : '<span class="badge b-pendiente">sin auto</span>'}<small>Cat. ${esc(r.category_code)}</small></div>
+            </div>`;
+          })
+          .join('')}</div>`
+      : `<p class="empty">${empty}</p>`;
+  const count = (n) => `<span class="count">${n}</span>`;
+  const kpi = (label, value, sub = '', extra = '') => `<div class="kpi"><div class="l">${label}</div><div class="v">${value}</div>${sub ? `<div class="s">${sub}</div>` : ''}${extra}</div>`;
   view.innerHTML = `
     <div class="page-head"><h1>Panel</h1><a class="btn primary" href="#/reservas/nueva">+ Nueva reserva</a></div>
     <div class="kpis">
-      <div class="kpi"><div class="l">Flota operativa</div><div class="v">${d.fleet.operational}<small class="muted"> / ${d.fleet.total}</small></div></div>
-      <div class="kpi"><div class="l">Disponibles</div><div class="v">${d.fleet.disponible || 0}</div></div>
-      <div class="kpi"><div class="l">Alquilados</div><div class="v">${d.fleet.alquilado || 0}</div></div>
-      <div class="kpi"><div class="l">En taller</div><div class="v">${d.fleet.mantenimiento || 0}</div></div>
-      <div class="kpi"><div class="l">Ocupación</div><div class="v">${d.occupancy}%</div></div>
-      <div class="kpi"><div class="l">Cobrado este mes</div><div class="v" style="font-size:18px">${money(d.month_revenue)}</div></div>
-      <div class="kpi"><div class="l">Reservas del mes</div><div class="v">${d.month_reservations}</div><small class="muted">${d.from_quoter_month} desde cotizador/web</small></div>
-      <div class="kpi"><div class="l">A confirmar</div><div class="v">${d.pending_confirmation}</div><small class="muted">${d.unassigned_next_7d} sin auto (7 días)</small></div>
+      ${kpi('Flota operativa', `${d.fleet.operational}<small> / ${d.fleet.total}</small>`, 'autos que se pueden alquilar')}
+      ${kpi('Disponibles', d.fleet.disponible || 0, 'listos para entregar')}
+      ${kpi('Alquilados', d.fleet.alquilado || 0, 'en la calle ahora')}
+      ${kpi('En taller', d.fleet.mantenimiento || 0, `${d.alerts.maintenance_open} mantenimiento(s) abierto(s)`)}
+      ${kpi('Ocupación', `${d.occupancy}%`, '', `<div class="meter"><i style="width:${Math.min(100, Number(d.occupancy) || 0)}%"></i></div>`)}
+      ${kpi('Cobrado este mes', money(d.month_revenue), 'pagos registrados')}
+      ${kpi('Reservas del mes', d.month_reservations, `${d.from_quoter_month} desde el cotizador o la web`)}
+      ${kpi('A confirmar', d.pending_confirmation, `${d.unassigned_next_7d} sin auto en los próximos 7 días`)}
     </div>
     ${
       d.quote_errors
-        ? `<div class="card" style="border-color:#f0c4c5;margin-bottom:16px">⚠️ Hay <b>${d.quote_errors}</b> solicitud(es) del cotizador/formulario web con error. <a href="#/cotizador">Revisar bandeja</a></div>`
+        ? `<div class="notice warn">Hay <b>${d.quote_errors}</b> solicitud(es) del cotizador o del formulario web con error. <a href="#/cotizador">Revisar bandeja</a></div>`
         : ''
     }
-    <div class="grid cols-2">
-      <div class="card"><h2>Entregas de hoy</h2>${list(d.pickups_today, 'pickup')}</div>
-      <div class="card"><h2>Devoluciones de hoy</h2>${list(d.returns_today, 'return')}</div>
-      <div class="card"><h2>⚠️ Devoluciones vencidas</h2>${list(d.overdue, 'return')}</div>
-      <div class="card"><h2>Retiros atrasados (no se presentaron)</h2>${list(d.late_pickups, 'pickup')}</div>
-      <div class="card"><h2>Vencimientos de documentación (30 días)</h2>${
+    <div class="dash">
+      <div class="card"><h2>Entregas de hoy ${count(d.pickups_today.length)}</h2>${list(d.pickups_today, 'pickup', 'No hay entregas para hoy.')}</div>
+      <div class="card"><h2>Devoluciones de hoy ${count(d.returns_today.length)}</h2>${list(d.returns_today, 'return', 'No hay devoluciones para hoy.')}</div>
+      <div class="card ${d.overdue.length ? 'alert' : ''}"><h2>Devoluciones vencidas ${count(d.overdue.length)}</h2>${list(d.overdue, 'return', 'Todos los autos volvieron a tiempo.')}</div>
+      <div class="card ${d.late_pickups.length ? 'alert' : ''}"><h2>Clientes que no retiraron ${count(d.late_pickups.length)}</h2>${list(d.late_pickups, 'pickup', 'Nadie quedó sin retirar.')}</div>
+      <div class="card wide"><h2>Vencimientos de documentación (próximos 30 días) ${count(d.alerts.documents.length)}</h2>${
         d.alerts.documents.length
-          ? `<table><tbody>${d.alerts.documents
-              .map((v) => `<tr><td><b>${esc(v.plate)}</b></td><td>Seguro: ${fmtD(v.insurance_expiry)}</td><td>VTV: ${fmtD(v.vtv_expiry)}</td></tr>`)
-              .join('')}</tbody></table>`
-          : '<p class="muted">Sin vencimientos próximos.</p>'
-      }<p class="muted">Mantenimientos abiertos: ${d.alerts.maintenance_open}</p></div>
+          ? `<div class="daylist">${d.alerts.documents
+              .map(
+                (v) =>
+                  `<div class="dayrow docs"><span class="plate">${esc(v.plate)}</span><div><small>Seguro</small><b>${fmtD(v.insurance_expiry) || '—'}</b></div><div><small>VTV</small><b>${fmtD(v.vtv_expiry) || '—'}</b></div></div>`,
+              )
+              .join('')}</div>`
+          : '<p class="empty">Ningún seguro ni VTV vence en los próximos 30 días.</p>'
+      }</div>
     </div>`;
 }, 'panel');
 
@@ -536,7 +543,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
     $('#cats').innerHTML = quotes
       .map(
         (c) => `<div class="cat-card ${c.available ? '' : 'none'} ${sel.category_id === c.id ? 'selected' : ''}" data-cat="${c.id}">
-          <b>${esc(c.code)}</b> · ${esc(c.name)}
+          <div class="cat-name"><span class="cat-code">${esc(c.code)}</span>${esc(c.name)}</div>
           <div class="muted">${c.available} disponible(s) · ${c.quote.days} día(s)</div>
           <div class="price">${money(c.quote.total)}</div>
           <small class="muted">Garantía ${money(c.quote.deposit)}</small></div>`,
@@ -684,7 +691,8 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
       ${r.external_id ? `<small class="muted">Id en cotizador: ${esc(r.external_id)}</small>` : ''}</div>
       <div class="actions no-print">${actions.join('')}</div>
     </div>
-    <div class="grid cols-2">
+    <div class="detail">
+      <div class="col">
       <div class="card">
         <h2>Datos de la reserva</h2>
         <dl class="info">
@@ -698,7 +706,6 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
           <dt>Notas</dt><dd>${esc(r.notes || '—')}</dd>
         </dl>
       </div>
-      <div class="card"><h2>Precio</h2>${r.pricing ? breakdownHtml(r.pricing) : money(r.total)}</div>
       ${
         c
           ? `<div class="card"><h2>Contrato ${esc(c.number)}</h2>
@@ -718,6 +725,10 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
         }</div>`
           : ''
       }
+      ${filesCardHtml(r)}
+      </div>
+      <div class="col">
+      <div class="card"><h2>Precio</h2>${r.pricing ? breakdownHtml(r.pricing) : money(r.total)}</div>
       <div class="card">
         <h2>Pagos</h2>
         <dl class="info">
@@ -728,23 +739,30 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
         </dl>
         ${
           r.payments.length
-            ? `<table style="margin-top:10px"><thead><tr><th>Fecha</th><th>Tipo</th><th>Medio</th><th class="right">Importe</th></tr></thead><tbody>${r.payments
+            ? `<div class="table-scroll"><table class="mini" style="margin-top:12px"><thead><tr><th>Fecha</th><th>Tipo</th><th>Medio</th><th class="right">Importe</th></tr></thead><tbody>${r.payments
                 .map(
                   (p) =>
-                    `<tr><td>${esc(p.created_at.slice(0, 16))}</td><td>${esc(PAYMENT_KINDS[p.kind] || p.kind)}</td><td>${esc(p.method || '')} ${p.reference ? `<small class="muted">${esc(p.reference)}</small>` : ''}</td><td class="right">${money(p.amount)}</td></tr>`,
+                    `<tr><td class="nowrap">${fmtDT(String(p.created_at).replace(' ', 'T')).slice(0, 5)} ${esc(String(p.created_at).slice(11, 16))}</td><td>${esc(PAYMENT_KINDS[p.kind] || p.kind)}</td><td>${esc(p.method || '')} ${p.reference ? `<small class="muted">${esc(p.reference)}</small>` : ''}</td><td class="right">${money(p.amount)}</td></tr>`,
                 )
-                .join('')}</tbody></table>`
+                .join('')}</tbody></table></div>`
             : ''
         }
         <div class="actions no-print" style="margin-top:12px"><button class="btn" data-act="pay">+ Registrar pago / garantía</button></div>
       </div>
-      ${filesCardHtml(r)}
       <div class="card"><h2>Historial</h2>
-        <table><tbody>${r.log
-          .map((l) => `<tr><td class="nowrap"><small>${esc(l.at.slice(0, 16))}</small></td><td>${esc(l.action)}</td><td><small class="muted">${esc(l.user_name || 'sistema')}</small></td><td><small>${esc(logDetail(l.detail))}</small></td></tr>`)
-          .join('')}</tbody></table>
+        <ol class="timeline">${r.log
+          .slice()
+          .reverse()
+          .map(
+            (l) => `<li><div class="t-head"><b>${esc(LOG_LABEL[l.action] || l.action)}</b><small>${fmtDT(String(l.at).replace(' ', 'T'))} · ${esc(l.user_name || 'sistema')}</small></div>${
+              l.detail ? `<div class="t-detail">${esc(logDetail(l.detail))}</div>` : ''
+            }</li>`,
+          )
+          .join('')}</ol>
       </div>
-    </div>`;
+      </div>
+    </div>
+`;
 
   const reload = () => route();
   const handlers = {
@@ -929,11 +947,34 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
   wireFiles(view, r, reload);
 }, 'reservas');
 
+const LOG_LABEL = {
+  creada: 'Reserva creada',
+  modificada: 'Reserva modificada',
+  confirmada: 'Confirmada',
+  cancelada: 'Cancelada',
+  no_show: 'No se presentó',
+  pendiente: 'Reabierta',
+  vehiculo_asignado: 'Vehículo asignado',
+  entregado: 'Auto entregado',
+  devuelto: 'Auto devuelto',
+  pago: 'Pago registrado',
+  devolucion: 'Devolución de dinero',
+  garantia: 'Garantía recibida',
+  devolucion_garantia: 'Garantía devuelta',
+  archivo_subido: 'Archivo subido',
+  archivo_borrado: 'Archivo borrado',
+};
+const DETAIL_KEY = { status: 'estado', source: 'origen', contrato: 'contrato', km: 'km', combustible: 'combustible', cargos: 'cargos' };
+
 function logDetail(d) {
   if (!d) return '';
   try {
     const o = JSON.parse(d);
-    return typeof o === 'object' && o ? Object.entries(o).map(([k, v]) => `${k}: ${STATUS_LABEL[v] || v}`).join(' · ') : String(o);
+    return typeof o === 'object' && o
+      ? Object.entries(o)
+          .map(([k, v]) => `${DETAIL_KEY[k] || k}: ${k === 'combustible' ? `${v}/8` : k === 'cargos' ? money(v) : STATUS_LABEL[v] || v}`)
+          .join(' · ')
+      : String(o);
   } catch {
     return d;
   }
@@ -2009,12 +2050,12 @@ const AUDIT_LABEL = {
 on(/^\/usuarios$/, async (view) => {
   const [users, log] = await Promise.all([GET('/users'), GET('/audit')]);
   view.innerHTML = `<div class="page-head"><h1>Usuarios</h1><button class="btn primary" data-new>+ Agregar</button></div>
-    <table><thead><tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Activo</th><th></th></tr></thead><tbody>${users
+    <div class="table-wrap"><table><thead><tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Activo</th><th></th></tr></thead><tbody>${users
       .map(
         (u) =>
           `<tr data-id="${u.id}"><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.role === 'admin' ? 'Administrador' : 'Operador'}</td><td>${u.active ? '✔' : '—'}${u.must_change_password ? ' <span class="badge b-pendiente">cambia la clave al entrar</span>' : ''}</td><td class="right"><button class="btn small" data-edit>Editar</button></td></tr>`,
       )
-      .join('')}</tbody></table>
+      .join('')}</tbody></table></div>
     <p class="muted">Los operadores manejan reservas, flota y clientes. Los administradores además configuran tarifas, el cotizador y los usuarios, y son los únicos que pueden borrar o anonimizar clientes. Cada persona debería tener su propio usuario.</p>
     <div class="card" style="margin-top:16px"><h2>Actividad reciente</h2>
       <p class="muted">Ingresos, intentos fallidos y cambios importantes. Muchos "login fallido" seguidos pueden ser alguien probando contraseñas.</p>
