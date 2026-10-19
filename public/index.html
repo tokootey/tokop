@@ -22,25 +22,22 @@
       <aside class="sidebar">
         <div class="brand" id="brand">Rent a Car</div>
         <nav id="nav">
+          <div class="nav-label">Día a día</div>
           <a href="#/panel" data-route="panel">Panel</a>
           <a href="#/reservas/nueva" data-route="nueva">+ Nueva reserva</a>
           <a href="#/reservas" data-route="reservas">Reservas</a>
           <a href="#/planning" data-route="planning">Planning</a>
-          <a href="#/flota" data-route="flota">Flota</a>
+          <div class="nav-label">Datos</div>
+          <a href="#/flota" data-route="flota">Flota y taller</a>
           <a href="#/clientes" data-route="clientes">Clientes</a>
-          <a href="#/mantenimiento" data-route="mantenimiento">Mantenimiento</a>
-          <a href="#/tarifas" data-route="tarifas">Tarifas y sucursales</a>
-          <a href="#/cotizador" data-route="cotizador" class="admin-only">Cotizador</a>
-          <a href="#/config" data-route="config" class="admin-only">Configuración</a>
-          <a href="#/usuarios" data-route="usuarios" class="admin-only">Usuarios</a>
-          <a href="#/importar" data-route="importar" class="admin-only">Importar datos</a>
+          <a href="#/tarifas" data-route="ajustes">Ajustes</a>
         </nav>
         <div class="user-box">
           <span id="user-name" class="user-name"></span>
           <span class="user-actions"><button id="change-pw" class="btn link" type="button">Cambiar contraseña</button><button id="logout" class="btn link" type="button">Salir</button></span>
         </div>
       </aside>
-      <main id="view" class="view"></main>
+      <main class="view"><nav id="subnav" class="subnav hidden"></nav><div id="view"></div></main>
     </div>
 
     <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
