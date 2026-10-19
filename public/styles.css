@@ -297,3 +297,27 @@ pre { background: #0f172a; color: #dbe4f3; padding: 12px; border-radius: 8px; ov
 .imp-count.info b { color: #1450b5; }
 .imp-count.warn b { color: #8a5a00; }
 .imp-count.bad b { color: #a12427; }
+
+/* Simplificación: opciones plegadas y menú "Más acciones" */
+details.more-opts { margin-top: 14px; }
+details.more-opts > summary, details.menu > summary { cursor: pointer; list-style: none; }
+details.more-opts > summary { color: var(--primary); font-weight: 600; font-size: 14px; }
+details.more-opts > summary::before { content: '▸ '; }
+details.more-opts[open] > summary::before { content: '▾ '; }
+details.more-opts > summary::-webkit-details-marker, details.menu > summary::-webkit-details-marker { display: none; }
+details.menu { position: relative; display: inline-block; }
+details.menu > summary::after { content: ' ▾'; font-size: 11px; }
+.menu-list { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; background: var(--card); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.14); padding: 6px; min-width: 230px; display: flex; flex-direction: column; }
+.menu-list button { font: inherit; text-align: left; background: none; border: 0; border-radius: 6px; padding: 9px 12px; cursor: pointer; color: var(--text); }
+.menu-list button:hover { background: var(--soft); }
+.menu-list button.danger { color: var(--danger); }
+.subnav { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 auto 18px; max-width: 1320px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+.subnav a { text-decoration: none; color: var(--muted); font-weight: 600; font-size: 14px; padding: 7px 12px; border-radius: 8px; }
+.subnav a:hover { background: var(--soft); color: var(--text); }
+.subnav a.active { background: var(--primary-soft, #e8f0ff); color: var(--primary); }
+.nav-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #7c8aa5; padding: 14px 12px 4px; font-weight: 700; }
+.calm { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+@media (max-width: 800px) { .nav-label { display: none; } .subnav { overflow-x: auto; flex-wrap: nowrap; } .subnav a { white-space: nowrap; } }
+@media print { .subnav { display: none; } }
+details.filters { flex: 0 0 100%; margin-top: 4px; }
+details.filters .toolbar { margin-top: 10px; border: 0; padding: 0; box-shadow: none; background: none; }

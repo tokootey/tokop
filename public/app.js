@@ -45,6 +45,7 @@ const STATUS_LABEL = {
   cotizador: 'Cotizador',
   web: 'Formulario web',
   manual: 'Mostrador',
+  importado: 'Importada',
   abierto: 'Abierto',
   cerrado: 'Cerrado',
 };
@@ -295,13 +296,37 @@ function showForcedPasswordChange() {
 const routes = [];
 const on = (pattern, handler, navKey) => routes.push({ pattern, handler, navKey });
 
+// Menú corto: "Flota y taller" y "Ajustes" agrupan varias pantallas, que se eligen con pestañas arriba.
+const NAV_GROUP = { flota: 'flota', mantenimiento: 'flota', tarifas: 'ajustes', cotizador: 'ajustes', config: 'ajustes', usuarios: 'ajustes', importar: 'ajustes' };
+const SUBNAV = {
+  flota: [
+    ['flota', '#/flota', 'Autos'],
+    ['mantenimiento', '#/mantenimiento', 'Taller y mantenimiento'],
+  ],
+  ajustes: [
+    ['tarifas', '#/tarifas', 'Tarifas y sucursales'],
+    ['config', '#/config', 'Empresa y contrato', true],
+    ['usuarios', '#/usuarios', 'Usuarios', true],
+    ['cotizador', '#/cotizador', 'Cotizador web', true],
+    ['importar', '#/importar', 'Importar datos', true],
+  ],
+};
+function renderSubnav(group, current) {
+  const nav = $('#subnav');
+  const items = (SUBNAV[group] || []).filter(([, , , adminOnly]) => !adminOnly || isAdmin());
+  nav.classList.toggle('hidden', items.length < 2);
+  nav.innerHTML = items.map(([key, href, label]) => `<a href="${href}" class="${key === current ? 'active' : ''}">${esc(label)}</a>`).join('');
+}
+
 async function route() {
   if (!state.user) return;
   const hash = location.hash.replace(/^#/, '') || '/panel';
   for (const r of routes) {
     const m = hash.match(r.pattern);
     if (m) {
-      $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === r.navKey));
+      const group = NAV_GROUP[r.navKey];
+      $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === (group || r.navKey)));
+      renderSubnav(group, r.navKey);
       const view = $('#view');
       view.innerHTML = '<p class="muted">Cargando…</p>';
       try {
@@ -341,14 +366,10 @@ on(/^\/panel$/, async (view) => {
   view.innerHTML = `
     <div class="page-head"><h1>Panel</h1><a class="btn primary" href="#/reservas/nueva">+ Nueva reserva</a></div>
     <div class="kpis">
-      ${kpi('Flota operativa', `${d.fleet.operational}<small> / ${d.fleet.total}</small>`, 'autos que se pueden alquilar')}
-      ${kpi('Disponibles', d.fleet.disponible || 0, 'listos para entregar')}
-      ${kpi('Alquilados', d.fleet.alquilado || 0, 'en la calle ahora')}
-      ${kpi('En taller', d.fleet.mantenimiento || 0, `${d.alerts.maintenance_open} mantenimiento(s) abierto(s)`)}
-      ${kpi('Ocupación', `${d.occupancy}%`, '', `<div class="meter"><i style="width:${Math.min(100, Number(d.occupancy) || 0)}%"></i></div>`)}
-      ${kpi('Cobrado este mes', money(d.month_revenue), 'pagos registrados')}
-      ${kpi('Reservas del mes', d.month_reservations, `${d.from_quoter_month} desde el cotizador o la web`)}
-      ${kpi('A confirmar', d.pending_confirmation, `${d.unassigned_next_7d} sin auto en los próximos 7 días`)}
+      ${kpi('Disponibles', d.fleet.disponible || 0, `listos para entregar · ${d.fleet.mantenimiento || 0} en taller`)}
+      ${kpi('Alquilados ahora', d.fleet.alquilado || 0, `ocupación ${d.occupancy}% de la flota`, `<div class="meter"><i style="width:${Math.min(100, Number(d.occupancy) || 0)}%"></i></div>`)}
+      ${kpi('A confirmar', d.pending_confirmation, d.unassigned_next_7d ? `${d.unassigned_next_7d} sin auto en los próximos 7 días` : 'reservas pendientes')}
+      ${kpi('Cobrado este mes', money(d.month_revenue), `${d.month_reservations} reserva(s) nuevas este mes`)}
     </div>
     ${
       d.quote_errors
@@ -358,21 +379,33 @@ on(/^\/panel$/, async (view) => {
     <div class="dash">
       <div class="card"><h2>Entregas de hoy ${count(d.pickups_today.length)}</h2>${list(d.pickups_today, 'pickup', 'No hay entregas para hoy.')}</div>
       <div class="card"><h2>Devoluciones de hoy ${count(d.returns_today.length)}</h2>${list(d.returns_today, 'return', 'No hay devoluciones para hoy.')}</div>
-      <div class="card ${d.overdue.length ? 'alert' : ''}"><h2>Devoluciones vencidas ${count(d.overdue.length)}</h2>${list(d.overdue, 'return', 'Todos los autos volvieron a tiempo.')}</div>
-      <div class="card ${d.late_pickups.length ? 'alert' : ''}"><h2>Clientes que no retiraron ${count(d.late_pickups.length)}</h2>${list(d.late_pickups, 'pickup', 'Nadie quedó sin retirar.')}</div>
-      <div class="card wide"><h2>Vencimientos de documentación (próximos 30 días) ${count(d.alerts.documents.length)}</h2>${
+      ${/* Las alertas sólo aparecen cuando hay algo para atender. */ ''}
+      ${d.overdue.length ? `<div class="card alert"><h2>Devoluciones vencidas ${count(d.overdue.length)}</h2>${list(d.overdue, 'return', '')}</div>` : ''}
+      ${d.late_pickups.length ? `<div class="card alert"><h2>Clientes que no retiraron ${count(d.late_pickups.length)}</h2>${list(d.late_pickups, 'pickup', '')}</div>` : ''}
+      ${
         d.alerts.documents.length
-          ? `<div class="daylist">${d.alerts.documents
+          ? `<div class="card wide"><h2>Seguro o VTV por vencer (30 días) ${count(d.alerts.documents.length)}</h2><div class="daylist">${d.alerts.documents
               .map(
                 (v) =>
                   `<div class="dayrow docs"><span class="plate">${esc(v.plate)}</span><div><small>Seguro</small><b>${fmtD(v.insurance_expiry) || '—'}</b></div><div><small>VTV</small><b>${fmtD(v.vtv_expiry) || '—'}</b></div></div>`,
               )
-              .join('')}</div>`
-          : '<p class="empty">Ningún seguro ni VTV vence en los próximos 30 días.</p>'
-      }</div>
+              .join('')}</div></div>`
+          : ''
+      }
+      ${
+        !d.overdue.length && !d.late_pickups.length && !d.alerts.documents.length
+          ? '<div class="card wide"><p class="calm">✔ Todo en orden: no hay devoluciones vencidas, clientes sin retirar ni seguros o VTV por vencer.</p></div>'
+          : ''
+      }
     </div>`;
 }, 'panel');
 
+// Los menús "Más acciones" se cierran al elegir una opción o al tocar afuera.
+document.addEventListener('click', (e) => {
+  $$('details.menu[open]').forEach((d) => {
+    if (!d.contains(e.target) || e.target.closest('.menu-list button')) d.removeAttribute('open');
+  });
+});
 document.addEventListener('click', (e) => {
   const tr = e.target.closest('[data-href]');
   if (tr && !e.target.closest('button, a, input, select')) location.hash = tr.dataset.href;
@@ -388,10 +421,12 @@ on(/^\/reservas$/, async (view) => {
       <label>Buscar<input name="q" placeholder="Código, cliente, DNI, patente…"/></label>
       <label>Estado<select name="status"><option value="">Activas</option><option value="all">Todas</option>
         ${['pendiente', 'confirmada', 'en_curso', 'finalizada', 'cancelada', 'no_show'].map((s) => `<option value="${s}">${STATUS_LABEL[s]}</option>`).join('')}</select></label>
-      <label>Origen<select name="source"><option value="">Todos</option><option value="manual">Mostrador</option><option value="cotizador">Cotizador</option><option value="web">Formulario web</option></select></label>
+      <button class="btn">Buscar</button>
+      <details class="more-opts filters"><summary>Más filtros</summary><div class="toolbar">
+      <label>Origen<select name="source"><option value="">Todos</option><option value="manual">Mostrador</option><option value="cotizador">Cotizador</option><option value="web">Formulario web</option><option value="importado">Importadas</option></select></label>
       <label>Desde<input type="date" name="from"/></label>
       <label>Hasta<input type="date" name="to"/></label>
-      <button class="btn">Filtrar</button>
+      </div></details>
     </form>
     <div class="table-wrap" id="res-table"></div>`;
   const load = async () => {
@@ -466,8 +501,9 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
           ${field({ name: 'pickup_branch_id', label: 'Lugar de retiro', type: 'select', options: branchOptions, required: true })}
           ${field({ name: 'return_branch_id', label: 'Lugar de devolución', type: 'select', options: branchOptions, required: true })}
         </div>
-        <h3 style="margin-top:16px">Adicionales</h3>
-        <div class="actions">${state.extras
+        <details class="more-opts">
+        <summary>Más opciones: adicionales, descuento y vuelo</summary>
+        <div class="actions" style="margin-top:12px">${state.extras
           .filter((x) => x.active)
           .map(
             (x) =>
@@ -478,6 +514,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
           <label>Descuento %<input type="number" name="discount_pct" min="0" max="100" step="any" value="0"/></label>
           <label>Vuelo / referencia<input name="flight"/></label>
         </div>
+        </details>
       </div>
       <div class="card">
         <h2>2 · Categoría disponible</h2>
@@ -669,21 +706,26 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
   const r = await GET(`/reservations/${id}`);
   const c = r.contract;
   const canEdit = ['pendiente', 'confirmada'].includes(r.status);
+  // Arriba sólo el próximo paso; lo que se usa poco va en "Más acciones".
   const actions = [];
+  const more = [];
   if (r.status === 'pendiente') actions.push('<button class="btn primary" data-act="confirm">Confirmar</button>');
   if (canEdit) {
-    actions.push('<button class="btn ok" data-act="checkout">Entregar vehículo</button>');
-    actions.push('<button class="btn" data-act="assign">Asignar vehículo</button>');
-    actions.push('<button class="btn" data-act="edit">Modificar</button>');
-    actions.push('<button class="btn danger" data-act="noshow">No show</button>');
-    actions.push('<button class="btn danger" data-act="cancel">Cancelar</button>');
+    actions.push(`<button class="btn ${r.status === 'confirmada' ? 'ok' : ''}" data-act="checkout">Entregar vehículo</button>`);
+    more.push('<button data-act="assign">Asignar vehículo</button>');
+    more.push('<button data-act="edit">Modificar fechas o datos</button>');
   }
   if (r.status === 'en_curso') actions.push('<button class="btn ok" data-act="checkin">Registrar devolución</button>');
   if (['cancelada', 'no_show'].includes(r.status)) actions.push('<button class="btn" data-act="reopen">Reabrir</button>');
   if (!['cancelada', 'no_show'].includes(r.status)) {
-    actions.push('<button class="btn primary" data-act="pdf">Contrato PDF</button>');
-    actions.push('<button class="btn" data-act="print">Imprimir contrato</button>');
+    actions.push('<button class="btn" data-act="pdf">Contrato PDF</button>');
+    more.push('<button data-act="print">Imprimir contrato</button>');
   }
+  if (canEdit) {
+    more.push('<button class="danger" data-act="noshow">El cliente no se presentó</button>');
+    more.push('<button class="danger" data-act="cancel">Cancelar reserva</button>');
+  }
+  if (more.length) actions.push(`<details class="menu"><summary class="btn">Más acciones</summary><div class="menu-list">${more.join('')}</div></details>`);
 
   view.innerHTML = `
     <div class="page-head">
@@ -1680,9 +1722,7 @@ on(/^\/tarifas$/, async (view) => {
         { label: 'Diaria', render: (r) => money(r.daily_rate) },
         { label: 'Semanal', render: (r) => (r.weekly_rate ? money(r.weekly_rate) : '—') },
         { label: 'Garantía', render: (r) => money(r.deposit) },
-        { label: 'Km/día', render: (r) => esc(r.km_per_day || 'Libres') },
-        { label: 'Alias', render: (r) => `<small class="muted">${esc(r.aliases || '')}</small>` },
-        { label: 'Activa', render: (r) => (r.active ? '✔' : '—') },
+        { label: 'Km/día', render: (r) => esc(r.km_per_day || 'Libres') + (r.active ? '' : ' <span class="badge">inactiva</span>') },
       ],
     },
     {

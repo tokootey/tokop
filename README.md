@@ -70,7 +70,7 @@ La app ya está preparada para publicarse en [Render](https://render.com). Lleva
 
 ## Pasar los datos del sistema anterior (Drive, Excel u otra página)
 
-Menú **Importar datos** (sólo administradores). Conviene seguir este orden: **1 · Flota**, **2 · Clientes**, **3 · Reservas**.
+**Ajustes → Importar datos** (sólo administradores). Conviene seguir este orden: **1 · Flota**, **2 · Clientes**, **3 · Reservas**.
 
 1. Sacá los datos de la planilla: en Google Drive, *Archivo → Descargar → Valores separados por comas (.csv)*; en Excel, *Guardar como → CSV UTF-8*. También se pueden copiar las celdas (con la fila de títulos) y pegarlas.
 2. Tocá **Leer datos**: el sistema reconoce las columnas por su nombre ("Dominio", "Fecha entrega", "Seña", "DNI", "Venc. licencia"…) y te deja corregir cuál es cuál.
