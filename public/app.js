@@ -363,6 +363,11 @@ function setupCard(setup) {
 on(/^\/panel$/, async (view) => {
   const d = await GET('/dashboard');
   // Lista de reservas del día: hora | cliente | auto, cada fila lleva a la reserva.
+  // Botón directo para entregar o recibir el auto sin entrar antes a la reserva.
+  const quick = (r) =>
+    r.status === 'en_curso'
+      ? `<a class="btn small ok" href="#/reservas/${r.id}?accion=checkin">Recibir</a>`
+      : `<a class="btn small ok" href="#/reservas/${r.id}?accion=checkout">Entregar</a>`;
   const list = (rows, kind, empty) =>
     rows.length
       ? `<div class="daylist">${rows
@@ -373,6 +378,7 @@ on(/^\/panel$/, async (view) => {
               <div class="when"><b>${fmtDT(at).slice(11)}</b><small>${fmtD(at).slice(0, 5)}</small></div>
               <div class="who"><b>${esc(r.customer_name)}</b><small>${esc(r.code)}${r.customer_phone ? ` · ${esc(r.customer_phone)}` : ''}${branch ? ` · ${esc(branch)}` : ''}</small></div>
               <div class="what">${r.vehicle_plate ? `<span class="plate">${esc(r.vehicle_plate)}</span>` : '<span class="badge b-pendiente">sin auto</span>'}<small>Cat. ${esc(r.category_code)}</small></div>
+              ${quick(r)}
             </div>`;
           })
           .join('')}</div>`
@@ -719,7 +725,7 @@ function breakdownHtml(q) {
 /* ============================================================
    Reserva: detalle y operación (entrega, devolución, pagos)
    ============================================================ */
-on(/^\/reservas\/(\d+)$/, async (view, id) => {
+on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   const r = await GET(`/reservations/${id}`);
   const c = r.contract;
   const canEdit = ['pendiente', 'confirmada'].includes(r.status);
@@ -1004,6 +1010,11 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
   };
   $$('[data-act]', view).forEach((b) => b.addEventListener('click', () => handlers[b.dataset.act]()));
   wireFiles(view, r, reload);
+  // Desde el Panel se llega con ?accion=checkout|checkin: se abre ese paso directo si el estado lo permite.
+  if (accion) {
+    history.replaceState(null, '', `#/reservas/${r.id}`);
+    if ($(`[data-act="${accion}"]`, view)) handlers[accion]();
+  }
 }, 'reservas');
 
 const LOG_LABEL = {
