@@ -3,13 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Rent a Car · Gestión</title>
+    <title>Floty · Gestión para rent a car</title>
+    <link rel="icon" href="/floty.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div id="login" class="login hidden">
       <form id="login-form" class="card login-card">
-        <h1>Rent a Car</h1>
+        <div class="login-brand"><img src="/floty.svg" alt="" width="44" height="44" /><div><h1>Floty</h1><p class="muted">Gestión simple para tu rent a car</p></div></div>
         <p class="muted">Ingresá con tu usuario</p>
         <label>Email <input name="email" type="email" required autocomplete="username" /></label>
         <label>Contraseña <input name="password" type="password" required autocomplete="current-password" /></label>
@@ -20,7 +21,7 @@
 
     <div id="shell" class="shell hidden">
       <aside class="sidebar">
-        <div class="brand" id="brand">Rent a Car</div>
+        <div class="brand" id="brand">Floty</div>
         <nav id="nav">
           <div class="nav-label">Día a día</div>
           <a href="#/panel" data-route="panel">Panel</a>

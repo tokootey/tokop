@@ -45,9 +45,11 @@ const runtime = read('scripts/demo/runtime.js').replace('const modules = __MODUL
 const sqljs = fs.readFileSync(require.resolve('sql.js/dist/sql-asm-memory-growth.js'), 'utf8');
 
 const index = read('public/index.html');
+const logo = `data:image/svg+xml;base64,${Buffer.from(read('public/floty.svg')).toString('base64')}`;
 const body = index
   .slice(index.indexOf('<body>') + 6, index.indexOf('</body>'))
   .replace(/<script src="[^"]*"><\/script>\s*/g, '')
+  .split('/floty.svg').join(logo)
   .trim();
 
 const demoCss = `
@@ -68,18 +70,19 @@ const demoUi = `
     form.password.value = 'admin123';
     var hint = document.createElement('p');
     hint.className = 'demo-hint';
-    hint.innerHTML = '<b>Versión de prueba.</b> Ya están cargados el usuario y la contraseña de ejemplo: tocá <b>Ingresar</b>.';
+    hint.innerHTML = '<b>Demo de Floty.</b> Ya están cargados el usuario y la contraseña de ejemplo: tocá <b>Ingresar</b>.';
     form.insertBefore(hint, form.querySelector('button'));
   }
   var bar = document.createElement('div');
   bar.className = 'demo-bar';
-  bar.innerHTML = '<span>Versión de prueba · los datos se guardan solo en este navegador</span><button type="button">Reiniciar datos</button>';
+  bar.innerHTML = '<span>Demo de Floty · los datos se guardan solo en este navegador</span><button type="button">Reiniciar datos</button>';
   bar.querySelector('button').addEventListener('click', function () { window.__demoReset(); });
   document.body.appendChild(bar);
 })();
 `;
 
-const html = `<title>Demo Rent a Car Ushuaia</title>
+const html = `<title>Floty · Demo del sistema para rent a car</title>
+<link rel="icon" href="${logo}" type="image/svg+xml">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 ${read('public/styles.css')}

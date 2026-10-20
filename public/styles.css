@@ -331,3 +331,6 @@ details.filters .toolbar { margin-top: 10px; border: 0; padding: 0; box-shadow: 
 
 /* Asistente web */
 pre.snippet { color: var(--text); background: var(--soft); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow-x: auto; font-size: 13px; white-space: pre-wrap; word-break: break-all; }
+.login-brand { display: flex; align-items: center; gap: 12px; }
+.login-brand h1 { margin: 0; line-height: 1.1; }
+.login-brand p { margin: 2px 0 0; font-size: 13px; }
