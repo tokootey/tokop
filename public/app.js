@@ -1094,6 +1094,10 @@ function refundPolicyText(s = state.settings) {
   const full = n(s.refund_full_hours, 72);
   const partial = Math.min(full, n(s.refund_partial_hours, 24));
   const pct = n(s.refund_partial_pct, 50);
+  if (LANG === 'en') {
+    const extra = s.refund_terms_en || s.refund_terms;
+    return `If cancelled ${full} h or more before pick-up, 100 % of the amount paid is refunded${partial < full ? `; between ${full} and ${partial} h, ${pct} %` : ''}; with less than ${partial} h or if the customer does not show up, there is no refund.${extra ? ` ${extra}` : ''}`;
+  }
   const middle = partial < full ? `; entre ${full} y ${partial} h, el ${pct} %` : '';
   return `Si se cancela con ${full} h o más de anticipación al retiro, se devuelve el 100 % de lo pagado${middle}; con menos de ${partial} h o si el cliente no se presenta, no hay devolución.${s.refund_terms ? ` ${s.refund_terms}` : ''}`;
 }
@@ -1181,6 +1185,7 @@ function voucherWhatsapp(r) {
     `Cancelación: ${p}`,
     state.settings.company_phone ? `Consultas: ${state.settings.company_phone}` : '',
   ]
+    .map(trDoc)
     .join('\n')
     .trim();
 }
@@ -1200,6 +1205,7 @@ function voucherEmail(r) {
     '',
     v.company,
   ]
+    .map(trDoc)
     .join('\n')
     .trim();
 }
@@ -1213,7 +1219,7 @@ function sendVoucher(r) {
   // WhatsApp necesita el número con código de país, sin signos: +54 9 2901 123456 → 5492901123456.
   const phone = String(r.customer_phone || '').replace(/\D/g, '');
   const wa = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
-  const mail = `mailto:${encodeURIComponent(r.customer_email || '')}?subject=${encodeURIComponent(`Voucher de tu reserva ${r.code} · ${state.settings.company_name}`)}&body=${encodeURIComponent(emailText)}`;
+  const mail = `mailto:${encodeURIComponent(r.customer_email || '')}?subject=${encodeURIComponent(trDoc(`Voucher de tu reserva ${r.code} · ${state.settings.company_name}`))}&body=${encodeURIComponent(emailText)}`;
   const canShare = navigator.canShare && navigator.canShare({ files: [file] });
   openModal(
     `Enviar voucher · ${r.code}`,
@@ -1404,19 +1410,25 @@ function contractTermsList(r) {
   const s = state.settings;
   const km = Number(r.category_km_per_day) || 0;
   const values = {
-    empresa: s.company_name || 'la Empresa',
+    empresa: s.company_name || L('la Empresa', 'the Company'),
     tolerancia: Number(s.grace_hours) || 0,
     edad_minima: Number(s.min_driver_age) || 21,
-    cargo_combustible: Number(s.fuel_charge_per_eighth) > 0 ? money(s.fuel_charge_per_eighth) : 'el valor del combustible faltante más un cargo por servicio',
+    cargo_combustible:
+      Number(s.fuel_charge_per_eighth) > 0
+        ? money(s.fuel_charge_per_eighth)
+        : L('el valor del combustible faltante más un cargo por servicio', 'the cost of the missing fuel plus a service charge'),
     kilometraje:
       km > 0
-        ? `El alquiler incluye ${km} km por día (${km * (r.days || 1)} km en total). Cada km excedente se cobrará ${money(r.category_extra_km_rate)}.`
-        : 'El alquiler tiene kilometraje libre.',
-    franquicia: Number(s.deductible_amount) > 0 ? money(s.deductible_amount) : 'el monto de la franquicia de la póliza vigente',
+        ? L(
+            `El alquiler incluye ${km} km por día (${km * (r.days || 1)} km en total). Cada km excedente se cobrará ${money(r.category_extra_km_rate)}.`,
+            `The rental includes ${km} km per day (${km * (r.days || 1)} km in total). Each extra km will be charged ${money(r.category_extra_km_rate)}.`,
+          )
+        : L('El alquiler tiene kilometraje libre.', 'The rental has unlimited mileage.'),
+    franquicia: Number(s.deductible_amount) > 0 ? money(s.deductible_amount) : L('el monto de la franquicia de la póliza vigente', 'the deductible of the policy in force'),
     garantia: money(r.deposit),
-    jurisdiccion: s.jurisdiction || 'la ciudad donde se celebra este contrato',
+    jurisdiccion: L(s.jurisdiction, s.jurisdiction_en || s.jurisdiction) || L('la ciudad donde se celebra este contrato', 'the city where this agreement is signed'),
   };
-  const terms = String(s.contract_terms || '')
+  const terms = String(L(s.contract_terms, s.contract_terms_en || s.contract_terms) || '')
     .split(/\n\s*\n/)
     .map((p) => p.trim())
     .filter(Boolean)
@@ -1426,7 +1438,7 @@ function contractTermsList(r) {
       return title ? { title: title[1], body: filled.slice(title[0].length) } : { title: '', body: filled };
     });
   // La política de devolución de Ajustes va siempre como última cláusula, numerada a continuación.
-  return [...terms, { title: `${terms.length + 1}. CANCELACIÓN Y DEVOLUCIONES.`, body: refundPolicyText(s) }];
+  return [...terms, { title: `${terms.length + 1}. ${L('CANCELACIÓN Y DEVOLUCIONES', 'CANCELLATION AND REFUNDS')}.`, body: refundPolicyText(s) }];
 }
 
 /** Condiciones en HTML para el contrato impreso. */
@@ -1585,6 +1597,12 @@ function printContract(r) {
 </div>
 </body></html>`);
   w.document.close();
+  // La demo muestra el contrato en la misma página (sin body propio) y lo traduce ella.
+  if (w.document.body) {
+    w.document.documentElement.lang = LANG;
+    w.document.title = tr(w.document.title);
+    translateTree(w.document.body, true);
+  }
   w.focus();
   setTimeout(() => w.print(), 300);
 }
@@ -1628,7 +1646,7 @@ on(/^\/planning$/, async (view) => {
     const d = addDays(planningFrom, i);
     const ds = localISO(d).slice(0, 10);
     const wk = d.getDay() === 0 || d.getDay() === 6;
-    return `<div class="${ds === todayStr ? 'today' : wk ? 'weekend' : ''}">${['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sá'][d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}</div>`;
+    return `<div class="${ds === todayStr ? 'today' : wk ? 'weekend' : ''}">${L(['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sá'], ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'])[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}</div>`;
   }).join('');
   const track = `background-size:${100 / days}% 100%`;
 
@@ -2336,6 +2354,10 @@ on(/^\/config$/, async (view) => {
       { name: 'refund_partial_hours', label: 'Devolución parcial si cancela con esta anticipación o más (horas)', type: 'number', attrs: 'min="0"' },
       { name: 'refund_partial_pct', label: 'Porcentaje de la devolución parcial (%)', type: 'number', attrs: 'min="0" max="100"' },
       { name: 'refund_terms', label: 'Condiciones extra de cancelación y devoluciones', type: 'textarea', full: true, rows: 3 },
+      // Versión en inglés: contrato, voucher y política cuando la app está en inglés (i18n.js).
+      { name: 'jurisdiction_en', label: 'Jurisdicción del contrato en inglés (courts of...)', full: true },
+      { name: 'contract_terms_en', label: 'Condiciones generales del contrato en inglés (se usan cuando la app está en inglés)', type: 'textarea', full: true, rows: 12 },
+      { name: 'refund_terms_en', label: 'Condiciones extra de cancelación y devoluciones en inglés', type: 'textarea', full: true, rows: 3 },
     ],
     s,
   )}</div>`;
@@ -2374,6 +2396,19 @@ on(/^\/config$/, async (view) => {
   $('#terms-reset', view).addEventListener('click', () => {
     if (!confirm('¿Reemplazar el texto actual por las condiciones sugeridas? (se aplica al guardar)')) return;
     terms.value = s.contract_terms_default || '';
+  });
+  const enNote = document.createElement('div');
+  enNote.className = 'full';
+  enNote.innerHTML = `<h2 style="margin:12px 0 4px">Textos en inglés</h2><p class="muted" style="margin:0">Cuando la app está en inglés, el contrato, el voucher y la política de devolución usan estos textos. Si quedan vacíos se usan los de arriba.</p>`;
+  $('[name=jurisdiction_en]', view).closest('label').before(enNote);
+  const termsEn = $('[name=contract_terms_en]', view);
+  const resetEn = document.createElement('div');
+  resetEn.className = 'full';
+  resetEn.innerHTML = '<button type="button" class="btn small">Restaurar condiciones sugeridas en inglés</button>';
+  termsEn.closest('label').after(resetEn);
+  $('button', resetEn).addEventListener('click', () => {
+    if (!confirm('¿Reemplazar el texto actual por las condiciones sugeridas? (se aplica al guardar)')) return;
+    termsEn.value = s.contract_terms_en_default || '';
   });
 }, 'config');
 

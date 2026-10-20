@@ -107,6 +107,7 @@ function openPlatform(principalDb, principalFile) {
       for (const k of ['currency', 'locale', 'tax_name', 'tax_rate', 'tax_id_label']) setSetting(db, k, preset[k]);
       // Los valores de fábrica son de la agencia de Ushuaia: la empresa nueva los completa con los suyos.
       setSetting(db, 'jurisdiction', '');
+      setSetting(db, 'jurisdiction_en', '');
       setSetting(db, 'webform_allowed_origins', '');
       setSetting(db, 'webform_enabled', '0'); // se activa cuando la empresa carga su sitio web autorizado
 

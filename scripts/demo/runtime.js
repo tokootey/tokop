@@ -424,6 +424,7 @@
           box.innerHTML = '<button type="button" class="btn demo-close">Cerrar contrato</button><div class="demo-paper"></div>';
           const shadow = box.querySelector('.demo-paper').attachShadow({ mode: 'open' });
           shadow.innerHTML = html.replace(/<script[\s\S]*?<\/script>/gi, '');
+          if (typeof translateTree === 'function') translateTree(shadow, true);
           box.querySelector('.demo-close').addEventListener('click', () => box.remove());
           document.body.appendChild(box);
         },

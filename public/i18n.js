@@ -1,0 +1,1156 @@
+'use strict';
+
+/*
+ * Idioma de la app: español (el original) o inglés.
+ *
+ * Las pantallas se escriben en español. Con el inglés elegido, este archivo traduce los textos
+ * que aparecen en la página (y los avisos, el contrato, el voucher y el PDF) con el diccionario EN.
+ * - Una frase entera se busca tal cual.
+ * - Una frase con datos adentro ("{}") se traduce con un modelo.
+ * - Si no, se reemplazan los pedazos conocidos dentro del texto (los datos quedan como están).
+ * El idioma se guarda en este navegador. Lo que escribe cada empresa (condiciones del contrato,
+ * política de devolución, jurisdicción) tiene su versión en inglés en Ajustes → Empresa y contrato.
+ */
+const LANG = (() => {
+  try {
+    return localStorage.getItem('floty_lang') === 'en' ? 'en' : 'es';
+  } catch {
+    return 'es';
+  }
+})();
+
+/** Texto según el idioma, para las pocas frases que se arman distinto en cada idioma. */
+const L = (es, en) => (LANG === 'en' ? en : es);
+
+const EN = {
+  // --- Ingreso, menú y cosas generales ---
+  'Floty · Gestión para rent a car': 'Floty · Rent a car management',
+  'Floty · Demo del sistema para rent a car': 'Floty · Rent a car system demo',
+  'Gestión simple para tu rent a car': 'Simple management for your rent a car',
+  'Ingresá con tu usuario': 'Sign in with your user',
+  Contraseña: 'Password',
+  Ingresar: 'Sign in',
+  'Día a día': 'Day to day',
+  Datos: 'Data',
+  Panel: 'Dashboard',
+  '+ Nueva reserva': '+ New booking',
+  Reservas: 'Bookings',
+  Planning: 'Planning',
+  'Flota y taller': 'Fleet and workshop',
+  Clientes: 'Customers',
+  Ajustes: 'Settings',
+  'Cambiar contraseña': 'Change password',
+  Salir: 'Sign out',
+  'Demo de Floty.': 'Floty demo.',
+  'Ya están cargados el usuario y la contraseña de ejemplo: tocá': 'The sample user and password are already filled in: tap',
+  'Demo de Floty · los datos se guardan solo en este navegador': 'Floty demo · data is saved only in this browser',
+  'Reiniciar datos': 'Reset data',
+  Guardar: 'Save',
+  Cancelar: 'Cancel',
+  'Cargando…': 'Loading…',
+  'Sesión vencida, volvé a ingresar': 'Session expired, please sign in again',
+  'La app se actualizó, pero sigue abierto el programa anterior.': 'The app was updated, but the previous program is still open.',
+  'Cerrá todas las ventanas negras y volvé a abrir': 'Close all the black windows and open again',
+  '. Mientras tanto, algunas pantallas pueden fallar.': '. Meanwhile, some screens may fail.',
+  'Desde el celular podés sacar las fotos de a una o elegirlas de la galería: se van sumando. Tocá una miniatura para sacarla.':
+    'On a phone you can take the photos one by one or pick them from the gallery: they add up. Tap a thumbnail to remove it.',
+  Sacar: 'Remove',
+
+  // --- Contraseñas ---
+  'Cambiar mi contraseña': 'Change my password',
+  'Contraseña cambiada. Las otras sesiones abiertas se cerraron.': 'Password changed. Your other open sessions were closed.',
+  'Mínimo 8 caracteres, con letras y números. Evitá datos fáciles de adivinar.': 'At least 8 characters, with letters and numbers. Avoid easy-to-guess data.',
+  'Contraseña actual': 'Current password',
+  'Contraseña nueva': 'New password',
+  'Repetir contraseña nueva': 'Repeat new password',
+  'Las contraseñas nuevas no coinciden': 'The new passwords do not match',
+  'Elegí tu contraseña': 'Choose your password',
+  'Por seguridad, antes de empezar cambiá la contraseña que te dieron por una propia.': 'For security, before you start, replace the password you were given with your own.',
+  'Guardar y entrar': 'Save and enter',
+  'Contraseña guardada': 'Password saved',
+
+  // --- Secciones de Ajustes y Flota ---
+  Autos: 'Cars',
+  'Taller y mantenimiento': 'Workshop and maintenance',
+  'Tarifas y sucursales': 'Rates and locations',
+  'Empresa y contrato': 'Company and contract',
+  Usuarios: 'Users',
+  'Cotizador web': 'Web quote form',
+  'Asistente web': 'Web assistant',
+  'Importar datos': 'Import data',
+  Empresas: 'Companies',
+
+  // --- Estados ---
+  Pendiente: 'Pending',
+  Confirmada: 'Confirmed',
+  'En curso': 'In progress',
+  Finalizada: 'Completed',
+  Cancelada: 'Cancelled',
+  'No show': 'No show',
+  Disponible: 'Available',
+  Alquilado: 'Rented',
+  Mantenimiento: 'Maintenance',
+  'Fuera de servicio': 'Out of service',
+  Procesada: 'Processed',
+  Duplicada: 'Duplicate',
+  Recibida: 'Received',
+  Cotizador: 'Quote tool',
+  'Formulario web': 'Web form',
+  Mostrador: 'Counter',
+  Importada: 'Imported',
+  Abierto: 'Open',
+  Cerrado: 'Closed',
+
+  // --- Panel ---
+  'Primeros pasos': 'First steps',
+  'Para empezar a trabajar con el sistema completá estos pasos. Esta lista desaparece cuando estén todos hechos.':
+    'To start working with the system, complete these steps. This list disappears when they are all done.',
+  'Cargar el nombre, el país y los datos de la empresa': 'Enter the company name, country and details',
+  'Cargar los lugares de entrega (aeropuerto, oficina, hoteles)': 'Add the pick-up locations (airport, office, hotels)',
+  'Cargar las categorías con su tarifa diaria': 'Add the categories with their daily rate',
+  'Cargar los autos (o importarlos desde una planilla)': 'Add the cars (or import them from a spreadsheet)',
+  'Crear un usuario para cada persona del equipo': 'Create a user for each team member',
+  'Revisar las condiciones y la jurisdicción del contrato': 'Review the contract terms and jurisdiction',
+  Recibir: 'Receive',
+  Entregar: 'Hand over',
+  'Cat.': 'Cat.',
+  'sin auto': 'no car',
+  Disponibles: 'Available',
+  'listos para entregar ·': 'ready to hand over ·',
+  'en taller': 'in the workshop',
+  'Alquilados ahora': 'Rented now',
+  ocupación: 'occupancy',
+  '% de la flota': '% of the fleet',
+  'A confirmar': 'To confirm',
+  'sin auto en los próximos 7 días': 'without a car in the next 7 days',
+  'reservas pendientes': 'pending bookings',
+  'Cobrado este mes': 'Collected this month',
+  'reserva(s) nuevas este mes': 'new booking(s) this month',
+  Hay: 'There are',
+  'solicitud(es) del cotizador o del formulario web con error.': 'request(s) from the quote tool or web form with errors.',
+  'Revisar bandeja': 'Check inbox',
+  'Entregas de hoy': "Today's pick-ups",
+  'Devoluciones de hoy': "Today's returns",
+  'No hay entregas para hoy.': 'No pick-ups for today.',
+  'No hay devoluciones para hoy.': 'No returns for today.',
+  'Devoluciones vencidas': 'Overdue returns',
+  'Clientes que no retiraron': 'Customers who did not pick up',
+  'Seguro o VTV por vencer (30 días)': 'Insurance or inspection expiring (30 days)',
+  Seguro: 'Insurance',
+  VTV: 'Inspection',
+  '✔ Todo en orden: no hay devoluciones vencidas, clientes sin retirar ni seguros o VTV por vencer.':
+    '✔ All good: no overdue returns, no missed pick-ups and no insurance or inspections expiring.',
+
+  // --- Reservas (listado) ---
+  Buscar: 'Search',
+  Estado: 'Status',
+  Activas: 'Active',
+  Todas: 'All',
+  'Más filtros': 'More filters',
+  Origen: 'Source',
+  Todos: 'All',
+  Importadas: 'Imported',
+  Desde: 'From',
+  Hasta: 'To',
+  Código: 'Code',
+  Cliente: 'Customer',
+  Retiro: 'Pick-up',
+  Devolución: 'Return',
+  Vehículo: 'Vehicle',
+  Total: 'Total',
+  'No hay reservas con esos filtros.': 'No bookings match those filters.',
+
+  // --- Nueva reserva ---
+  'Nueva reserva': 'New booking',
+  'Reserva para': 'Booking for',
+  ', del': ', from',
+  ', elegida desde el Planning. Completá el cliente y guardá.': ', picked from the Planning. Fill in the customer and save.',
+  '1 · Fechas y lugares': '1 · Dates and locations',
+  'Duración rápida:': 'Quick duration:',
+  '1 semana': '1 week',
+  '2 semanas': '2 weeks',
+  día: 'day',
+  días: 'days',
+  'Lugar de retiro': 'Pick-up location',
+  'Más opciones: adicionales, descuento y vuelo': 'More options: extras, discount and flight',
+  'Lugar de devolución': 'Return location',
+  '/día': '/day',
+  'Descuento %': 'Discount %',
+  'Vuelo / referencia': 'Flight / reference',
+  '2 · Categoría disponible': '2 · Available category',
+  '3 · Cliente': '3 · Customer',
+  'Buscar cliente existente': 'Search existing customer',
+  '+ Cliente nuevo': '+ New customer',
+  'Ningún cliente seleccionado.': 'No customer selected.',
+  '4 · Vehículo y notas': '4 · Vehicle and notes',
+  'Vehículo (opcional, se puede asignar después)': 'Vehicle (optional, can be assigned later)',
+  'Asignar después': 'Assign later',
+  Notas: 'Notes',
+  Resumen: 'Summary',
+  'Elegí una categoría.': 'Choose a category.',
+  'Crear y confirmar': 'Create and confirm',
+  'Guardar como pendiente': 'Save as pending',
+  'disponible(s) ·': 'available ·',
+  'día(s)': 'day(s)',
+  'promedio por día': 'average per day',
+  Garantía: 'Deposit',
+  'Sin disponibilidad: se guardará igual como sobreventa si confirmás.': 'Not available: it will be saved as an overbooking if you confirm.',
+  'Falta la licencia de conducir (se pide al entregar).': "Driver's license missing (required at pick-up).",
+  'No está cargado.': 'Not on file.',
+  '+ Cargar «': '+ Add «',
+  '» como cliente nuevo': '» as a new customer',
+  'Cliente nuevo': 'New customer',
+  'Elegí una categoría': 'Choose a category',
+  'Elegí o cargá un cliente': 'Choose or add a customer',
+  'No hay disponibilidad en esa categoría. ¿Guardar igual (sobreventa)?': 'No availability in that category. Save anyway (overbooking)?',
+  'Reserva creada': 'Booking created',
+  'día(s) ×': 'day(s) ×',
+  'Recargo de temporada': 'Season surcharge',
+  'Devolución en otra sucursal': 'Return at another location',
+  Descuento: 'Discount',
+  'Precio según tarifas del sistema': 'Price based on system rates',
+  'Garantía:': 'Deposit:',
+  'Total (precio del': 'Total (price from',
+  '· Km incluidos:': '· Included km:',
+  '· Km libres': '· Unlimited km',
+  '(incluido)': '(included)',
+
+  // --- Ficha de la reserva ---
+  Confirmar: 'Confirm',
+  'Entregar vehículo': 'Hand over vehicle',
+  'Asignar vehículo': 'Assign vehicle',
+  'Modificar fechas o datos': 'Change dates or details',
+  'Registrar devolución': 'Register return',
+  Cobrar: 'Collect payment',
+  Reabrir: 'Reopen',
+  'Enviar voucher': 'Send voucher',
+  'Contrato PDF': 'Contract PDF',
+  'Imprimir contrato': 'Print contract',
+  'Facturar (prueba)': 'Invoice (test)',
+  'El cliente no se presentó': 'The customer did not show up',
+  'Cancelar reserva': 'Cancel booking',
+  'Más acciones': 'More actions',
+  'Id en cotizador:': 'Quote tool id:',
+  'Datos de la reserva': 'Booking details',
+  Categoría: 'Category',
+  Adicionales: 'Extras',
+  'Sin asignar': 'Not assigned',
+  Vuelo: 'Flight',
+  Contrato: 'Contract',
+  Salida: 'Out',
+  'km · combustible': 'km · fuel',
+  'Obs. salida': 'Notes out',
+  'Obs. devolución': 'Notes in',
+  'Km recorridos': 'Km driven',
+  'Cargos adicionales': 'Additional charges',
+  'Total final': 'Final total',
+  Precio: 'Price',
+  Pagos: 'Payments',
+  'Total a cobrar': 'Total due',
+  Pagado: 'Paid',
+  Saldo: 'Balance',
+  'Garantía retenida': 'Deposit held',
+  Fecha: 'Date',
+  Tipo: 'Type',
+  Medio: 'Method',
+  Importe: 'Amount',
+  '+ Registrar pago / garantía': '+ Record payment / deposit',
+  Historial: 'History',
+  'Reserva confirmada': 'Booking confirmed',
+  'Según la política de la empresa (cancela': "According to the company's policy (cancelling",
+  'del retiro) corresponde devolver': 'before pick-up) the refund is',
+  'de lo pagado:': 'of the amount paid:',
+  '(no hay pagos registrados)': '(no payments recorded)',
+  'Motivo de la cancelación (opcional)': 'Cancellation reason (optional)',
+  'El sistema sólo calcula y deja registrada la devolución: el dinero lo devolvés vos y lo anotás en Pagos como "Devolución de dinero".':
+    'The system only calculates and records the refund: you give the money back and record it in Payments as "Refund".',
+  'Cancelar la reserva': 'Cancel the booking',
+  Volver: 'Back',
+  'La garantía (': 'The deposit (',
+  ') se devuelve aparte, completa.': ') is returned separately, in full.',
+  'Reserva cancelada. Corresponde devolver': 'Booking cancelled. Refund due:',
+  '¿Marcar como no show?': 'Mark as no show?',
+  'Marcada como no show': 'Marked as no show',
+  'Reserva reabierta': 'Booking reopened',
+  '¿Emitir la factura de prueba por': 'Issue the test invoice for',
+  '? No tiene validez fiscal.': '? It has no tax validity.',
+  'Factura de prueba emitida': 'Test invoice issued',
+  'Vehículo disponible': 'Available vehicle',
+  'km ·': 'km ·',
+  'Vehículo asignado': 'Vehicle assigned',
+  'No hay vehículos libres de esta categoría': 'No free vehicles in this category',
+  'Entrega ·': 'Pick-up ·',
+  'Fecha y hora de salida': 'Pick-up date and time',
+  'Km de salida': 'Km out',
+  'Combustible (octavos)': 'Fuel (eighths)',
+  'Observaciones / estado del vehículo': 'Notes / vehicle condition',
+  'Fotos del auto al entregarlo (frente, laterales, cola, interior, tablero con km y combustible)':
+    'Photos of the car at pick-up (front, sides, rear, interior, dashboard with km and fuel)',
+  'Entregar y abrir contrato': 'Hand over and open contract',
+  'Vehículo entregado. Contrato abierto.': 'Vehicle handed over. Contract open.',
+  'La entrega quedó registrada, pero falló una foto:': 'The pick-up was recorded, but a photo failed:',
+  '. Podés subirla desde la reserva.': '. You can upload it from the booking.',
+  'Devolución ·': 'Return ·',
+  'Fecha y hora de devolución': 'Return date and time',
+  'Sucursal de devolución': 'Return location',
+  'Km de llegada (salió con': 'Km in (left with',
+  'Combustible (salió con': 'Fuel (left with',
+  'Cargo por daños': 'Damage charge',
+  'Observaciones / daños detectados': 'Notes / damage found',
+  'Fotos del auto al recibirlo (daños, km y combustible)': 'Photos of the car on return (damage, km and fuel)',
+  'Enviar el vehículo a taller': 'Send the vehicle to the workshop',
+  'Cerrar contrato': 'Close contract',
+  'Devolución registrada': 'Return recorded',
+  'La devolución quedó registrada, pero falló una foto:': 'The return was recorded, but a photo failed:',
+  'Registrar movimiento': 'Record transaction',
+  'Referencia / comprobante': 'Reference / receipt',
+  'Movimiento registrado': 'Transaction recorded',
+  Modificar: 'Change',
+  'Recalcular el precio con las tarifas del sistema (descarta el precio del cotizador)': 'Recalculate the price with the system rates (discards the quote tool price)',
+  'Reserva modificada': 'Booking updated',
+  'No se pudo cargar el generador de PDF. Recargá la página e intentá de nuevo.': 'The PDF generator could not be loaded. Reload the page and try again.',
+  'No se pudo generar el PDF del contrato.': 'The contract PDF could not be generated.',
+  'Contrato PDF descargado y guardado en la reserva': 'Contract PDF downloaded and saved in the booking',
+  'El PDF se descargó, pero no se pudo guardar una copia en la reserva:': 'The PDF was downloaded, but a copy could not be saved in the booking:',
+  'Agregar fotos o documentos': 'Add photos or documents',
+  'Corresponden a': 'They belong to',
+  'Entrega del auto': 'Car pick-up',
+  'Devolución del auto': 'Car return',
+  'Otros documentos': 'Other documents',
+  Archivos: 'Files',
+  Subir: 'Upload',
+  'Elegí al menos una foto o documento': 'Choose at least one photo or document',
+  // Medios de pago y tipos de taller (se muestran en minúscula, tal como se guardan).
+  efectivo: 'cash',
+  tarjeta: 'card',
+  transferencia: 'transfer',
+  otro: 'other',
+  service: 'service',
+  reparacion: 'repair',
+  neumaticos: 'tires',
+  chapa_pintura: 'body work',
+  limpieza: 'cleaning',
+
+  // --- Voucher ---
+  '(el auto se asigna al retirar)': '(the car is assigned at pick-up)',
+  Tarifa: 'Rate',
+  'Devolución en otro lugar': 'Return at another location',
+  'Saldo a pagar': 'Balance due',
+  Reserva: 'Booking',
+  'Cliente y conductor': 'Customer and driver',
+  Nombre: 'Name',
+  Documento: 'ID document',
+  Teléfono: 'Phone',
+  Conductor: 'Driver',
+  'El titular · licencia': 'The renter · license',
+  'El titular · traer la licencia al retirar': "The renter · bring the driver's license at pick-up",
+  vence: 'expires',
+  Alquiler: 'Rental',
+  Duración: 'Duration',
+  Kilometraje: 'Mileage',
+  'km incluidos': 'km included',
+  Libre: 'Unlimited',
+  Ninguno: 'None',
+  Depósito: 'Deposit',
+  '(se toma al retirar el auto y se devuelve al entregarlo en las mismas condiciones)': '(taken at pick-up and returned when the car is brought back in the same condition)',
+  'Pendiente de confirmación': 'Pending confirmation',
+  'Alquiler en curso': 'Rental in progress',
+  'Licencia de conducir vigente, documento o pasaporte y tarjeta de crédito para la garantía. Edad mínima:':
+    "Valid driver's license, ID or passport and a credit card for the deposit. Minimum age:",
+  años: 'years',
+  'años.': 'years.',
+  'Tel.': 'Phone',
+  Hola: 'Hello',
+  ', recibimos tu reserva en': ', we received your booking at',
+  '. Te avisamos apenas esté confirmada.': ". We'll let you know as soon as it is confirmed.",
+  ', te confirmamos tu reserva en': ', your booking is confirmed at',
+  'Retiro:': 'Pick-up:',
+  'Devolución:': 'Return:',
+  'Auto: categoría': 'Car: category',
+  '· Pagado': '· Paid',
+  '· Saldo': '· Balance',
+  '(se devuelve al entregar el auto)': '(returned when you bring the car back)',
+  'Traé licencia de conducir, documento y tarjeta de crédito.': "Bring your driver's license, ID and a credit card.",
+  'Cancelación:': 'Cancellation:',
+  'Consultas:': 'Questions:',
+  'PARA RETIRAR EL AUTO': 'TO PICK UP THE CAR',
+  'CANCELACIÓN Y DEVOLUCIONES': 'CANCELLATION AND REFUNDS',
+  'Voucher de tu reserva': 'Voucher for your booking',
+  'Enviar voucher ·': 'Send voucher ·',
+  'Elegí cómo mandárselo a': 'Choose how to send it to',
+  '. Por WhatsApp va un resumen corto; el email y el PDF llevan el voucher completo.': '. WhatsApp gets a short summary; the email and the PDF carry the full voucher.',
+  'Compartir el PDF (WhatsApp, email…)': 'Share the PDF (WhatsApp, email…)',
+  '(elegís el contacto)': '(you choose the contact)',
+  'Descargar el PDF': 'Download the PDF',
+  '(falta el email del cliente)': "(customer's email missing)",
+  'Ver el mensaje de WhatsApp': 'See the WhatsApp message',
+  'El teléfono parece no tener código de país (por ejemplo 54 9 para Argentina): WhatsApp puede no encontrarlo.':
+    'The phone number seems to have no country code (for example 54 9 for Argentina): WhatsApp may not find it.',
+  'Por WhatsApp o email desde la computadora va el mensaje; si querés mandar también el PDF, descargalo y adjuntalo.':
+    'From a computer, WhatsApp or email sends the message; to send the PDF too, download it and attach it.',
+  'VOUCHER DE RESERVA': 'BOOKING VOUCHER',
+  'Para retirar el auto': 'To pick up the car',
+  'Cancelación y devoluciones': 'Cancellation and refunds',
+  Contacto: 'Contact',
+  'Emitido el': 'Issued on',
+  '. Presentá este voucher (impreso o en el celular) al retirar el vehículo.': '. Show this voucher (printed or on your phone) when you pick up the vehicle.',
+
+  // --- Historial de la reserva ---
+  'No se presentó': 'Did not show up',
+  Reabierta: 'Reopened',
+  'Auto entregado': 'Car handed over',
+  'Auto devuelto': 'Car returned',
+  'Pago registrado': 'Payment recorded',
+  'Devolución de dinero': 'Refund',
+  'Garantía recibida': 'Deposit received',
+  'Garantía devuelta': 'Deposit returned',
+  'Archivo subido': 'File uploaded',
+  'Archivo borrado': 'File deleted',
+  'Factura emitida': 'Invoice issued',
+  'Devolución según la política': 'Refund per policy',
+  porcentaje: 'percentage',
+  'a devolver': 'to refund',
+  pagado: 'paid',
+  cancelación: 'cancellation',
+  factura: 'invoice',
+  modo: 'mode',
+  estado: 'status',
+  origen: 'source',
+  contrato: 'contract',
+  combustible: 'fuel',
+  cargos: 'charges',
+  Factura: 'Invoice',
+  Comprobante: 'Document',
+  'PRUEBA ·': 'TEST ·',
+  '· sin validez fiscal': '· no tax validity',
+  homologación: 'testing',
+  simulado: 'simulated',
+  Neto: 'Net',
+
+  // --- Fotos y documentación ---
+  Entrega: 'Pick-up',
+  Contratos: 'Contracts',
+  Subiendo: 'Uploading',
+  'el archivo es demasiado grande': 'the file is too large',
+  'No se pudo abrir el archivo': 'The file could not be opened',
+  'Sin fotos todavía.': 'No photos yet.',
+  'Fotos y documentación': 'Photos and documents',
+  '+ Agregar fotos o documentos': '+ Add photos or documents',
+  'No disponible': 'Not available',
+  'Subido el': 'Uploaded on',
+  'Documento PDF.': 'PDF document.',
+  'Abrir en otra pestaña': 'Open in another tab',
+  Borrar: 'Delete',
+  '¿Borrar este archivo?': 'Delete this file?',
+
+  // --- Contrato ---
+  '8/8 (lleno)': '8/8 (full)',
+  '0/8 (vacío)': '0/8 (empty)',
+  Pago: 'Payment',
+  'Garantía (depósito)': 'Deposit',
+  'Devolución de garantía': 'Deposit return',
+  'la Empresa': 'the Company',
+  TRASERA: 'REAR',
+  FRENTE: 'FRONT',
+  'El navegador bloqueó la ventana del contrato: permití las ventanas emergentes para esta página.': 'The browser blocked the contract window: allow pop-ups for this page.',
+  'CONTRATO DE ALQUILER DE VEHÍCULO': 'VEHICLE RENTAL AGREEMENT',
+  'CONTRATO DE ALQUILER DE VEHÍCULO (PRE-CONTRATO)': 'VEHICLE RENTAL AGREEMENT (PRE-CONTRACT)',
+  'Pre-contrato': 'Pre-contract',
+  'Sin entregar todavía': 'Not handed over yet',
+  'Vehículo sin entregar todavía': 'Vehicle not handed over yet',
+  '· Emitido': '· Issued',
+  'Cliente / conductor principal': 'Customer / main driver',
+  'Nombre y apellido': 'Full name',
+  Domicilio: 'Address',
+  'Fecha de nacimiento': 'Date of birth',
+  'Fecha de nac.': 'Date of birth',
+  'Licencia N°': 'License no.',
+  Vence: 'Expires',
+  'Conductor adicional': 'Additional driver',
+  'Vencimiento licencia': 'License expiry',
+  'Licencia N° / vence': 'License no. / expiry',
+  'Marca y modelo': 'Make and model',
+  Patente: 'Plate',
+  patente: 'plate',
+  'Color / año': 'Color / year',
+  'Período del alquiler': 'Rental period',
+  'Vehículo y período': 'Vehicle and period',
+  'Devolución pactada': 'Agreed return',
+  Días: 'Days',
+  'Entrega del vehículo': 'Vehicle pick-up',
+  'Entrega y devolución del vehículo': 'Vehicle pick-up and return',
+  'Fecha y hora': 'Date and time',
+  Kilómetros: 'Kilometers',
+  '(según flota, verificar)': '(per fleet records, verify)',
+  'Devolución del vehículo': 'Vehicle return',
+  Combustible: 'Fuel',
+  'Estado del vehículo (marcar con X los daños)': 'Vehicle condition (mark damage with an X)',
+  'Observaciones a la entrega:': 'Notes at pick-up:',
+  'Observaciones a la devolución:': 'Notes at return:',
+  'Total del alquiler': 'Rental total',
+  'Pagos y garantía': 'Payments and deposit',
+  'Precio, pagos y garantía': 'Price, payments and deposit',
+  'Total final con cargos': 'Final total with charges',
+  'Saldo pendiente': 'Outstanding balance',
+  'Garantía requerida': 'Deposit required',
+  'El Cliente declara haber leído y aceptado las condiciones generales que forman parte de este contrato (página siguiente) y recibir el vehículo en el estado indicado.':
+    'The Customer declares having read and accepted the general terms that are part of this agreement (next page) and receiving the vehicle in the condition stated.',
+  'El Cliente declara haber leído y aceptado las condiciones generales que forman parte de este contrato y recibir el vehículo en el estado indicado.':
+    'The Customer declares having read and accepted the general terms that are part of this agreement and receiving the vehicle in the condition stated.',
+  'Firma del cliente': "Customer's signature",
+  'Aclaración:': 'Printed name:',
+  'DNI:': 'ID:',
+  Por: 'For',
+  'Condiciones generales ·': 'General terms ·',
+  'Condiciones generales del alquiler': 'General rental terms',
+  'CONDICIONES GENERALES DEL ALQUILER': 'GENERAL RENTAL TERMS',
+  'Contrato N°': 'Agreement no.',
+  'N°': 'No.',
+  'Firma del cliente (conformidad)': "Customer's signature (agreement)",
+  '· Página': '· Page',
+
+  // --- Planning ---
+  Taller: 'Workshop',
+  'Planning de flota': 'Fleet planning',
+  '◀ Semana': '◀ Week',
+  Hoy: 'Today',
+  'Semana ▶': 'Week ▶',
+  '· Tocá una barra para abrir la reserva ·': '· Tap a bar to open the booking ·',
+  'Deslizá el dedo (o arrastrá con el mouse) sobre la fila de un auto para crear una reserva': "Swipe (or drag with the mouse) across a car's row to create a booking",
+  'No hay vehículos cargados.': 'No vehicles yet.',
+  'No se puede reservar en el pasado': 'You cannot book in the past',
+  'Ocupado en esas fechas': 'Busy on those dates',
+  'No se puede reservar en días que ya pasaron': 'You cannot book days that have passed',
+  'Ese auto ya está ocupado (o en taller) en esas fechas': 'That car is already busy (or in the workshop) on those dates',
+
+  // --- Clientes y flota ---
+  'Tipo doc.': 'ID type',
+  Pasaporte: 'Passport',
+  Otro: 'Other',
+  'Número de documento': 'ID number',
+  'Teléfono / WhatsApp': 'Phone / WhatsApp',
+  Dirección: 'Address',
+  'Licencia de conducir N°': "Driver's license no.",
+  Observaciones: 'Notes',
+  Marca: 'Make',
+  Modelo: 'Model',
+  Año: 'Year',
+  'Sucursal actual': 'Current location',
+  'Vencimiento seguro': 'Insurance expiry',
+  'Vencimiento VTV': 'Inspection expiry',
+  '+ Agregar': '+ Add',
+  Editar: 'Edit',
+  'Todavía no hay registros.': 'No records yet.',
+  'Editar ·': 'Edit ·',
+  Guardado: 'Saved',
+  '¿Borrar este registro?': 'Delete this record?',
+  Borrado: 'Deleted',
+  'Agregar ·': 'Add ·',
+  Flota: 'Fleet',
+  Sucursal: 'Location',
+  'Comb.': 'Fuel',
+  'Seguro / VTV': 'Insurance / inspection',
+  'Historial ·': 'History ·',
+  Licencia: 'License',
+  Falta: 'Missing',
+  Anonimizar: 'Anonymize',
+  'Reservas de': 'Bookings of',
+  'Anonimizar a': 'Anonymize',
+  'Se borran para siempre sus datos personales (nombre, documento, contacto, licencia, domicilio y notas). Sus reservas, pagos y contratos se conservan sin datos personales, para la contabilidad.':
+    'Their personal data (name, ID, contact, license, address and notes) is deleted forever. Their bookings, payments and contracts are kept without personal data, for accounting.',
+  'Usalo cuando el cliente pida la baja de sus datos.': 'Use it when the customer asks for their data to be removed.',
+  'No se puede deshacer.': 'It cannot be undone.',
+  'Cliente anonimizado': 'Customer anonymized',
+  Fechas: 'Dates',
+  'Cliente / Vehículo': 'Customer / Vehicle',
+  'Sin reservas.': 'No bookings.',
+  'Mantenimiento y taller': 'Maintenance and workshop',
+  'Abierto (vehículo en taller)': 'Open (vehicle in the workshop)',
+  'Cerrado (vuelve a la flota)': 'Closed (back to the fleet)',
+  Costo: 'Cost',
+  Descripción: 'Description',
+
+  // --- Tarifas y sucursales ---
+  'Categorías y tarifas': 'Categories and rates',
+  'Código (el que usa el cotizador)': 'Code (the one the quote tool uses)',
+  'Tarifa diaria': 'Daily rate',
+  'Tarifa semanal (7+ días, opcional)': 'Weekly rate (7+ days, optional)',
+  'Km incluidos por día (0 = libres)': 'Km included per day (0 = unlimited)',
+  'Precio km excedente': 'Extra km price',
+  Plazas: 'Seats',
+  Transmisión: 'Transmission',
+  Manual: 'Manual',
+  Automática: 'Automatic',
+  Activa: 'Active',
+  'Alias (nombres que usa el sitio web / cotizador, separados por coma)': 'Aliases (names used by the website / quote tool, comma-separated)',
+  Diaria: 'Daily',
+  Semanal: 'Weekly',
+  'Km/día': 'Km/day',
+  Libres: 'Unlimited',
+  'Se cobra': 'Charged',
+  'Por día': 'Per day',
+  'Por alquiler': 'Per rental',
+  'Tope por alquiler (0 = sin tope)': 'Cap per rental (0 = no cap)',
+  Activo: 'Active',
+  'Alias (separados por coma)': 'Aliases (comma-separated)',
+  Tope: 'Cap',
+  Temporadas: 'Seasons',
+  'Multiplicador (1.3 = +30%)': 'Multiplier (1.3 = +30%)',
+  Temporada: 'Season',
+  Ajuste: 'Adjustment',
+  'Sucursales / lugares de entrega': 'Locations / pick-up points',
+  'Alias (cómo lo nombra el sitio web, separados por coma)': 'Aliases (how the website names it, comma-separated)',
+  'Sólo los administradores pueden modificar tarifas.': 'Only administrators can change rates.',
+
+  // --- Cotizador web ---
+  Copiar: 'Copy',
+  'API del cotizador': 'Quote tool API',
+  'Bandeja (': 'Inbox (',
+  'con error)': 'with errors)',
+  'Avisos salientes': 'Outgoing notifications',
+  'Integración con el cotizador': 'Quote tool integration',
+  'Las cotizaciones aceptadas en el sitio web o en el cotizador entran solas como reservas, sin volver a cargar los datos a mano.':
+    'Quotes accepted on the website or the quote tool come in as bookings on their own, with no retyping.',
+  'Conectar el formulario del sitio': 'Connect the website form',
+  'Opción A (recomendada): pegar esta línea en la página del cotizador, antes de': "Option A (recommended): paste this line in the quote page, before",
+  '. El formulario sigue funcionando igual que hoy y además envía una copia al sistema:': '. The form keeps working as today and also sends a copy to the system:',
+  'Opción B: que el formulario envíe directamente a esta dirección (': 'Option B: have the form send directly to this address (',
+  'del form, método POST):': 'of the form, POST method):',
+  'Cada solicitud entra como': 'Each request comes in as a',
+  'reserva pendiente': 'pending booking',
+  'con origen "Formulario web". El precio se calcula con tus tarifas. Si falta un dato o no se reconoce la categoría/lugar, queda en la Bandeja para resolverla a mano.':
+    'with source "Web form". The price is calculated with your rates. If something is missing or the category/location is not recognized, it stays in the Inbox to be solved by hand.',
+  Configuración: 'Settings',
+  'Recibir solicitudes del formulario web': 'Receive requests from the web form',
+  'Sitios autorizados (separados por coma)': 'Allowed websites (comma-separated)',
+  'Página de "gracias" a la que volver (opción B, opcional)': '"Thank you" page to return to (option B, optional)',
+  'Mapeo de campos: dato del sistema → atributo': 'Field mapping: system field → attribute',
+  'del campo en el formulario': 'of the form field',
+  'No hace falta completar el mapeo a mano:': 'You do not need to fill in the mapping by hand:',
+  'los campos que no figuran acá se reconocen solos por su nombre (nombre, email, teléfono, fecha y hora de retiro/devolución, lugar, vehículo, vuelo, comentarios…). El mapeo sólo sirve para forzar un campo puntual. Si la fecha y la hora están en campos separados, usá':
+    'fields not listed here are recognized by their name (name, email, phone, pick-up/return date and time, location, vehicle, flight, comments…). The mapping only forces a specific field. If date and time are in separate fields, use',
+  '. La categoría y el lugar se reconocen por código, nombre o los': '. Category and location are recognized by code, name or the',
+  'cargados en Tarifas y sucursales.': 'set in Rates and locations.',
+  'Probar con datos del formulario': 'Test with form data',
+  'Pegá un ejemplo de lo que envía el formulario (JSON, o texto tipo': 'Paste a sample of what the form sends (JSON, or text like',
+  ') para ver cómo se interpreta.': ') to see how it is read.',
+  Aeropuerto: 'Airport',
+  'Llego en el vuelo AR1872': 'Arriving on flight AR1872',
+  'Ver interpretación': 'See interpretation',
+  'Crear reserva con estos datos': 'Create booking with this data',
+  'Configuración guardada': 'Settings saved',
+  Credenciales: 'Credentials',
+  'API key (header': 'API key (header',
+  'Regenerar API key': 'Regenerate API key',
+  Direcciones: 'Addresses',
+  'Catálogo (categorías, sucursales, adicionales)': 'Catalog (categories, locations, extras)',
+  'Disponibilidad y precios': 'Availability and prices',
+  'Cotizar una categoría': 'Quote a category',
+  'Crear reserva (formato estándar)': 'Create booking (standard format)',
+  'Webhook con formato propio del cotizador (usa el mapeo)': "Webhook in the quote tool's own format (uses the mapping)",
+  Reglas: 'Rules',
+  'Precio de las reservas del cotizador': 'Price of quote tool bookings',
+  'Respetar el total que envía el cotizador': 'Keep the total sent by the quote tool',
+  'Recalcular con las tarifas del sistema': 'Recalculate with the system rates',
+  'Confirmar automáticamente (si no, entran como pendientes)': 'Confirm automatically (otherwise they come in as pending)',
+  'Mapeo de campos del webhook: dato del sistema → ruta en el JSON del cotizador': "Webhook field mapping: system field → path in the quote tool's JSON",
+  Ejemplo: 'Example',
+  'Si se envía dos veces el mismo': 'If the same',
+  'no se duplica la reserva.': 'is sent twice, the booking is not duplicated.',
+  'El cotizador dejará de funcionar hasta que cargues la nueva clave. ¿Continuar?': 'The quote tool will stop working until you enter the new key. Continue?',
+  'Nueva API key generada': 'New API key generated',
+  'Solicitudes recibidas': 'Requests received',
+  'Id externo': 'External id',
+  Detalle: 'Detail',
+  'Ver datos': 'See data',
+  Reintentar: 'Retry',
+  'Todavía no llegaron solicitudes.': 'No requests yet.',
+  'Si una solicitud falló (por ejemplo, categoría o lugar desconocido), corregí el alias o el mapeo y tocá "Reintentar".':
+    'If a request failed (for example, unknown category or location), fix the alias or mapping and tap "Retry".',
+  'Solicitud #': 'Request #',
+  'Lo que llegó': 'What arrived',
+  'Cómo se interpretó': 'How it was read',
+  'Usar como ejemplo en el probador': 'Use as a sample in the tester',
+  'Avisar al cotizador los cambios': 'Notify the quote tool of changes',
+  'Cada vez que una reserva se crea, confirma, cancela, entrega o devuelve, se envía un POST JSON a esta URL (firmado con HMAC-SHA256 en el header':
+    'Every time a booking is created, confirmed, cancelled, handed over or returned, a JSON POST is sent to this URL (signed with HMAC-SHA256 in the header',
+  'URL del webhook': 'Webhook URL',
+  'Secreto de firma': 'Signing secret',
+  'Enviar prueba': 'Send test',
+  'Regenerar secreto': 'Regenerate secret',
+  'Últimos envíos': 'Latest deliveries',
+  'sin respuesta': 'no response',
+  'Sin envíos.': 'No deliveries.',
+  'Respuesta del servidor:': 'Server response:',
+  'Secreto regenerado': 'Secret regenerated',
+  Copiado: 'Copied',
+
+  // --- Empresa y contrato ---
+  'Peso argentino (ARS)': 'Argentine peso (ARS)',
+  'Peso chileno (CLP)': 'Chilean peso (CLP)',
+  'Peso uruguayo (UYU)': 'Uruguayan peso (UYU)',
+  'Guaraní (PYG)': 'Guarani (PYG)',
+  'Boliviano (BOB)': 'Boliviano (BOB)',
+  'Sol (PEN)': 'Sol (PEN)',
+  'Peso colombiano (COP)': 'Colombian peso (COP)',
+  'Peso mexicano (MXN)': 'Mexican peso (MXN)',
+  'Colón (CRC)': 'Colon (CRC)',
+  'Peso dominicano (DOP)': 'Dominican peso (DOP)',
+  'Quetzal (GTQ)': 'Quetzal (GTQ)',
+  'Real (BRL)': 'Real (BRL)',
+  'Dólar (USD)': 'Dollar (USD)',
+  'Euro (EUR)': 'Euro (EUR)',
+  Perú: 'Peru',
+  México: 'Mexico',
+  Panamá: 'Panama',
+  'República Dominicana': 'Dominican Republic',
+  España: 'Spain',
+  'España (península y Baleares)': 'Spain (mainland and Balearic Islands)',
+  'España (Islas Canarias)': 'Spain (Canary Islands)',
+  'Estados Unidos': 'United States',
+  'Latinoamérica (general)': 'Latin America (general)',
+  'Otro país': 'Other country',
+  'Nombre de la empresa': 'Company name',
+  'País (completa moneda, impuesto y formato)': 'Country (fills in currency, tax and format)',
+  'de la empresa': 'of the company',
+  Moneda: 'Currency',
+  'Nombre del impuesto (IVA, IGV, ITBIS, IGIC…)': 'Tax name (VAT, IGV, ITBIS, IGIC…)',
+  'Impuesto %': 'Tax %',
+  'Las tarifas incluyen el impuesto': 'Rates include tax',
+  'Nombre de la identificación fiscal (CUIT, RUT, RFC, NIF…)': 'Tax ID name (CUIT, RUT, RFC, NIF…)',
+  'Formato de números y fechas': 'Number and date format',
+  'Tolerancia (horas) antes de cobrar un día más': 'Grace period (hours) before charging an extra day',
+  'Recargo por devolver en otro lugar': 'Surcharge for returning at another location',
+  'Cargo por cada 1/8 de combustible faltante': 'Charge per missing 1/8 of fuel',
+  'Edad mínima del conductor': 'Minimum driver age',
+  'Franquicia del seguro (vacío = la de la póliza)': 'Insurance deductible (empty = the policy one)',
+  'Jurisdicción del contrato (tribunales de...)': 'Contract jurisdiction (courts of...)',
+  'Jurisdicción del contrato en inglés (courts of...)': 'Contract jurisdiction in English (courts of...)',
+  'Condiciones generales del contrato (un párrafo por cláusula, separadas por una línea en blanco)': 'General contract terms (one paragraph per clause, separated by a blank line)',
+  'Condiciones generales del contrato en inglés (se usan cuando la app está en inglés)': 'General contract terms in English (used when the app is in English)',
+  'Factura electrónica (sólo prueba)': 'E-invoicing (test only)',
+  Modo: 'Mode',
+  'Simulado (no se envía a ningún lado)': 'Simulated (not sent anywhere)',
+  'Homologación (servidor de prueba, necesita certificado)': 'Testing (test server, needs a certificate)',
+  'CUIT o RUT de prueba': 'Test CUIT or RUT',
+  'Punto de venta (Argentina)': 'Point of sale (Argentina)',
+  'Condición frente al IVA (Argentina)': 'VAT status (Argentina)',
+  'Responsable Inscripto (Factura A o B)': 'Registered taxpayer (Invoice A or B)',
+  'Monotributo (Factura C)': 'Simplified regime (Invoice C)',
+  'Devolución del 100 % si cancela con esta anticipación o más (horas)': '100 % refund if cancelled this far ahead or more (hours)',
+  'Devolución parcial si cancela con esta anticipación o más (horas)': 'Partial refund if cancelled this far ahead or more (hours)',
+  'Porcentaje de la devolución parcial (%)': 'Partial refund percentage (%)',
+  'Condiciones extra de cancelación y devoluciones': 'Extra cancellation and refund terms',
+  'Condiciones extra de cancelación y devoluciones en inglés': 'Extra cancellation and refund terms in English',
+  'Datos de': 'Data for',
+  'cargados: revisalos y tocá Guardar': 'loaded: check them and tap Save',
+  'Estas palabras se completan solas en cada contrato:': 'These words are filled in automatically in each contract:',
+  '. Son condiciones de uso habitual: conviene que las revise un abogado antes de usarlas.': '. These are common terms: have a lawyer review them before using them.',
+  'Restaurar condiciones sugeridas': 'Restore suggested terms',
+  'Restaurar condiciones sugeridas en inglés': 'Restore suggested English terms',
+  'Factura electrónica': 'E-invoicing',
+  'Por ahora funciona': 'For now it works',
+  'sólo en modo de prueba': 'in test mode only',
+  ': las facturas no tienen validez fiscal. Para facturar de verdad faltan el certificado digital de la empresa y su': ": invoices have no tax validity. To invoice for real you need the company's digital certificate and its",
+  'habilitado para factura electrónica (lo gestiona el contador).': 'enabled for e-invoicing (handled by the accountant).',
+  'Cancelaciones y devolución de dinero': 'Cancellations and refunds',
+  'Con menos horas que la devolución parcial, o si el cliente no se presenta, no hay devolución. Al cancelar una reserva, el sistema calcula cuánto corresponde devolver y lo deja registrado (no mueve dinero). Esta política sale en el voucher y en el contrato.':
+    'With fewer hours than the partial refund, or if the customer does not show up, there is no refund. When a booking is cancelled, the system calculates the refund and records it (it does not move money). This policy appears on the voucher and in the contract.',
+  'Los valores y el texto son un ejemplo: cada agencia los tiene que revisar según las leyes de su país': "The values and text are an example: each agency must review them according to its country's laws",
+  '(por ejemplo, las de defensa del consumidor).': '(for example, consumer protection laws).',
+  '¿Reemplazar el texto actual por las condiciones sugeridas? (se aplica al guardar)': 'Replace the current text with the suggested terms? (applied when you save)',
+  Idioma: 'Language',
+  'Textos en inglés': 'English texts',
+  'Cuando la app está en inglés, el contrato, el voucher y la política de devolución usan estos textos. Si quedan vacíos se usan los de arriba.':
+    'When the app is in English, the contract, voucher and refund policy use these texts. If left empty, the ones above are used.',
+
+  // --- Usuarios ---
+  Ingreso: 'Sign-in',
+  'Login fallido': 'Failed sign-in',
+  'Login bloqueado por intentos': 'Sign-in blocked after attempts',
+  'Cambio de contraseña': 'Password change',
+  'Cambio de contraseña fallido': 'Failed password change',
+  'Usuario creado': 'User created',
+  'Usuario modificado': 'User updated',
+  'Registro borrado': 'Record deleted',
+  'Foto o documento borrado': 'Photo or document deleted',
+  'Configuración modificada': 'Settings changed',
+  'Integración modificada': 'Integration changed',
+  'API key regenerada': 'API key regenerated',
+  'Secreto de webhook regenerado': 'Webhook secret regenerated',
+  'Importación de datos': 'Data import',
+  Rol: 'Role',
+  Administrador: 'Administrator',
+  Operador: 'Operator',
+  'cambia la clave al entrar': 'changes password at sign-in',
+  'Los operadores manejan reservas, flota y clientes. Los administradores además configuran tarifas, el cotizador y los usuarios, y son los únicos que pueden borrar o anonimizar clientes. Cada persona debería tener su propio usuario.':
+    'Operators handle bookings, fleet and customers. Administrators also set up rates, the quote tool and users, and are the only ones who can delete or anonymize customers. Each person should have their own user.',
+  'Actividad reciente': 'Recent activity',
+  'Ingresos, intentos fallidos y cambios importantes. Muchos "login fallido" seguidos pueden ser alguien probando contraseñas.':
+    'Sign-ins, failed attempts and important changes. Many "failed sign-in" in a row may be someone trying passwords.',
+  'Qué pasó': 'What happened',
+  Usuario: 'User',
+  'Sin actividad registrada.': 'No activity recorded.',
+  'Nuevo usuario': 'New user',
+  'Contraseña inicial (la persona la cambia al entrar)': 'Initial password (the person changes it at sign-in)',
+  'Nueva contraseña (dejar vacío para no cambiar)': 'New password (leave empty to keep it)',
+  'Si le ponés una contraseña nueva, la persona la tiene que cambiar en su próximo ingreso y se cierran sus sesiones abiertas.':
+    'If you set a new password, the person must change it at their next sign-in and their open sessions are closed.',
+  'Usuario actualizado': 'User updated',
+  Sí: 'Yes',
+  No: 'No',
+
+  // --- Empresas ---
+  '+ Nueva empresa': '+ New company',
+  'Cada empresa tiene sus propios datos: reservas, flota, clientes, usuarios, tarifas y configuración. Nadie de una empresa puede ver los datos de otra.':
+    'Each company has its own data: bookings, fleet, customers, users, rates and settings. Nobody in one company can see the data of another.',
+  Empresa: 'Company',
+  Alta: 'Created',
+  'Nueva empresa': 'New company',
+  País: 'Country',
+  'Nombre del administrador': "Administrator's name",
+  'Email del administrador': "Administrator's email",
+  'Crear empresa': 'Create company',
+  'Se crea vacía, con los datos del país elegido. Te mostramos una contraseña inicial para pasarle al administrador: la cambia en su primer ingreso.':
+    'It is created empty, with the chosen country data. We show you an initial password to give the administrator: they change it at first sign-in.',
+  'Empresa creada': 'Company created',
+  'ya está lista. Pasale estos datos al administrador por un medio seguro (en persona o por teléfono):': 'is ready. Give these details to the administrator securely (in person or by phone):',
+  'Contraseña inicial': 'Initial password',
+  'Esta contraseña no se vuelve a mostrar. Al entrar, la app le pide elegir una propia y le muestra los primeros pasos para cargar su empresa.':
+    'This password is not shown again. At sign-in, the app asks them to choose their own and shows the first steps to set up their company.',
+  Listo: 'Done',
+
+  // --- Importar datos ---
+  '1 · Flota': '1 · Fleet',
+  'Patente, marca, modelo, año, categoría, estado, km, vencimientos de seguro y VTV.': 'Plate, make, model, year, category, status, km, insurance and inspection expiry.',
+  '2 · Clientes': '2 · Customers',
+  'Nombre, documento, email, teléfono, domicilio, licencia, fecha de nacimiento.': 'Name, ID, email, phone, address, license, date of birth.',
+  '3 · Reservas': '3 · Bookings',
+  'Cliente, fechas y horas de entrega y devolución, patente o categoría, estado, total y seña.': 'Customer, pick-up and return dates and times, plate or category, status, total and down payment.',
+  Nuevo: 'New',
+  Actualizado: 'Updated',
+  'Sin cambios': 'No changes',
+  'Ya existía': 'Already existed',
+  'Sólo los administradores pueden importar datos.': 'Only administrators can import data.',
+  'Pasá acá lo que tenían en el Drive y en el sistema anterior. Conviene seguir este orden:': 'Bring in what you had in Drive and the previous system. Best in this order:',
+  'primero la flota, después los clientes y al final las reservas': 'first the fleet, then the customers and finally the bookings',
+  '(así cada reserva encuentra su auto y su cliente).': '(so each booking finds its car and customer).',
+  '¿Cómo saco los datos de la planilla?': 'How do I get the data out of the spreadsheet?',
+  'Google Drive (Hojas de cálculo):': 'Google Drive (Sheets):',
+  'abrí la planilla →': 'open the spreadsheet →',
+  Archivo: 'File',
+  Descargar: 'Download',
+  'Valores separados por comas (.csv)': 'Comma-separated values (.csv)',
+  '. Si tiene varias pestañas, descargá cada una.': '. If it has several tabs, download each one.',
+  'Excel:': 'Excel:',
+  'Guardar como': 'Save as',
+  '→ tipo': '→ type',
+  'Otra página o sistema:': 'Another website or system:',
+  'buscá un botón "Exportar" / "Descargar Excel". Si no tiene, seleccioná la tabla con el mouse, copiala y pegala abajo.':
+    'look for an "Export" / "Download Excel" button. If there is none, select the table with the mouse, copy it and paste it below.',
+  'También podés': 'You can also',
+  'copiar las celdas': 'copy the cells',
+  'directo de la planilla (incluida la fila de títulos) y pegarlas en el cuadro de texto.': 'straight from the spreadsheet (including the header row) and paste them in the text box.',
+  'Los datos se procesan en este sistema y no se envían a ningún otro lado. El archivo no se guarda: sólo los registros importados. Después de importar, borrá el archivo descargado de tu computadora y dejá de compartir la planilla vieja.':
+    'The data is processed in this system and not sent anywhere else. The file is not saved: only the imported records. After importing, delete the downloaded file from your computer and stop sharing the old spreadsheet.',
+  'Archivo CSV': 'CSV file',
+  '…o pegá acá las celdas copiadas': '…or paste the copied cells here',
+  'Leer datos': 'Read data',
+  'Columnas que se reconocen:': 'Recognized columns:',
+  'Las columnas pueden tener otros nombres: después podés corregir cuál es cuál.': 'Columns can have other names: you can fix which is which afterwards.',
+  'Ese archivo es de Excel/Hojas de cálculo: guardalo como CSV (ver "¿Cómo saco los datos?") o copiá y pegá las celdas.':
+    'That file is an Excel/Sheets file: save it as CSV (see "How do I get the data out?") or copy and paste the cells.',
+  'El archivo pesa más de 5 MB: dividilo en partes.': 'The file is larger than 5 MB: split it into parts.',
+  'datos pegados': 'pasted data',
+  'Elegí un archivo o pegá los datos': 'Choose a file or paste the data',
+  '— no está —': '— not present —',
+  '¿Qué es cada columna?': 'What is each column?',
+  'fila(s). Revisá lo que reconoció el sistema y corregí lo que haga falta.': 'row(s). Check what the system recognized and fix what is needed.',
+  'Primeras filas': 'First rows',
+  'Si ya estaba cargado': 'If it was already on file',
+  'Completar sólo los datos que faltan': 'Fill in only the missing data',
+  'Reemplazar con los datos del archivo': 'Replace with the file data',
+  'No tocarlo': 'Leave it alone',
+  'Categoría por defecto (si falta o no se reconoce)': 'Default category (if missing or not recognized)',
+  '— ninguna —': '— none —',
+  'Guardar las columnas que no tienen lugar en "Observaciones" (para no perder nada)': 'Save the columns that have no place in "Notes" (so nothing is lost)',
+  'Las reservas que ya se importaron antes (mismo número, o mismo cliente y fechas) se saltean, así que podés volver a importar el archivo sin duplicar. Los clientes que no estén cargados se crean.':
+    'Bookings already imported (same number, or same customer and dates) are skipped, so you can import the file again without duplicates. Customers not on file are created.',
+  'Los registros repetidos se detectan solos (clientes por documento, email o teléfono; autos por patente), así que podés volver a importar sin duplicar.':
+    'Repeated records are detected automatically (customers by ID, email or phone; cars by plate), so you can import again without duplicates.',
+  'Probar (no guarda nada)': 'Test (saves nothing)',
+  Importar: 'Import',
+  '¿Importar': 'Import',
+  'fila(s) de': 'row(s) of',
+  'Importación terminada': 'Import finished',
+  Fila: 'Row',
+  'Prueba: así quedaría (todavía no se guardó nada)': 'Test: this is how it would look (nothing saved yet)',
+  'Resultado de la importación': 'Import result',
+  'se crearían': 'would be created',
+  'se actualizarían': 'would be updated',
+  'ya estaban': 'already there',
+  'con error': 'with errors',
+  'Las filas con error no se van a importar: corregilas en la planilla y volvé a leer el archivo, o importá igual y cargalas a mano.':
+    'Rows with errors will not be imported: fix them in the spreadsheet and read the file again, or import anyway and add them by hand.',
+  'Si está todo bien, tocá': 'If everything is fine, tap',
+  'Quedó registrado en la actividad de Usuarios.': 'It was recorded in the Users activity.',
+  'Las reservas importadas dicen "importado" como origen.': 'Imported bookings show "imported" as their source.',
+  'Filas para revisar (': 'Rows to review (',
+  Resultado: 'Result',
+  Registro: 'Record',
+  'Ninguna fila tiene avisos.': 'No row has warnings.',
+  'Ver todas las filas (': 'See all rows (',
+
+  // --- Asistente web ---
+  'No se pudo cargar el asistente': 'The assistant could not be loaded',
+  'Sólo los administradores configuran el asistente.': 'Only administrators set up the assistant.',
+  'Un chat para la página web de la agencia: el cliente elige fechas, ve los autos libres con su precio y pide la reserva, que entra como':
+    "A chat for the agency's website: the customer picks dates, sees the free cars with their price and requests the booking, which comes in as",
+  'para que la confirme el mostrador. Contesta solo, a cualquier hora, y no tiene costo por mensaje.': 'for the counter to confirm. It answers on its own, at any time, with no cost per message.',
+  'Asistente activado': 'Assistant enabled',
+  'Mensaje de bienvenida': 'Welcome message',
+  'WhatsApp para hablar con una persona (con código de país, ej. 5492901123456)': 'WhatsApp to talk to a person (with country code, e.g. 5492901123456)',
+  'Preguntas frecuentes (una por línea: Pregunta | Respuesta)': 'Frequent questions (one per line: Question | Answer)',
+  'Vista previa': 'Preview',
+  'Así lo ve el cliente. Las reservas que pidas acá entran de verdad como pendientes.': 'This is how the customer sees it. Bookings requested here really come in as pending.',
+  'Cómo ponerlo en la página web': 'How to put it on the website',
+  'Quien administra la página tiene que pegar esta línea antes de': 'Whoever manages the website must paste this line before',
+  'La dirección de la página tiene que estar en': "The website's address must be in",
+  'Cotizador web → sitios autorizados': 'Web quote form → allowed websites',
+  '. Opcional:': '. Optional:',
+  'cambia el color del botón.': "changes the button's color.",
+  'Seleccioná el texto y copialo': 'Select the text and copy it',
+  'Activá el asistente y guardá para verlo.': 'Enable the assistant and save to see it.',
+  'Asistente guardado': 'Assistant saved',
+
+  // --- Textos de pantalla con datos adentro ---
+  'Subiendo {} de {}…': 'Uploading {} of {}…',
+  'Fila {}': 'Row {}',
+
+  // --- Mensajes del servidor ---
+  'Adicional desconocido: "{}"': 'Unknown extra: "{}"',
+  'Adicional inexistente ({})': 'Extra does not exist ({})',
+  'Archivo inexistente': 'File does not exist',
+  'Asigná un vehículo antes de entregar': 'Assign a vehicle before handing over',
+  'Campo obligatorio: {}': 'Required field: {}',
+  'Cargá el número de licencia del cliente antes de entregar': "Enter the customer's license number before handing over",
+  'Categoría inexistente': 'Category does not exist',
+  'Categoría inexistente o inactiva': 'Category does not exist or is inactive',
+  'Categoría obligatoria': 'Category is required',
+  'Categoría por defecto inexistente': 'Default category does not exist',
+  'Cliente inexistente': 'Customer does not exist',
+  'Cliente obligatorio': 'Customer is required',
+  'Combustible: valor entre 0 y 8 (octavos)': 'Fuel: value between 0 and 8 (eighths)',
+  'Configurá primero la URL del webhook': 'Set the webhook URL first',
+  'Demasiados intentos fallidos. Esperá 15 minutos y volvé a probar.': 'Too many failed attempts. Wait 15 minutes and try again.',
+  'El archivo es demasiado grande (máximo 5 MB). Dividilo en partes.': 'The file is too large (5 MB max). Split it into parts.',
+  'El archivo es demasiado grande (máximo 20 MB)': 'The file is too large (20 MB max)',
+  'El archivo está vacío': 'The file is empty',
+  'El archivo no es una foto o un PDF válido': 'The file is not a valid photo or PDF',
+  'El archivo sólo tiene encabezados, sin datos': 'The file only has headers, no data',
+  'El archivo ya no está en el servidor': 'The file is no longer on the server',
+  'El email del administrador no es válido': "The administrator's email is not valid",
+  'El email no es válido': 'The email is not valid',
+  'El km de devolución debe ser mayor o igual al de salida ({})': 'Return km must be greater than or equal to km out ({})',
+  'El km de salida no puede ser menor al registrado ({})': 'Km out cannot be lower than the recorded one ({})',
+  'El mapeo debe ser un objeto JSON': 'The mapping must be a JSON object',
+  'El mapeo del formulario debe ser un objeto JSON': 'The form mapping must be a JSON object',
+  'El porcentaje de devolución no puede pasar de 100': 'The refund percentage cannot exceed 100',
+  'El vehículo {} figura como alquilado': 'Vehicle {} is marked as rented',
+  'El vehículo no pertenece a la categoría de la reserva': "The vehicle does not belong to the booking's category",
+  'El vehículo seleccionado no está disponible en esas fechas': 'The selected vehicle is not available on those dates',
+  'Email o contraseña incorrectos': 'Wrong email or password',
+  'Empresa inexistente': 'Company does not exist',
+  'Ese email ya lo usa un usuario de otra empresa': 'That email is already used by a user of another company',
+  'Esta reserva ya tiene una factura emitida': 'This booking already has an invoice',
+  'Factura inexistente': 'Invoice does not exist',
+  'Falta el nombre de la empresa': 'Company name is missing',
+  'Fechas de retiro y devolución obligatorias': 'Pick-up and return dates are required',
+  'Formato de números y fechas inválido': 'Invalid number and date format',
+  'Formato no admitido: subí fotos (JPG, PNG, HEIC) o PDF': 'Format not supported: upload photos (JPG, PNG, HEIC) or PDF',
+  'Importe inválido': 'Invalid amount',
+  'Indicá categoría y fechas': 'Enter category and dates',
+  'Indicá fechas de retiro y devolución': 'Enter pick-up and return dates',
+  'La URL del webhook debe empezar con http:// o https://': 'The webhook URL must start with http:// or https://',
+  'La contraseña actual no es correcta': 'The current password is not correct',
+  'La contraseña nueva tiene que ser distinta de la actual': 'The new password must be different from the current one',
+  'La contraseña debe tener al menos 8 caracteres': 'The password must have at least 8 characters',
+  'La contraseña debe tener letras y números': 'The password must have letters and numbers',
+  'La contraseña es demasiado fácil de adivinar': 'The password is too easy to guess',
+  'La contraseña no puede contener el usuario': 'The password cannot contain the user name',
+  'La devolución debe ser posterior al retiro': 'The return must be after the pick-up',
+  'La fecha de devolución debe ser posterior a la de retiro': 'The return date must be after the pick-up date',
+  'La licencia del cliente vence antes de la devolución': "The customer's license expires before the return",
+  'La página de "gracias" debe empezar con https://': 'The "thank you" page must start with https://',
+  'La reserva no está en condiciones de ser entregada': 'The booking cannot be handed over in its current state',
+  'La reserva no tiene importe para facturar': 'The booking has no amount to invoice',
+  'La reserva no tiene un contrato abierto': 'The booking has no open contract',
+  'Las horas de la devolución parcial tienen que ser menos que las de la devolución total': 'Partial refund hours must be fewer than full refund hours',
+  'Los valores de la política de devolución tienen que ser números positivos': 'Refund policy values must be positive numbers',
+  'Moneda inválida': 'Invalid currency',
+  'Nada para actualizar': 'Nothing to update',
+  'No encontrado': 'Not found',
+  'No podés quitarte permisos de administrador ni desactivarte': 'You cannot remove your own administrator rights or deactivate yourself',
+  'No se puede borrar: tiene registros asociados. Podés desactivarlo.': 'It cannot be deleted: it has related records. You can deactivate it.',
+  'No se puede pasar de "{}" a "{}"': 'Cannot change from "{}" to "{}"',
+  'Nombre, email y contraseña son obligatorios': 'Name, email and password are required',
+  'País inválido': 'Invalid country',
+  'Pegá el JSON de la cotización': 'Paste the quote JSON',
+  'Registro inexistente': 'Record does not exist',
+  'Reserva inexistente': 'Booking does not exist',
+  'Sin disponibilidad en la categoría {} para esas fechas': 'No availability in category {} for those dates',
+  'Sólo se asigna vehículo a reservas pendientes o confirmadas': 'Vehicles can only be assigned to pending or confirmed bookings',
+  'Sólo se factura una reserva confirmada, en curso o finalizada': 'Only confirmed, in-progress or completed bookings can be invoiced',
+  'Sólo se pueden modificar reservas pendientes o confirmadas': 'Only pending or confirmed bookings can be changed',
+  'Sólo administradores': 'Administrators only',
+  'Sólo la empresa principal da de alta empresas': 'Only the main company can create companies',
+  'Tenés que cambiar la contraseña antes de seguir': 'You must change your password before continuing',
+  'Tipo de importación desconocido': 'Unknown import type',
+  'Usuario inexistente': 'User does not exist',
+  'Vehículo inexistente': 'Vehicle does not exist',
+  'Ya existe un usuario con ese email': 'A user with that email already exists',
+  'Ya existe un registro con ese código / dato único': 'A record with that code / unique value already exists',
+  'Referencia inválida o registro en uso': 'Invalid reference or record in use',
+  'Error interno. Si se repite, avisale al administrador.': 'Internal error. If it happens again, tell the administrator.',
+  'Pedido rechazado: no viene de la aplicación': 'Request rejected: it does not come from the app',
+  'Ruta inexistente': 'Route does not exist',
+  'JSON inválido': 'Invalid JSON',
+  'Pedido inválido': 'Invalid request',
+  'Hay {} filas; el máximo por importación es {}. Dividilo en partes.': 'There are {} rows; the maximum per import is {}. Split it into parts.',
+  'Indicá qué columna es: {}': 'Indicate which column is: {}',
+  'Para enviar a certificación del SII (maullin.sii.cl) faltan el certificado digital (.pfx) y los folios (CAF) de prueba de la empresa. Mientras tanto, usá el modo "simulado".':
+    'To send to SII certification (maullin.sii.cl) the company\'s test digital certificate (.pfx) and folios (CAF) are missing. Meanwhile, use "simulated" mode.',
+};
+
+/* ---------- Traducción ---------- */
+const norm = (s) => String(s).replace(/\s+/g, ' ').trim();
+const UPPER = {};
+const PATTERNS = [];
+const FRAGMENTS = [];
+for (const [es, en] of Object.entries(EN)) {
+  const k = norm(es);
+  if (k.includes('{}')) {
+    const re = k.replace(/[.*+?^$()|[\]\\]/g, '\\$&').replace(/\{\}/g, '(.+?)');
+    PATTERNS.push([new RegExp(`^${re}$`), en]);
+  } else {
+    UPPER[k.toUpperCase()] = en.toUpperCase();
+    if (k.length >= 3 && k !== en) FRAGMENTS.push(k);
+  }
+}
+// Los pedazos más largos primero, para que "Total final" gane sobre "Total".
+FRAGMENTS.sort((a, b) => b.length - a.length);
+// Un pedazo que empieza o termina con letra no se reemplaza dentro de otra palabra ("día" en "Díaz").
+const edge = /[\p{L}\d]/u;
+const fragmentRe = (list) =>
+  new RegExp(
+    list
+      .map((f) => `${edge.test(f[0]) ? '(?<![\\p{L}\\d])' : ''}${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${edge.test(f[f.length - 1]) ? '(?![\\p{L}\\d])' : ''}`)
+      .join('|'),
+    'gu',
+  );
+// Una palabra suelta sólo se reemplaza dentro de un texto en el contrato, el voucher y el PDF, que arma la app.
+// En pantalla no: podría ser parte de un dato de la empresa ("Seguro sin franquicia").
+const PHRASE_RE = fragmentRe(FRAGMENTS.filter((f) => !/^\p{L}+$/u.test(f)));
+const ALL_RE = fragmentRe(FRAGMENTS);
+
+/**
+ * Traduce un texto al idioma elegido (en español lo devuelve igual).
+ * `words`: también reemplaza palabras sueltas dentro del texto (ver trDoc).
+ */
+function tr(text, words = false) {
+  if (LANG !== 'en' || typeof text !== 'string' || !/[a-záéíóúñ]/i.test(text)) return text;
+  const k = norm(text);
+  const lead = text.match(/^\s*/)[0];
+  const trail = text.match(/\s*$/)[0];
+  if (Object.prototype.hasOwnProperty.call(EN, k)) return lead + EN[k] + trail;
+  if (k === k.toUpperCase() && UPPER[k]) return lead + UPPER[k] + trail;
+  for (const [re, en] of PATTERNS) {
+    const m = k.match(re);
+    if (m) {
+      let i = 1;
+      return lead + en.replace(/\{\}/g, () => m[i++]) + trail;
+    }
+  }
+  return text.replace(words === true ? ALL_RE : PHRASE_RE, (f) => EN[f]);
+}
+
+/** Para los textos que arma la app (contrato, voucher, PDF): también traduce las palabras sueltas. */
+const trDoc = (text) => tr(text, true);
+
+/* ---------- Páginas: traduce lo que aparece en pantalla ---------- */
+const SKIP = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'PRE', 'CODE']);
+const done = new WeakMap();
+/** `words`: como en tr(); lo usa el contrato impreso. */
+function translateTree(root, words = false) {
+  if (LANG !== 'en' || !root) return;
+  const doc = root.ownerDocument || root;
+  if (root.nodeType === 3) return translateText(root, words);
+  if (root.nodeType !== 1 && root.nodeType !== 9 && root.nodeType !== 11) return;
+  const walker = doc.createTreeWalker(root, 5 /* elementos y textos */);
+  for (let n = walker.currentNode; n; n = walker.nextNode()) {
+    if (n.nodeType === 3) translateText(n, words);
+    else if (n.nodeType === 1) {
+      for (const a of ['placeholder', 'title', 'aria-label']) {
+        const v = n.getAttribute(a);
+        if (v) {
+          const t = tr(v);
+          if (t !== v) n.setAttribute(a, t);
+        }
+      }
+    }
+  }
+}
+function translateText(node, words = false) {
+  const p = node.parentNode;
+  if (!p || SKIP.has(p.nodeName) || (p.closest && p.closest('[data-notr],[contenteditable]')) || done.get(node) === node.data) return;
+  const t = tr(node.data, words);
+  if (t !== node.data) node.data = t;
+  done.set(node, node.data);
+}
+
+/** Selector de idioma: el idioma queda guardado en este navegador y la página se vuelve a cargar. */
+function languageSwitch() {
+  const box = document.createElement('div');
+  box.className = 'lang-switch';
+  box.setAttribute('data-notr', '');
+  box.innerHTML = ['es', 'en']
+    .map((l) => `<button type="button" class="btn link${l === LANG ? ' active' : ''}" data-lang="${l}" aria-pressed="${l === LANG}">${l === 'es' ? 'Español' : 'English'}</button>`)
+    .join('<span aria-hidden="true">·</span>');
+  box.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-lang]');
+    if (!b || b.dataset.lang === LANG) return;
+    try {
+      localStorage.setItem('floty_lang', b.dataset.lang);
+    } catch {
+      /* sin almacenamiento: queda en español */
+    }
+    location.reload();
+  });
+  return box;
+}
+
+if (typeof document !== 'undefined') {
+  document.documentElement.lang = LANG;
+  const start = () => {
+    for (const el of [document.getElementById('login-form'), document.querySelector('.user-box')]) if (el) el.appendChild(languageSwitch());
+    if (LANG !== 'en') return;
+    document.title = tr(document.title);
+    translateTree(document.body);
+    new MutationObserver((list) => {
+      for (const m of list) {
+        if (m.type === 'characterData') translateText(m.target);
+        else m.addedNodes.forEach((n) => translateTree(n));
+      }
+      if (/[áéíóúñ]/i.test(document.title)) document.title = tr(document.title);
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    // Avisos y preguntas del navegador.
+    const wrap = (fn) => (msg, ...rest) => fn.call(window, tr(String(msg)), ...rest);
+    window.alert = wrap(window.alert);
+    window.confirm = wrap(window.confirm);
+    window.prompt = wrap(window.prompt);
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
+}
+
+if (typeof module !== 'undefined') module.exports = { EN, tr, trDoc, L, translateTree };

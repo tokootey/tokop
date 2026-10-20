@@ -153,6 +153,18 @@ Las instalaciones de antes siguen igual: su base pasa a ser la empresa principal
 
    Países incluidos: Argentina, Chile, Uruguay, Paraguay, Bolivia, Perú, Colombia, Ecuador, México, Costa Rica, Panamá, República Dominicana, Guatemala, España (península y Canarias) y Estados Unidos.
 
+## Idioma: español o inglés
+
+Abajo de la pantalla de ingreso y en el menú (debajo del usuario) se elige **Español** o **English**. El idioma queda guardado en ese navegador.
+
+- En inglés se traducen todas las pantallas, los avisos y los mensajes de error.
+- También salen en inglés el **contrato** (impreso y PDF), el **voucher** (WhatsApp, email y PDF) y la política de devolución.
+- Las condiciones del contrato, la jurisdicción y las condiciones extra de cancelación tienen su versión en inglés en *Ajustes → Empresa y contrato → Textos en inglés*. Vienen con una traducción sugerida de las condiciones de fábrica; si una empresa cambió las suyas en español, tiene que actualizar también las de inglés.
+- Lo que carga cada empresa (nombres de categorías, adicionales, lugares, notas) se muestra tal como está escrito.
+- El chat de la página web de la agencia (asistente) sigue en español.
+
+Las traducciones están en `public/i18n.js`. Un texto nuevo de la pantalla sale en español hasta que se agregue ahí.
+
 ## Seguridad y datos de los clientes
 
 **Acceso**

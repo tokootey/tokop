@@ -6,10 +6,27 @@
  * y después, con los km, el combustible y los cargos reales.
  * Usa de app.js: state, money(), num(), locale(), taxName(), taxIdLabel() y contractTermsList().
  */
+/** Con la app en inglés, todo lo que se escribe en el PDF pasa por tr() (i18n.js); en español no cambia nada. */
+function localizePdf(doc) {
+  if (LANG !== 'en') return doc;
+  const text = doc.text.bind(doc);
+  const split = doc.splitTextToSize.bind(doc);
+  doc.text = (t, ...rest) => text(Array.isArray(t) ? t.map(trDoc) : trDoc(t), ...rest);
+  doc.splitTextToSize = (t, ...rest) => split(trDoc(t), ...rest);
+  return doc;
+}
+function localizeTable(opts) {
+  if (LANG !== 'en') return opts;
+  const cell = (c) => (c && typeof c === 'object' && 'content' in c ? { ...c, content: trDoc(c.content) } : trDoc(c));
+  const out = { ...opts };
+  for (const k of ['head', 'body']) if (opts[k]) out[k] = opts[k].map((row) => row.map(cell));
+  return out;
+}
+
 function buildContractPdf(r) {
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  const table = (opts) => (typeof window.autoTable === 'function' ? window.autoTable(doc, opts) : doc.autoTable(opts));
+  const doc = localizePdf(new jsPDF({ unit: 'mm', format: 'a4' }));
+  const table = (opts) => (typeof window.autoTable === 'function' ? window.autoTable(doc, localizeTable(opts)) : doc.autoTable(localizeTable(opts)));
   const s = state.settings;
   const c = r.contract;
   const delivered = Boolean(c);
@@ -225,11 +242,11 @@ function buildContractPdf(r) {
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i);
     doc.setFont('helvetica', 'normal').setFontSize(7).setTextColor(110);
-    doc.text(`${company} · ${ref} · Página ${i} de ${pages}`, W / 2, H - 7, { align: 'center' });
+    doc.text(`${company} · ${ref} · ${L(`Página ${i} de ${pages}`, `Page ${i} of ${pages}`)}`, W / 2, H - 7, { align: 'center' });
   }
 
   // Nombre de archivo sin acentos ni símbolos: algunos navegadores descartan los nombres con acentos.
-  const safeName = `${delivered ? `Contrato ${c.number}` : `Pre-contrato ${r.code}`} - ${r.customer_name}`
+  const safeName = `${delivered ? `${L('Contrato', 'Agreement')} ${c.number}` : `${L('Pre-contrato', 'Pre-contract')} ${r.code}`} - ${r.customer_name}`
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\w .-]/g, '')
@@ -256,8 +273,8 @@ function buildContractPdf(r) {
  */
 function buildVoucherPdf(r) {
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  const table = (opts) => (typeof window.autoTable === 'function' ? window.autoTable(doc, opts) : doc.autoTable(opts));
+  const doc = localizePdf(new jsPDF({ unit: 'mm', format: 'a4' }));
+  const table = (opts) => (typeof window.autoTable === 'function' ? window.autoTable(doc, localizeTable(opts)) : doc.autoTable(localizeTable(opts)));
   const s = state.settings;
   const M = 15;
   const W = 210;
@@ -285,7 +302,7 @@ function buildVoucherPdf(r) {
       columnStyles: isPrice ? { 0: { cellWidth: 'auto' }, 1: { halign: 'right', cellWidth: 45 } } : { 0: { fontStyle: 'bold', fillColor: [242, 244, 247], cellWidth: 40 } },
       // Total y saldo en negrita.
       didParseCell: (c) => {
-        if (isPrice && c.section === 'body' && ['Total', 'Saldo a pagar'].includes(c.row.raw[0])) c.cell.styles.fontStyle = 'bold';
+        if (isPrice && c.section === 'body' && [tr('Total'), tr('Saldo a pagar')].includes(c.row.raw[0])) c.cell.styles.fontStyle = 'bold';
       },
       body: sec.rows,
     });
