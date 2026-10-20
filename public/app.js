@@ -754,6 +754,9 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
     more.push('<button data-act="edit">Modificar fechas o datos</button>');
   }
   if (r.status === 'en_curso') actions.push('<button class="btn ok" data-act="checkin">Registrar devolución</button>');
+  // Saldo a cobrar a la vista, con el importe: un toque abre el cobro ya completado.
+  if (['confirmada', 'en_curso', 'finalizada'].includes(r.status) && r.balance.pending > 0)
+    actions.push(`<button class="btn ${r.status === 'finalizada' ? 'primary' : ''}" data-act="pay">Cobrar ${money(r.balance.pending)}</button>`);
   if (['cancelada', 'no_show'].includes(r.status)) actions.push('<button class="btn" data-act="reopen">Reabrir</button>');
   if (!['cancelada', 'no_show'].includes(r.status)) {
     actions.push('<button class="btn" data-act="pdf">Contrato PDF</button>');
@@ -930,7 +933,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           } catch (e) {
             toast(`La devolución quedó registrada, pero falló una foto: ${e.message}. Podés subirla desde la reserva.`, true);
           }
-          reload();
+          // Si quedó saldo (km o combustible de más, daños), se abre el cobro directo.
+          location.hash = `#/reservas/${r.id}?accion=pay`;
         },
       ),
     pay: () =>
@@ -1025,10 +1029,10 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   };
   $$('[data-act]', view).forEach((b) => b.addEventListener('click', () => handlers[b.dataset.act]()));
   wireFiles(view, r, reload);
-  // Desde el Panel se llega con ?accion=checkout|checkin: se abre ese paso directo si el estado lo permite.
+  // Con ?accion=checkout|checkin|pay se abre ese paso directo si el estado lo permite (pay: sólo si queda saldo).
   if (accion) {
     history.replaceState(null, '', `#/reservas/${r.id}`);
-    if ($(`[data-act="${accion}"]`, view)) handlers[accion]();
+    if (accion === 'pay' ? r.balance.pending > 0 : $(`[data-act="${accion}"]`, view)) handlers[accion]();
   }
 }, 'reservas');
 
