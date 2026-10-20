@@ -742,7 +742,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
       allow_overbooking: c && !c.available,
     };
     const r = await run(() => POST('/reservations', body), 'Reserva creada');
-    location.hash = `#/reservas/${r.id}`;
+    location.hash = `#/reservas/${r.id}${status === 'confirmada' ? '?accion=voucher' : ''}`;
   });
 
   await refresh();
@@ -785,6 +785,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
     actions.push(`<button class="btn ${r.status === 'finalizada' ? 'primary' : ''}" data-act="pay">Cobrar ${money(r.balance.pending)}</button>`);
   if (['cancelada', 'no_show'].includes(r.status)) actions.push('<button class="btn" data-act="reopen">Reabrir</button>');
   if (!['cancelada', 'no_show'].includes(r.status)) {
+    if (r.status !== 'finalizada') actions.push('<button class="btn" data-act="voucher">Enviar voucher</button>');
     actions.push('<button class="btn" data-act="pdf">Contrato PDF</button>');
     more.push('<button data-act="print">Imprimir contrato</button>');
   }
@@ -875,7 +876,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
 
   const reload = () => route();
   const handlers = {
-    confirm: () => run(() => POST(`/reservations/${r.id}/status`, { status: 'confirmada' }), 'Reserva confirmada').then(reload),
+    // Al confirmar se abre el envío del voucher, que es lo que sigue.
+    confirm: () => run(() => POST(`/reservations/${r.id}/status`, { status: 'confirmada' }), 'Reserva confirmada').then(() => (location.hash = `#/reservas/${r.id}?accion=voucher`)),
     cancel: () => {
       const reason = prompt('Motivo de la cancelación (opcional):');
       if (reason === null) return;
@@ -1009,6 +1011,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         },
       ),
     print: () => printContract(r),
+    voucher: () => sendVoucher(r),
     pdf: async () => {
       if (!window.jspdf) return toast('No se pudo cargar el generador de PDF. Recargá la página e intentá de nuevo.', true);
       let built;
@@ -1061,6 +1064,70 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
     if (accion === 'pay' ? r.balance.pending > 0 : $(`[data-act="${accion}"]`, view)) handlers[accion]();
   }
 }, 'reservas');
+
+/* ---------- Voucher de la reserva (PDF, WhatsApp y email) ---------- */
+/** Datos del voucher en texto plano: los usan el PDF (contract-pdf.js) y el mensaje. */
+function voucherLines(r) {
+  const s = state.settings;
+  const dt = (v) => (v ? `${String(v).slice(8, 10)}/${String(v).slice(5, 7)}/${String(v).slice(0, 4)} ${String(v).slice(11, 16)}` : '');
+  const vehicle = `Categoría ${r.category_code} · ${r.category_name}${r.vehicle_plate ? ` (${r.vehicle_brand || ''} ${r.vehicle_model || ''}, patente ${r.vehicle_plate})`.replace(/\s+/g, ' ') : ''}`;
+  const rows = [
+    ['Cliente', r.customer_name],
+    ['Retiro', `${dt(r.pickup_at)} · ${r.pickup_branch_name || ''}`],
+    ['Devolución', `${dt(r.return_at)} · ${r.return_branch_name || ''}`],
+    ['Vehículo', vehicle],
+    ...(r.extras.length ? [['Adicionales', r.extras.map((x) => x.name).join(', ')]] : []),
+    ...(r.flight ? [['Vuelo', r.flight]] : []),
+    ['Total', `${money(r.total)} (${r.days} día${r.days === 1 ? '' : 's'})`],
+    ['Pagado', money(r.balance.paid)],
+    ['Saldo a pagar', money(r.balance.pending)],
+    ['Garantía', `${money(r.deposit)} (se toma al retirar y se devuelve al entregar el auto)`],
+  ];
+  return {
+    rows,
+    statusLine: r.status === 'pendiente' ? 'Pendiente de confirmación' : r.status === 'en_curso' ? 'Alquiler en curso' : 'Reserva confirmada',
+    requirements: `Licencia de conducir vigente, documento o pasaporte y tarjeta de crédito para la garantía. Edad mínima: ${Number(s.min_driver_age) || 21} años.`,
+    contact: [s.company_phone && `Consultas: ${s.company_phone}`, s.company_address].filter(Boolean).join(' · '),
+  };
+}
+
+/** Mensaje para WhatsApp o email, con los mismos datos del voucher. */
+function voucherMessage(r) {
+  const v = voucherLines(r);
+  const first = String(r.customer_name || '').split(' ')[0];
+  const intro =
+    r.status === 'pendiente'
+      ? `Hola ${first}, recibimos tu reserva en ${state.settings.company_name}. Te avisamos apenas esté confirmada.`
+      : `Hola ${first}, te confirmamos tu reserva en ${state.settings.company_name}.`;
+  return [intro, '', `Reserva: ${r.code}`, ...v.rows.slice(1).map(([k, val]) => `${k}: ${val}`), '', `Para retirar el auto: ${v.requirements}`, v.contact].filter((x) => x !== undefined && x !== null).join('\n').trim();
+}
+
+function sendVoucher(r) {
+  if (!window.jspdf) return toast('No se pudo cargar el generador de PDF. Recargá la página e intentá de nuevo.', true);
+  const { doc, filename } = buildVoucherPdf(r);
+  const file = new File([doc.output('blob')], filename, { type: 'application/pdf' });
+  const text = voucherMessage(r);
+  // WhatsApp necesita el número con código de país, sin signos: +54 9 2901 123456 → 5492901123456.
+  const phone = String(r.customer_phone || '').replace(/\D/g, '');
+  const wa = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+  const mail = `mailto:${encodeURIComponent(r.customer_email || '')}?subject=${encodeURIComponent(`Voucher de tu reserva ${r.code} · ${state.settings.company_name}`)}&body=${encodeURIComponent(text)}`;
+  const canShare = navigator.canShare && navigator.canShare({ files: [file] });
+  openModal(
+    `Enviar voucher · ${r.code}`,
+    `<p class="muted">Elegí cómo mandárselo a <b>${esc(r.customer_name)}</b>. El mensaje lleva todos los datos de la reserva; el PDF es el mismo voucher para imprimir o guardar.</p>
+     <div class="stack" style="gap:10px">
+       ${canShare ? '<button class="btn primary" type="button" id="v-share">Compartir el PDF (WhatsApp, email…)</button>' : ''}
+       <a class="btn ${canShare ? '' : 'primary'}" href="${esc(wa)}" target="_blank" rel="noopener" id="v-wa">WhatsApp${phone ? ` a ${esc(r.customer_phone)}` : ' (elegís el contacto)'}</a>
+       <a class="btn" href="${esc(mail)}" id="v-mail">Email${r.customer_email ? ` a ${esc(r.customer_email)}` : ' (falta el email del cliente)'}</a>
+       <button class="btn" type="button" id="v-pdf">Descargar el PDF</button>
+     </div>
+     ${phone && phone.length < 11 ? '<p class="error">El teléfono parece no tener código de país (por ejemplo 54 9 para Argentina): WhatsApp puede no encontrarlo.</p>' : ''}
+     <details class="more-opts" style="margin-top:12px"><summary>Ver el mensaje</summary><pre class="snippet" style="white-space:pre-wrap">${esc(text)}</pre></details>
+     <p class="muted" style="margin-top:8px">Por WhatsApp o email desde la computadora va el mensaje; si querés mandar también el PDF, descargalo y adjuntalo.</p>`,
+  );
+  $('#v-pdf').addEventListener('click', () => downloadBlob(file, filename));
+  $('#v-share')?.addEventListener('click', () => navigator.share({ files: [file], title: `Voucher ${r.code}`, text }).catch(() => {}));
+}
 
 const LOG_LABEL = {
   creada: 'Reserva creada',

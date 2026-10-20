@@ -250,6 +250,46 @@ function buildContractPdf(r) {
   }
 }
 
+/**
+ * Voucher de la reserva: una hoja con lo que el cliente necesita para retirar el auto.
+ * Usa las mismas líneas que el mensaje de WhatsApp o email (voucherLines en app.js).
+ */
+function buildVoucherPdf(r) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const table = (opts) => (typeof window.autoTable === 'function' ? window.autoTable(doc, opts) : doc.autoTable(opts));
+  const s = state.settings;
+  const M = 15;
+  const W = 210;
+  const v = voucherLines(r);
+
+  doc.setFont('helvetica', 'bold').setFontSize(16).text(s.company_name || '', M, 20);
+  doc.setFont('helvetica', 'normal').setFontSize(9).setTextColor(70);
+  doc.text([s.company_address || '', [s.company_phone, s.company_tax_id ? `${taxIdLabel()} ${s.company_tax_id}` : ''].filter(Boolean).join(' · ')].filter(Boolean), M, 26);
+  doc.setTextColor(17).setFont('helvetica', 'bold').setFontSize(12).text('VOUCHER DE RESERVA', W - M, 19, { align: 'right' });
+  doc.setFontSize(18).text(r.code, W - M, 27, { align: 'right' });
+  doc.setFont('helvetica', 'normal').setFontSize(9).text(v.statusLine, W - M, 32, { align: 'right' });
+  doc.setLineWidth(0.6).line(M, 36, W - M, 36);
+
+  table({
+    theme: 'grid',
+    startY: 42,
+    margin: { left: M, right: M },
+    styles: { fontSize: 10, cellPadding: 2.2, lineColor: [190, 190, 190], lineWidth: 0.2, textColor: [17, 17, 17] },
+    columnStyles: { 0: { fontStyle: 'bold', fillColor: [242, 244, 247], cellWidth: 45 } },
+    body: v.rows,
+  });
+  let y = doc.lastAutoTable.finalY + 8;
+  doc.setFont('helvetica', 'bold').setFontSize(10).text('Para retirar el auto', M, y);
+  doc.setFont('helvetica', 'normal').setFontSize(9.5);
+  const req = doc.splitTextToSize(v.requirements, W - 2 * M);
+  doc.text(req, M, y + 5);
+  y += 7 + req.length * 4.5;
+  if (v.contact) doc.setTextColor(70).text(doc.splitTextToSize(v.contact, W - 2 * M), M, y + 2);
+  doc.setFontSize(8).setTextColor(120).text(`Emitido el ${new Date().toLocaleDateString(locale())}. Presentá este voucher (impreso o en el celular) al retirar el vehículo.`, M, 285);
+  return { doc, filename: `voucher-${r.code}.pdf` };
+}
+
 /** Descarga un archivo generado en el navegador. */
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
