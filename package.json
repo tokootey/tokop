@@ -9,6 +9,7 @@
     "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
     "seed": "node --disable-warning=ExperimentalWarning src/seed.js",
     "demo": "node scripts/build-demo.js",
+    "respaldo": "node --disable-warning=ExperimentalWarning scripts/respaldo.js",
     "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.js\""
   },
   "engines": {
