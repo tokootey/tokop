@@ -171,3 +171,41 @@ test('SII simulado: boleta electrónica en pesos enteros, con el DTE armado', as
   const h = await reservation({ full_name: 'Homo Chile', doc_type: 'CI', doc_number: '999' });
   assert.match((await call('POST', `/api/reservations/${h.id}/invoice`)).data.error, /folios \(CAF\)/);
 });
+
+test('varias empresas: cada una factura con sus datos fiscales y su propia numeración', async (t) => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { openPlatform } = require('../src/platform');
+  const { setSetting } = require('../src/db');
+  const invoicing = require('../src/invoicing/index');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rc-fact-multi-'));
+  const dbFile = path.join(dir, 'rentacar.db');
+  const platform = openPlatform(openDb(dbFile), dbFile);
+  t.after(() => {
+    platform.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const ar = platform.principal();
+  const cl = platform.get(platform.create({ name: 'Andes Chile', country: 'CL', admin_email: 'admin@andes.test' }).company.id);
+  for (const [c, fiscal] of [
+    [ar, { invoice_provider: 'arca', invoice_tax_id: CUIT_PRUEBA, invoice_tax_condition: 'RI' }],
+    [cl, { invoice_provider: 'sii', invoice_tax_id: RUT_PRUEBA }],
+  ]) {
+    seed(c.db);
+    for (const [k, v] of Object.entries(fiscal)) setSetting(c.db, k, v);
+  }
+  const confirmed = (c) => c.db.prepare("SELECT id FROM reservations WHERE status IN ('confirmada', 'en_curso') ORDER BY id").all().map((r) => r.id);
+
+  const a1 = await invoicing.emitForReservation(ar.db, confirmed(ar)[0]);
+  const c1 = await invoicing.emitForReservation(cl.db, confirmed(cl)[0]);
+  const c2 = await invoicing.emitForReservation(cl.db, confirmed(cl)[1]);
+  assert.equal(a1.provider, 'arca');
+  assert.ok(a1.request.includes(`<ar:Cuit>${CUIT_PRUEBA}</ar:Cuit>`));
+  assert.equal(c1.provider, 'sii');
+  assert.ok(c1.request.includes('<RUTEmisor>11111111-1</RUTEmisor>'));
+  // Cada empresa numera desde 1 y no ve las facturas de la otra.
+  assert.deepEqual([a1.number, c1.number, c2.number], [1, 1, 2]);
+  assert.equal(ar.db.prepare('SELECT COUNT(*) AS n FROM invoices').get().n, 1);
+  assert.equal(cl.db.prepare('SELECT COUNT(*) AS n FROM invoices').get().n, 2);
+});
