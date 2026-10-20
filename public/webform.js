@@ -11,7 +11,8 @@
 (function () {
   var script = document.currentScript;
   if (!script) return;
-  var endpoint = new URL('/api/public/webform', script.src).href;
+  var empresa = script.getAttribute('data-empresa'); // en una instalación con varias empresas
+  var endpoint = new URL('/api/public/webform' + (empresa ? '?empresa=' + encodeURIComponent(empresa) : ''), script.src).href;
   var selector = script.getAttribute('data-form') || 'form';
 
   function send(form) {

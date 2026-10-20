@@ -71,7 +71,7 @@ input, select, textarea { font: inherit; font-size: 14px; padding: 8px 9px; bord
     let lastSearch = null;
 
     const api = async (path, body) => {
-      const res = await fetch(`${base}/api/public/chat${path}`, {
+      const res = await fetch(`${base}/api/public/chat${path}${opts.empresa ? `?empresa=${encodeURIComponent(opts.empresa)}` : ''}`, {
         method: body ? 'POST' : 'GET',
         headers: body ? { 'Content-Type': 'application/json' } : {},
         body: body ? JSON.stringify(body) : undefined,
@@ -262,7 +262,8 @@ input, select, textarea { font: inherit; font-size: 14px; padding: 8px 9px; bord
   window.RentChat = { mount };
   // Uso normal: el script se carga en la página de la agencia y muestra la burbuja.
   if (script && script.src && !script.hasAttribute('data-manual')) {
-    const go = () => mount(null, { color: script.getAttribute('data-color') || undefined, open: script.getAttribute('data-open') === '1' });
+    const go = () =>
+      mount(null, { color: script.getAttribute('data-color') || undefined, open: script.getAttribute('data-open') === '1', empresa: script.getAttribute('data-empresa') || undefined });
     if (document.body) go();
     else document.addEventListener('DOMContentLoaded', go);
   }

@@ -103,13 +103,22 @@ Para ponerlo en la página web, quien la administra pega una línea antes de `</
 
 La dirección de la página tiene que estar en *Cotizador web → sitios autorizados*. Además, cada IP tiene un límite de consultas y de pedidos, y hay un campo trampa contra robots.
 
-## Instalar el sistema para otra empresa
+## Sumar otra empresa (varias agencias en la misma instalación)
 
-Cada empresa tiene su propia instalación, con su base de datos separada:
+Una sola instalación puede atender a varias agencias. Cada una tiene sus propios datos (reservas, flota, clientes, usuarios, tarifas y configuración del país) en su propia base, y nadie de una empresa puede ver los datos de otra.
 
-1. En Render, *New → Blueprint* con este repositorio (usa `render.yaml`).
-2. Entrar con `admin@rentacar.local` y la contraseña generada (ver la variable `ADMIN_PASSWORD` en Render) y cambiarla.
-3. En el Panel aparece **Primeros pasos**: empresa y país, lugares de entrega, categorías con tarifas, autos (o *Importar datos*), usuarios y condiciones del contrato.
+1. Entrá como administrador de la empresa principal (la primera de la instalación) y andá a *Ajustes → Empresas → + Nueva empresa*.
+2. Poné el nombre, el país y el nombre y email de quien la va a administrar. La app muestra una **contraseña inicial** una sola vez: pasásela a esa persona en persona o por teléfono.
+3. Esa persona entra en la misma dirección con su email. La app le pide cambiar la contraseña y le muestra los primeros pasos.
+
+Cada email puede ser usuario de una sola empresa. Si la empresa nueva usa el formulario web o el asistente, los códigos que copia desde *Ajustes* ya llevan su empresa (`data-empresa="…"`); su API del cotizador se reconoce por su propia clave.
+
+Las instalaciones de antes siguen igual: su base pasa a ser la empresa principal, sin mover ni perder nada.
+
+### Primeros pasos de una empresa
+
+1. Entrar con el usuario que le dieron y cambiar la contraseña.
+2. En el Panel aparece **Primeros pasos**: empresa y país, lugares de entrega, categorías con tarifas, autos (o *Importar datos*), usuarios y condiciones del contrato.
 4. Al elegir el país en *Ajustes → Empresa y contrato* se completan solos:
    - la moneda;
    - el impuesto (IVA, IGV, ITBIS, IGIC…) y su alícuota;
@@ -229,6 +238,7 @@ src/
   server.js          arranque
   app.js             rutas y manejo de errores
   db.js              esquema SQLite y configuración
+  platform.js        varias empresas: una base por empresa y el registro empresas.db
   pricing.js         cálculo de precios y de cargos al devolver
   availability.js    disponibilidad por categoría y por vehículo
   reservations.js    ciclo de vida de la reserva (crear, entregar, devolver, pagos)
