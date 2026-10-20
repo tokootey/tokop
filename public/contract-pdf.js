@@ -4,7 +4,7 @@
  * Contrato de alquiler en PDF (A4), generado en el navegador con jsPDF + jsPDF-AutoTable.
  * Tiene los mismos datos que el contrato impreso: sirve antes de entregar el auto (pre-contrato)
  * y después, con los km, el combustible y los cargos reales.
- * Usa de app.js: state, money() y contractTermsList().
+ * Usa de app.js: state, money(), num(), locale(), taxName(), taxIdLabel() y contractTermsList().
  */
 function buildContractPdf(r) {
   const { jsPDF } = window.jspdf;
@@ -23,7 +23,7 @@ function buildContractPdf(r) {
   const txt = (v) => (v === null || v === undefined ? '' : String(v));
   const d = (v) => (v ? `${String(v).slice(8, 10)}/${String(v).slice(5, 7)}/${String(v).slice(0, 4)}` : '');
   const dt = (v) => (v ? `${d(v)} ${String(v).slice(11, 16)}` : '');
-  const km = (v) => (v === null || v === undefined || v === '' ? '' : `${Number(v).toLocaleString('es-AR')} km`);
+  const km = (v) => (v === null || v === undefined || v === '' ? '' : `${num(v)} km`);
   const fuel = (v) => (v === null || v === undefined || v === '' ? '___ /8' : `${v}/8`);
   const lastY = () => (doc.lastAutoTable ? doc.lastAutoTable.finalY : 0);
 
@@ -57,12 +57,12 @@ function buildContractPdf(r) {
   /* ---------- Hoja 1: datos ---------- */
   doc.setFont('helvetica', 'bold').setFontSize(15).text(company, M, 16);
   doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(60);
-  doc.text([txt(s.company_address), [txt(s.company_phone), s.company_tax_id ? `CUIT ${s.company_tax_id}` : ''].filter(Boolean).join(' · ')].filter(Boolean), M, 21);
+  doc.text([txt(s.company_address), [txt(s.company_phone), s.company_tax_id ? `${taxIdLabel()} ${s.company_tax_id}` : ''].filter(Boolean).join(' · ')].filter(Boolean), M, 21);
   doc.setTextColor(17).setFont('helvetica', 'bold').setFontSize(10);
   doc.text(delivered ? 'CONTRATO DE ALQUILER DE VEHÍCULO' : 'CONTRATO DE ALQUILER DE VEHÍCULO (PRE-CONTRATO)', W - M, 15, { align: 'right' });
   doc.setFont('helvetica', 'normal').setFontSize(8.5);
   doc.text(
-    [delivered ? `N° ${c.number}` : 'Vehículo sin entregar todavía', `Reserva ${r.code} · Emitido ${new Date().toLocaleDateString('es-AR')}`],
+    [delivered ? `N° ${c.number}` : 'Vehículo sin entregar todavía', `Reserva ${r.code} · Emitido ${new Date().toLocaleDateString(locale())}`],
     W - M,
     20,
     { align: 'right' },
@@ -142,7 +142,7 @@ function buildContractPdf(r) {
     ...(q.extras || []).map((x) => [`${x.name}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
     q.discount ? [`Descuento ${q.discount_pct}%`, `- ${money(q.discount)}`] : null,
-    q.tax_rate ? [`IVA ${q.tax_rate}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
+    q.tax_rate ? [`${taxName()} ${q.tax_rate}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
     [{ content: 'Total del alquiler', styles: { fontStyle: 'bold' } }, { content: money(r.total), styles: { fontStyle: 'bold' } }],
     ...(c && c.charges ? c.charges.lines.map((l) => [l.concept, money(l.amount)]) : []),
     ...(c && c.final_total !== null && c.final_total !== undefined && c.final_total !== r.total

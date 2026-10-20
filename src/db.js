@@ -303,12 +303,41 @@ const CONTRACT_TERMS = `1. OBJETO. {empresa} (en adelante, "la Empresa") entrega
 
 15. JURISDICCIÓN. Para cualquier diferencia que surja de este contrato, las partes se someten a los tribunales ordinarios de {jurisdiccion}.`;
 
+/**
+ * Datos de cada país para que la app sirva a agencias de otros lugares: al elegir el país en
+ * Configuración se completan la moneda, el impuesto, el nombre de la identificación fiscal y el
+ * formato de números y fechas. Las alícuotas son las generales: cada empresa las puede ajustar.
+ */
+const COUNTRY_PRESETS = {
+  AR: { name: 'Argentina', currency: 'ARS', locale: 'es-AR', tax_name: 'IVA', tax_rate: '21', tax_id_label: 'CUIT' },
+  CL: { name: 'Chile', currency: 'CLP', locale: 'es-CL', tax_name: 'IVA', tax_rate: '19', tax_id_label: 'RUT' },
+  UY: { name: 'Uruguay', currency: 'UYU', locale: 'es-UY', tax_name: 'IVA', tax_rate: '22', tax_id_label: 'RUT' },
+  PY: { name: 'Paraguay', currency: 'PYG', locale: 'es-PY', tax_name: 'IVA', tax_rate: '10', tax_id_label: 'RUC' },
+  BO: { name: 'Bolivia', currency: 'BOB', locale: 'es-BO', tax_name: 'IVA', tax_rate: '13', tax_id_label: 'NIT' },
+  PE: { name: 'Perú', currency: 'PEN', locale: 'es-PE', tax_name: 'IGV', tax_rate: '18', tax_id_label: 'RUC' },
+  CO: { name: 'Colombia', currency: 'COP', locale: 'es-CO', tax_name: 'IVA', tax_rate: '19', tax_id_label: 'NIT' },
+  EC: { name: 'Ecuador', currency: 'USD', locale: 'es-EC', tax_name: 'IVA', tax_rate: '15', tax_id_label: 'RUC' },
+  MX: { name: 'México', currency: 'MXN', locale: 'es-MX', tax_name: 'IVA', tax_rate: '16', tax_id_label: 'RFC' },
+  CR: { name: 'Costa Rica', currency: 'CRC', locale: 'es-CR', tax_name: 'IVA', tax_rate: '13', tax_id_label: 'Cédula jurídica' },
+  PA: { name: 'Panamá', currency: 'USD', locale: 'es-PA', tax_name: 'ITBMS', tax_rate: '7', tax_id_label: 'RUC' },
+  DO: { name: 'República Dominicana', currency: 'DOP', locale: 'es-DO', tax_name: 'ITBIS', tax_rate: '18', tax_id_label: 'RNC' },
+  GT: { name: 'Guatemala', currency: 'GTQ', locale: 'es-GT', tax_name: 'IVA', tax_rate: '12', tax_id_label: 'NIT' },
+  ES: { name: 'España (península y Baleares)', currency: 'EUR', locale: 'es-ES', tax_name: 'IVA', tax_rate: '21', tax_id_label: 'NIF' },
+  'ES-CN': { name: 'España (Islas Canarias)', currency: 'EUR', locale: 'es-ES', tax_name: 'IGIC', tax_rate: '7', tax_id_label: 'NIF' },
+  US: { name: 'Estados Unidos', currency: 'USD', locale: 'es-US', tax_name: 'Sales tax', tax_rate: '0', tax_id_label: 'EIN' },
+  OTHER: { name: 'Otro país', currency: 'USD', locale: 'es-419', tax_name: 'Impuesto', tax_rate: '0', tax_id_label: 'ID fiscal' },
+};
+
 const DEFAULT_SETTINGS = {
   company_name: 'Mi Rent a Car',
   company_tax_id: '',
   company_address: '',
   company_phone: '',
+  country: 'AR',
+  locale: 'es-AR',
   currency: 'ARS',
+  tax_name: 'IVA',
+  tax_id_label: 'CUIT',
   tax_rate: '21',
   prices_include_tax: '1',
   grace_hours: '2',
@@ -377,4 +406,4 @@ function setSetting(db, key, value) {
   );
 }
 
-module.exports = { openDb, getSetting, getSettings, setSetting, newApiKey, DEFAULT_MAPPING, WEBFORM_MAPPING, DEFAULT_SETTINGS, CONTRACT_TERMS };
+module.exports = { COUNTRY_PRESETS, openDb, getSetting, getSettings, setSetting, newApiKey, DEFAULT_MAPPING, WEBFORM_MAPPING, DEFAULT_SETTINGS, CONTRACT_TERMS };

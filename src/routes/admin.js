@@ -2,7 +2,7 @@
 
 const express = require('express');
 const crypto = require('node:crypto');
-const { getSettings, setSetting, newApiKey, DEFAULT_SETTINGS, CONTRACT_TERMS } = require('../db');
+const { getSettings, setSetting, newApiKey, DEFAULT_SETTINGS, CONTRACT_TERMS, COUNTRY_PRESETS } = require('../db');
 const { hashPassword, requireAdmin, assertPassword, audit } = require('../auth');
 const { getMapping, getWebformMapping, interpret, ingestQuote, reprocessInbox } = require('../integration');
 const { emit } = require('../webhooks');
@@ -20,6 +20,21 @@ const INTEGRATION_KEYS = [
   'webform_redirect_url',
 ];
 
+function validLocale(v) {
+  try {
+    return /^[a-z]{2}(-([A-Z]{2}|419))?$/.test(v) && Intl.NumberFormat.supportedLocalesOf([v]).length === 1;
+  } catch {
+    return false;
+  }
+}
+function validCurrency(v) {
+  try {
+    return /^[A-Z]{3}$/.test(v) && Boolean(new Intl.NumberFormat('es', { style: 'currency', currency: v }));
+  } catch {
+    return false;
+  }
+}
+
 function adminRoutes(db) {
   const router = express.Router();
 
@@ -28,11 +43,17 @@ function adminRoutes(db) {
     const s = getSettings(db);
     for (const k of [...SECRET_KEYS, ...INTEGRATION_KEYS]) delete s[k];
     s.contract_terms_default = CONTRACT_TERMS; // para "Restaurar condiciones sugeridas"
+    s.country_presets = COUNTRY_PRESETS;
     res.json(s);
   });
 
   router.put('/settings', requireAdmin, (req, res) => {
-    for (const [k, v] of Object.entries(req.body || {})) {
+    const body = req.body || {};
+    // Un formato o una moneda inválidos harían fallar todas las pantallas: se validan antes de guardar.
+    if (body.locale !== undefined && !validLocale(body.locale)) fail(400, 'Formato de números y fechas inválido');
+    if (body.currency !== undefined && !validCurrency(body.currency)) fail(400, 'Moneda inválida');
+    if (body.country !== undefined && !COUNTRY_PRESETS[body.country]) fail(400, 'País inválido');
+    for (const [k, v] of Object.entries(body)) {
       if (k in DEFAULT_SETTINGS && !SECRET_KEYS.includes(k) && !INTEGRATION_KEYS.includes(k)) setSetting(db, k, v);
     }
     audit(db, req, 'configuracion_modificada', Object.keys(req.body || {}).join(', '));

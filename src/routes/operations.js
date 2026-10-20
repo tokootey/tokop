@@ -6,6 +6,24 @@ const { categoryAvailability, availableVehicles, BLOCKING } = require('../availa
 const R = require('../reservations');
 const { fail, normDateTime, nowLocal, parseLocal, fmtLocal } = require('../util');
 
+/**
+ * Primeros pasos para una empresa que recién empieza a usar el sistema. El Panel los muestra
+ * hasta que estén todos hechos.
+ */
+function setupSteps(db) {
+  const count = (sql) => db.prepare(sql).get().n;
+  const setting = (k) => (db.prepare('SELECT value FROM settings WHERE key = ?').get(k) || {}).value || '';
+  const steps = [
+    { key: 'empresa', label: 'Cargar el nombre, el país y los datos de la empresa', href: '#/config', done: !['', 'Mi Rent a Car'].includes(setting('company_name')) },
+    { key: 'sucursales', label: 'Cargar los lugares de entrega (aeropuerto, oficina, hoteles)', href: '#/tarifas', done: count('SELECT COUNT(*) AS n FROM branches WHERE active = 1') > 0 },
+    { key: 'tarifas', label: 'Cargar las categorías con su tarifa diaria', href: '#/tarifas', done: count('SELECT COUNT(*) AS n FROM categories WHERE active = 1 AND daily_rate > 0') > 0 },
+    { key: 'flota', label: 'Cargar los autos (o importarlos desde una planilla)', href: '#/flota', done: count('SELECT COUNT(*) AS n FROM vehicles') > 0 },
+    { key: 'usuarios', label: 'Crear un usuario para cada persona del equipo', href: '#/usuarios', done: count('SELECT COUNT(*) AS n FROM users WHERE active = 1') > 1 },
+    { key: 'contrato', label: 'Revisar las condiciones y la jurisdicción del contrato', href: '#/config', done: setting('jurisdiction') !== '' && setting('deductible_amount') !== '' },
+  ];
+  return { steps, done: steps.filter((x) => x.done).length, total: steps.length };
+}
+
 function operationsRoutes(db) {
   const router = express.Router();
 
@@ -189,6 +207,7 @@ function operationsRoutes(db) {
           .all(today, today),
         maintenance_open: db.prepare(`SELECT COUNT(*) AS n FROM maintenance WHERE status = 'abierto'`).get().n,
       },
+      setup: setupSteps(db),
     });
   });
 

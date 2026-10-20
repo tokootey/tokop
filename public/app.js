@@ -12,10 +12,15 @@ const esc = (v) =>
 
 const state = { user: null, settings: {}, branches: [], categories: [], extras: [] };
 
+// Formato de números, moneda e impuesto según el país configurado (Ajustes → Empresa y contrato).
+const locale = () => state.settings.locale || 'es-AR';
+const taxName = () => state.settings.tax_name || 'IVA';
+const taxIdLabel = () => state.settings.tax_id_label || 'CUIT';
+const num = (n) => Number(n).toLocaleString(locale());
 const money = (n) => {
   const cur = state.settings.currency || 'ARS';
   try {
-    return new Intl.NumberFormat('es-AR', { style: 'currency', currency: cur, maximumFractionDigits: 2 }).format(n || 0);
+    return new Intl.NumberFormat(locale(), { style: 'currency', currency: cur, maximumFractionDigits: 2 }).format(n || 0);
   } catch {
     return `${cur} ${Number(n || 0).toFixed(2)}`;
   }
@@ -344,6 +349,16 @@ window.addEventListener('hashchange', route);
 /* ============================================================
    Panel
    ============================================================ */
+// Lista de primeros pasos para una empresa nueva: sólo la ve el administrador y desaparece al completarla.
+function setupCard(setup) {
+  if (!setup || !isAdmin() || setup.done === setup.total) return '';
+  return `<div class="card setup"><h2>Primeros pasos <span class="count">${setup.done}/${setup.total}</span></h2>
+    <p class="muted">Para empezar a trabajar con el sistema completá estos pasos. Esta lista desaparece cuando estén todos hechos.</p>
+    <ul class="steps">${setup.steps
+      .map((x) => `<li class="${x.done ? 'done' : ''}">${x.done ? '✔' : '○'} ${x.done ? esc(x.label) : `<a href="${esc(x.href)}">${esc(x.label)}</a>`}</li>`)
+      .join('')}</ul></div>`;
+}
+
 on(/^\/panel$/, async (view) => {
   const d = await GET('/dashboard');
   // Lista de reservas del día: hora | cliente | auto, cada fila lleva a la reserva.
@@ -365,6 +380,7 @@ on(/^\/panel$/, async (view) => {
   const kpi = (label, value, sub = '', extra = '') => `<div class="kpi"><div class="l">${label}</div><div class="v">${value}</div>${sub ? `<div class="s">${sub}</div>` : ''}${extra}</div>`;
   view.innerHTML = `
     <div class="page-head"><h1>Panel</h1><a class="btn primary" href="#/reservas/nueva">+ Nueva reserva</a></div>
+    ${setupCard(d.setup)}
     <div class="kpis">
       ${kpi('Disponibles', d.fleet.disponible || 0, `listos para entregar · ${d.fleet.mantenimiento || 0} en taller`)}
       ${kpi('Alquilados ahora', d.fleet.alquilado || 0, `ocupación ${d.occupancy}% de la flota`, `<div class="meter"><i style="width:${Math.min(100, Number(d.occupancy) || 0)}%"></i></div>`)}
@@ -692,7 +708,7 @@ function breakdownHtml(q) {
     ${(q.extras || []).map((x) => row(`${esc(x.name)}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount))).join('')}
     ${q.one_way_fee ? row('Devolución en otra sucursal', money(q.one_way_fee)) : ''}
     ${q.discount ? row(`Descuento ${q.discount_pct}%`, '−' + money(q.discount)) : ''}
-    ${q.tax_rate ? row(`IVA ${q.tax_rate}% ${q.tax_included ? '(incluido)' : ''}`, money(q.tax)) : ''}
+    ${q.tax_rate ? row(`${esc(taxName())} ${q.tax_rate}% ${q.tax_included ? '(incluido)' : ''}`, money(q.tax)) : ''}
     ${q.calculated_total !== undefined ? row('<span class="muted">Precio según tarifas del sistema</span>', `<span class="muted">${money(q.calculated_total)}</span>`) : ''}
     ${row(q.calculated_total !== undefined ? `Total (precio del ${STATUS_LABEL[q.source] || q.source})` : 'Total', money(q.total), 'total')}
     </tbody></table>
@@ -1202,7 +1218,7 @@ function printContract(r) {
     ...(q.extras || []).map((x) => [esc(x.name) + (x.quantity > 1 ? ` ×${esc(x.quantity)}` : ''), money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
     q.discount ? [`Descuento ${esc(q.discount_pct)}%`, '−' + money(q.discount)] : null,
-    q.tax_rate ? [`IVA ${esc(q.tax_rate)}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
+    q.tax_rate ? [`${esc(taxName())} ${esc(q.tax_rate)}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
   ].filter(Boolean);
   const charges = c && c.charges && c.charges.lines.length ? c.charges.lines : [];
   const outKm = delivered ? c.out_km : r.vehicle_km;
@@ -1234,10 +1250,10 @@ function printContract(r) {
 <div class="head">
   <div><h1>${esc(s.company_name || '')}</h1>
     <div>${esc(s.company_address || '')}</div>
-    <div>${esc(s.company_phone || '')}${s.company_tax_id ? ' · CUIT ' + esc(s.company_tax_id) : ''}</div></div>
+    <div>${esc(s.company_phone || '')}${s.company_tax_id ? ` · ${esc(taxIdLabel())} ${esc(s.company_tax_id)}` : ''}</div></div>
   <div class="right"><b>${title}</b><br>
     ${delivered ? `N° <b>${esc(c.number)}</b>` : '<span class="badge">Sin entregar todavía</span>'}<br>
-    Reserva ${esc(r.code)} · Emitido ${esc(new Date().toLocaleDateString('es-AR'))}</div>
+    Reserva ${esc(r.code)} · Emitido ${esc(new Date().toLocaleDateString(locale()))}</div>
 </div>
 
 <div class="grid">
@@ -1271,12 +1287,12 @@ function printContract(r) {
 <div class="grid">
   <div><h2>Entrega del vehículo</h2><table>
     ${line('Fecha y hora', delivered ? fmtDT(c.out_at) : '')}
-    ${line('Kilómetros', outKm !== null && outKm !== undefined && outKm !== '' ? `${Number(outKm).toLocaleString('es-AR')} km${delivered ? '' : ' <span class="muted">(según flota, verificar)</span>'}` : '')}
+    ${line('Kilómetros', outKm !== null && outKm !== undefined && outKm !== '' ? `${num(outKm)} km${delivered ? '' : ' <span class="muted">(según flota, verificar)</span>'}` : '')}
     ${line('Combustible', fuelGauge(outFuel))}
   </table></div>
   <div><h2>Devolución del vehículo</h2><table>
     ${line('Fecha y hora', c && c.in_at ? fmtDT(c.in_at) : '')}
-    ${line('Kilómetros', c && c.in_at ? `${Number(c.in_km).toLocaleString('es-AR')} km` : '')}
+    ${line('Kilómetros', c && c.in_at ? `${num(c.in_km)} km` : '')}
     ${line('Combustible', fuelGauge(c && c.in_at ? c.in_fuel : null))}
   </table></div>
 </div>
@@ -1586,7 +1602,7 @@ on(
       { label: 'Vehículo', render: (r) => `${esc(r.brand || '')} ${esc(r.model || '')} ${r.year ? `<small class="muted">${esc(r.year)}</small>` : ''}` },
       { label: 'Categoría', render: (r) => esc(r.category_code) },
       { label: 'Sucursal', key: 'branch_name' },
-      { label: 'Km', render: (r) => Number(r.km).toLocaleString('es-AR') },
+      { label: 'Km', render: (r) => num(r.km) },
       { label: 'Comb.', render: (r) => fuel(r.fuel) },
       { label: 'Estado', render: (r) => badge(r.status) },
       { label: 'Seguro / VTV', render: (r) => `<small>${fmtD(r.insurance_expiry)} / ${fmtD(r.vtv_expiry)}</small>` },
@@ -2026,17 +2042,34 @@ on(/^\/cotizador$/, async (view) => {
 /* ============================================================
    Configuración y usuarios
    ============================================================ */
+const CURRENCIES = [
+  ['ARS', 'Peso argentino (ARS)'], ['CLP', 'Peso chileno (CLP)'], ['UYU', 'Peso uruguayo (UYU)'], ['PYG', 'Guaraní (PYG)'],
+  ['BOB', 'Boliviano (BOB)'], ['PEN', 'Sol (PEN)'], ['COP', 'Peso colombiano (COP)'], ['MXN', 'Peso mexicano (MXN)'],
+  ['CRC', 'Colón (CRC)'], ['DOP', 'Peso dominicano (DOP)'], ['GTQ', 'Quetzal (GTQ)'], ['BRL', 'Real (BRL)'],
+  ['USD', 'Dólar (USD)'], ['EUR', 'Euro (EUR)'],
+];
+const LOCALES = [
+  ['es-AR', 'Argentina'], ['es-CL', 'Chile'], ['es-UY', 'Uruguay'], ['es-PY', 'Paraguay'], ['es-BO', 'Bolivia'], ['es-PE', 'Perú'],
+  ['es-CO', 'Colombia'], ['es-EC', 'Ecuador'], ['es-MX', 'México'], ['es-CR', 'Costa Rica'], ['es-PA', 'Panamá'],
+  ['es-DO', 'República Dominicana'], ['es-GT', 'Guatemala'], ['es-ES', 'España'], ['es-US', 'Estados Unidos'], ['es-419', 'Latinoamérica (general)'],
+];
+
 on(/^\/config$/, async (view) => {
   const s = await GET('/settings');
+  const presets = s.country_presets || {};
   view.innerHTML = `<div class="page-head"><h1>Configuración</h1></div><div class="card">${formHtml(
     [
       { name: 'company_name', label: 'Nombre de la empresa', required: true },
-      { name: 'company_tax_id', label: 'CUIT' },
+      { name: 'country', label: 'País (completa moneda, impuesto y formato)', type: 'select', options: Object.entries(presets).map(([k, p]) => [k, p.name]), required: true },
+      { name: 'company_tax_id', label: `${s.tax_id_label || 'CUIT'} de la empresa` },
       { name: 'company_phone', label: 'Teléfono' },
       { name: 'company_address', label: 'Dirección', full: true },
-      { name: 'currency', label: 'Moneda', type: 'select', options: [['ARS', 'Pesos (ARS)'], ['USD', 'Dólares (USD)']], required: true },
-      { name: 'tax_rate', label: 'IVA %', type: 'number' },
-      { name: 'prices_include_tax', label: 'Las tarifas incluyen IVA', type: 'checkbox' },
+      { name: 'currency', label: 'Moneda', type: 'select', options: CURRENCIES, required: true },
+      { name: 'tax_name', label: 'Nombre del impuesto (IVA, IGV, ITBIS, IGIC…)' },
+      { name: 'tax_rate', label: 'Impuesto %', type: 'number' },
+      { name: 'prices_include_tax', label: 'Las tarifas incluyen el impuesto', type: 'checkbox' },
+      { name: 'tax_id_label', label: 'Nombre de la identificación fiscal (CUIT, RUT, RFC, NIF…)' },
+      { name: 'locale', label: 'Formato de números y fechas', type: 'select', options: LOCALES },
       { name: 'grace_hours', label: 'Tolerancia (horas) antes de cobrar un día más', type: 'number' },
       { name: 'one_way_fee', label: 'Recargo por devolver en otro lugar', type: 'number' },
       { name: 'fuel_charge_per_eighth', label: 'Cargo por cada 1/8 de combustible faltante', type: 'number' },
@@ -2055,6 +2088,14 @@ on(/^\/config$/, async (view) => {
     await loadCatalogs();
   });
   $('[data-close]', view).remove();
+  // Al elegir el país se completan moneda, impuesto y formato (se pueden ajustar a mano después).
+  const form = $('form', view);
+  form.country.addEventListener('change', () => {
+    const p = presets[form.country.value];
+    if (!p) return;
+    for (const k of ['currency', 'tax_name', 'tax_rate', 'tax_id_label', 'locale']) if (form[k]) form[k].value = p[k];
+    toast(`Datos de ${p.name} cargados: revisalos y tocá Guardar`);
+  });
   const terms = $('[name=contract_terms]', view);
   const help = document.createElement('div');
   help.className = 'full';
@@ -2104,7 +2145,7 @@ on(/^\/usuarios$/, async (view) => {
         log
           .map(
             (a) =>
-              `<tr><td class="nowrap">${esc(new Date(a.at).toLocaleString('es-AR', { hour12: false }))}</td><td>${esc(AUDIT_LABEL[a.action] || a.action)}</td><td>${esc(a.email || '')}</td><td><small>${esc(a.detail || '')}</small></td><td><small class="muted">${esc(a.ip || '')}</small></td></tr>`,
+              `<tr><td class="nowrap">${esc(new Date(a.at).toLocaleString(locale(), { hour12: false }))}</td><td>${esc(AUDIT_LABEL[a.action] || a.action)}</td><td>${esc(a.email || '')}</td><td><small>${esc(a.detail || '')}</small></td><td><small class="muted">${esc(a.ip || '')}</small></td></tr>`,
           )
           .join('') || '<tr><td colspan="5" class="muted">Sin actividad registrada.</td></tr>'
       }</tbody></table></div></div>`;
