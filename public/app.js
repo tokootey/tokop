@@ -156,7 +156,8 @@ function field(f, value) {
   const req = f.required ? ' required' : '';
   if (f.type === 'photos') {
     return `<label class="full">${esc(f.label)}<input name="${f.name}" type="file" accept="image/*,application/pdf" multiple/>
-      <small class="muted">Desde el celular podés sacar la foto en el momento o elegirla de la galería. Se pueden elegir varias.</small></label>`;
+      <small class="muted">Desde el celular podés sacar las fotos de a una o elegirlas de la galería: se van sumando. Tocá una miniatura para sacarla.</small>
+      <div class="thumbs photo-preview" style="margin-top:8px"></div></label>`;
   }
   if (f.type === 'checkbox') {
     return `<label class="check${f.full ? ' full' : ''}"><input type="checkbox" name="${f.name}" ${Number(v) ? 'checked' : ''}/> ${esc(f.label)}</label>`;
@@ -174,6 +175,31 @@ function field(f, value) {
   const step = f.type === 'number' ? ` step="${f.step || 'any'}"` : '';
   return `<label${cls}>${esc(f.label)}<input name="${f.name}" type="${f.type || 'text'}" value="${esc(v)}"${step}${req} ${f.attrs || ''}/></label>`;
 }
+/* Fotos: cada elección se suma a las anteriores (con la cámara del celular sale una foto por vez) y se ven en miniatura. */
+const pickedFiles = new WeakMap();
+function setPhotos(input, files) {
+  const dt = new DataTransfer();
+  files.forEach((f) => dt.items.add(f));
+  input.files = dt.files;
+  pickedFiles.set(input, files);
+  const box = input.parentElement.querySelector('.photo-preview');
+  if (!box) return;
+  box.querySelectorAll('img').forEach((img) => URL.revokeObjectURL(img.src));
+  box.innerHTML = files
+    .map((f, i) => `<button type="button" class="thumb" data-unpick="${i}" title="Sacar ${esc(f.name)}">${f.type.startsWith('image/') ? `<img alt="${esc(f.name)}" src="${URL.createObjectURL(f)}"/>` : 'PDF'}</button>`)
+    .join('') + (files.length ? `<small class="muted">${files.length} archivo${files.length > 1 ? 's' : ''} elegido${files.length > 1 ? 's' : ''}</small>` : '');
+}
+document.addEventListener('change', (e) => {
+  if (e.target.matches('input[type=file][name=fotos]')) setPhotos(e.target, [...(pickedFiles.get(e.target) || []), ...e.target.files]);
+});
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-unpick]');
+  if (!b) return;
+  e.preventDefault(); // el botón está dentro del <label>: que no abra el selector de archivos
+  const input = b.closest('label').querySelector('input[type=file]');
+  setPhotos(input, (pickedFiles.get(input) || []).filter((_, i) => i !== Number(b.dataset.unpick)));
+});
+
 const formHtml = (fields, values = {}, submit = 'Guardar') =>
   `<form><div class="form-grid">${fields.map((f) => field(f, values[f.name])).join('')}</div>
    <div class="actions" style="margin-top:16px"><button class="btn primary" type="submit">${esc(submit)}</button><button class="btn" type="button" data-close>Cancelar</button></div></form>`;
