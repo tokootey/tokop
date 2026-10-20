@@ -213,6 +213,34 @@ CREATE TABLE IF NOT EXISTS reservation_files (
 );
 CREATE INDEX IF NOT EXISTS ix_reservation_files ON reservation_files(reservation_id);
 
+-- Facturas electrónicas (por ahora sólo de prueba: mode = 'simulado' u 'homologacion').
+CREATE TABLE IF NOT EXISTS invoices (
+  id INTEGER PRIMARY KEY,
+  reservation_id INTEGER NOT NULL REFERENCES reservations(id),
+  provider TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  type INTEGER NOT NULL,
+  type_name TEXT,
+  point_of_sale INTEGER NOT NULL DEFAULT 1,
+  number INTEGER NOT NULL,
+  auth_code TEXT,
+  auth_due TEXT,
+  customer_name TEXT,
+  customer_doc_type TEXT,
+  customer_doc TEXT,
+  currency TEXT,
+  net REAL NOT NULL DEFAULT 0,
+  tax REAL NOT NULL DEFAULT 0,
+  total REAL NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'emitida',
+  request TEXT,
+  response TEXT,
+  created_by INTEGER,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_invoices_number ON invoices(provider, mode, type, point_of_sale, number);
+CREATE INDEX IF NOT EXISTS ix_invoices_reservation ON invoices(reservation_id);
+
 CREATE TABLE IF NOT EXISTS webhook_log (
   id INTEGER PRIMARY KEY,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -364,6 +392,12 @@ const DEFAULT_SETTINGS = {
   chat_welcome: '',
   chat_whatsapp: '',
   chat_faq: '',
+  // Factura electrónica, sólo de prueba (src/invoicing): cada empresa carga sus datos fiscales.
+  invoice_provider: '', // 'arca' (Argentina) o 'sii' (Chile)
+  invoice_mode: 'simulado', // 'simulado' u 'homologacion'
+  invoice_tax_id: '', // CUIT o RUT de prueba
+  invoice_point_of_sale: '1',
+  invoice_tax_condition: 'RI', // Argentina: 'RI' (Responsable Inscripto) o 'MONO' (Monotributo)
 };
 
 function openDb(file = process.env.DB_FILE || path.join(__dirname, '..', 'data', 'rentacar.db')) {

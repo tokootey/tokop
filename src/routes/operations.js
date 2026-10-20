@@ -4,6 +4,7 @@ const express = require('express');
 const { computeQuote } = require('../pricing');
 const { categoryAvailability, availableVehicles, BLOCKING } = require('../availability');
 const R = require('../reservations');
+const invoicing = require('../invoicing/index');
 const { fail, normDateTime, nowLocal, parseLocal, fmtLocal } = require('../util');
 
 /**
@@ -117,7 +118,17 @@ function operationsRoutes(db) {
   router.get('/reservations/:id', (req, res) => {
     const r = R.getReservation(db, req.params.id);
     if (!r) fail(404, 'Reserva inexistente');
-    res.json(r);
+    res.json({ ...r, invoices: invoicing.listInvoices(db, r.id) });
+  });
+
+  // --- Factura electrónica (sólo prueba) ---
+  router.post('/reservations/:id/invoice', async (req, res) => {
+    res.status(201).json(await invoicing.emitForReservation(db, Number(req.params.id), req.user.id));
+  });
+  router.get('/invoices/:id', (req, res) => {
+    const inv = invoicing.getInvoice(db, Number(req.params.id));
+    if (!inv) fail(404, 'Factura inexistente');
+    res.json(inv);
   });
 
   router.put('/reservations/:id', (req, res) => res.json(R.updateReservation(db, req.params.id, req.body, req.user.id)));
