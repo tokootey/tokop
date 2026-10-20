@@ -1,10 +1,21 @@
 # Publicación en Render (https://render.com): New → Blueprint → elegir este repositorio.
-# Los datos se guardan en un disco persistente, así no se pierden al reiniciar.
+# Paso a paso en el README → "Publicarla en internet".
+#
+# Todo lo que hay que guardar vive en el disco persistente /var/data, que no se borra al reiniciar
+# ni al publicar una versión nueva:
+#   /var/data/rentacar.db        base de la empresa principal
+#   /var/data/empresas.db        registro de empresas (si hay varias agencias)
+#   /var/data/empresas/*.db      base de cada empresa
+#   /var/data/uploads/           fotos y contratos
+#   /var/data/respaldos/         copias de seguridad diarias de todas las bases (se guardan las últimas 14)
+#
+# Para volver a una copia: en Environment agregar RESTAURAR_RESPALDO con el nombre de la copia
+# (por ejemplo 2026-10-20_030000) y tocar "Save, rebuild and deploy". Ver README → Copias de seguridad.
 services:
   - type: web
     name: rentacar-ushuaia
     runtime: node
-    plan: starter
+    plan: starter # el disco persistente necesita un plan pago; Render muestra el precio antes de confirmar
     region: oregon
     buildCommand: npm ci --omit=dev
     startCommand: npm start
@@ -14,6 +25,10 @@ services:
         value: "22.12.0"
       - key: DB_FILE
         value: /var/data/rentacar.db
+      - key: BACKUP_DIR
+        value: /var/data/respaldos
+      - key: BACKUP_KEEP
+        value: "14"
       - key: TRUST_PROXY
         value: "1"
       - key: ADMIN_EMAIL
@@ -23,4 +38,4 @@ services:
     disk:
       name: datos
       mountPath: /var/data
-      sizeGB: 1
+      sizeGB: 5 # alcanza para varias agencias con fotos; se puede agrandar después (no achicar)

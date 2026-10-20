@@ -62,11 +62,37 @@ La app ya está preparada para publicarse en [Render](https://render.com). Lleva
 2. Arriba a la derecha tocá **New** y después **Blueprint**.
 3. Elegí el repositorio **tokootey/tokop**. Si no aparece, tocá *Configure account* y dale acceso.
 4. Render lee la configuración sola (archivo `render.yaml`) y muestra lo que va a crear. Tocá **Apply** o **Deploy Blueprint**.
-   - Se usa un plan pago básico con un disco de 1 GB, para que los datos no se borren. Render muestra el precio antes de confirmar.
+   - Se usa un plan pago básico (*Starter*) con un disco de 5 GB, para que los datos no se borren. Render muestra el precio antes de confirmar.
 5. Esperá a que diga **Live**, en verde. Arriba vas a ver la dirección de la app, por ejemplo `https://rentacar-ushuaia.onrender.com`.
 6. Para ver la contraseña del administrador, entrá al servicio y abrí la pestaña **Environment**. El usuario es `admin@rentacar.local` y la contraseña es el valor de `ADMIN_PASSWORD`.
 7. Entrá a la app con ese usuario y contraseña. Ya podés cargar autos, tarifas y usuarios.
 8. En **Cotizador → Formulario web**, copiá la línea `<script …>`. Ya trae la dirección real de la app. Mandásela a quien administra el sitio web para que la pegue en la página del cotizador.
+9. Opcional: en **Settings → Custom Domains** podés usar una dirección propia (por ejemplo `gestion.tuagencia.com`).
+
+Las versiones nuevas se publican solas cada vez que se acepta un cambio en `main`. Los datos quedan en el disco y no se tocan.
+
+## Copias de seguridad
+
+La app hace sola **una copia por día** de todas las bases de datos (la de cada empresa y el registro de empresas) y guarda las **últimas 14**. En Render quedan en `/var/data/respaldos`, cada una en una carpeta con la fecha y hora, por ejemplo `2026-10-20_030000`. Las fotos no entran en la copia, porque ocupan mucho: quedan en el disco.
+
+**Volver a una copia en Render** (por ejemplo, si se borró algo por error):
+
+1. En el servicio, abrí **Logs** y buscá la línea `Copia de seguridad hecha: …` del día al que querés volver. Ese es el nombre de la copia.
+2. En **Environment** tocá **Add Environment Variable**: nombre `RESTAURAR_RESPALDO`, valor el nombre de la copia (por ejemplo `2026-10-20_030000`).
+3. Tocá **Save, rebuild and deploy**. Al arrancar, la app vuelve a esa copia. Antes guarda lo que había en una copia nueva, así se puede deshacer.
+4. Cuando diga **Live**, borrá la variable `RESTAURAR_RESPALDO`. Aunque te olvides, no se vuelve a aplicar.
+
+Ojo: se pierde todo lo cargado después de esa copia, en todas las empresas.
+
+**En una computadora** (con la app cerrada):
+
+```bash
+npm run respaldo                               # hace una copia ahora
+npm run respaldo -- lista                      # muestra las copias
+npm run respaldo -- restaurar 2026-10-20_030000
+```
+
+Variables: `BACKUP_DIR` (carpeta de las copias; por defecto, `respaldos` al lado de la base), `BACKUP_KEEP` (cuántas guardar, 14) y `BACKUP_DISABLED=1` (no hacer copias).
 
 ## Pasar los datos del sistema anterior (Drive, Excel u otra página)
 
