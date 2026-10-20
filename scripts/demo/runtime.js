@@ -290,7 +290,7 @@
     if (!initialBytes) {
       ensureAdmin(db);
       req('./src/seed.js').seed(db);
-      setSetting(db, 'company_name', 'Rent a Car Ushuaia');
+      setSetting(db, 'company_name', 'Austral Rent a Car (demo)');
       scheduleSave();
     }
     // En la demo no se obliga a cambiar la contraseña de ejemplo.

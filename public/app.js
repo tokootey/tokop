@@ -210,8 +210,8 @@ const formHtml = (fields, values = {}, submit = 'Guardar') =>
 async function loadCatalogs() {
   const [settings, branches, categories, extras] = await Promise.all([GET('/settings'), GET('/branches'), GET('/categories'), GET('/extras')]);
   Object.assign(state, { settings, branches, categories, extras });
-  $('#brand').textContent = settings.company_name || 'Rent a Car';
-  document.title = `${settings.company_name || 'Rent a Car'} · Gestión`;
+  $('#brand').textContent = settings.company_name || 'Floty';
+  document.title = settings.company_name ? `${settings.company_name} · Floty` : 'Floty · Gestión para rent a car';
 }
 
 async function startSession() {
