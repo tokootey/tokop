@@ -521,6 +521,9 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         <div class="form-grid">
           <label>Retiro<input type="datetime-local" name="pickup_at" value="${localISO(p0)}" required/></label>
           <label>Devolución<input type="datetime-local" name="return_at" value="${localISO(r0)}" required/></label>
+          <div class="full actions" id="durations"><small class="muted">Duración rápida:</small>${[1, 2, 3, 5, 7, 14]
+            .map((n) => `<button type="button" class="btn small" data-days="${n}">${n === 7 ? '1 semana' : n === 14 ? '2 semanas' : `${n} día${n > 1 ? 's' : ''}`}</button>`)
+            .join('')}</div>
           ${field({ name: 'pickup_branch_id', label: 'Lugar de retiro', type: 'select', options: branchOptions, required: true })}
           ${field({ name: 'return_branch_id', label: 'Lugar de devolución', type: 'select', options: branchOptions, required: true })}
         </div>
@@ -575,6 +578,13 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   if (preVehicle && preVehicle.branch_id && branchOptions().some(([id]) => id === preVehicle.branch_id)) pb.value = preVehicle.branch_id;
   form.return_branch_id.value = pb.value;
   pb.addEventListener('change', () => (form.return_branch_id.value = pb.value));
+  // La devolución queda a N días del retiro, a la misma hora.
+  $('#durations').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-days]');
+    if (!b || !form.pickup_at.value) return;
+    form.return_at.value = localISO(addDays(new Date(form.pickup_at.value), Number(b.dataset.days)));
+    refresh();
+  });
 
   const params = () => {
     const f = formData(form);
@@ -605,7 +615,8 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         (c) => `<div class="cat-card ${c.available ? '' : 'none'} ${sel.category_id === c.id ? 'selected' : ''}" data-cat="${c.id}">
           <div class="cat-name"><span class="cat-code">${esc(c.code)}</span>${esc(c.name)}</div>
           <div class="muted">${c.available} disponible(s) · ${c.quote.days} día(s)</div>
-          <div class="price">${money(c.quote.total)}</div>
+          <div class="price">${money(c.quote.total)} <small class="muted">total</small></div>
+          <small class="muted">${money(c.quote.total / (c.quote.days || 1))} promedio por día</small>
           <small class="muted">Garantía ${money(c.quote.deposit)}</small></div>`,
       )
       .join('');
