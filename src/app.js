@@ -2,7 +2,7 @@
 
 const path = require('node:path');
 const express = require('express');
-const { DEFAULT_PASSWORD, login, logout, requireUser, requirePasswordChanged, changePassword, hashPassword, verifyPassword } = require('./auth');
+const { DEFAULT_PASSWORD, login, logout, requireUser, requirePasswordChanged, requireAdmin, changePassword, hashPassword, verifyPassword } = require('./auth');
 const { securityHeaders, httpsRedirect, sameOrigin } = require('./security');
 const { catalogRoutes } = require('./routes/catalog');
 const { operationsRoutes } = require('./routes/operations');
@@ -12,7 +12,7 @@ const { webformRoutes } = require('./routes/webform');
 const { chatRoutes } = require('./routes/chat');
 const { fileRoutes } = require('./routes/files');
 const { importRoutes } = require('./routes/importer');
-const { HttpError } = require('./util');
+const { HttpError, fail } = require('./util');
 
 /** Crea el usuario administrador inicial si no hay ninguno. */
 function ensureAdmin(db) {
@@ -35,21 +35,94 @@ function ensureAdmin(db) {
   return { email, password };
 }
 
+// TRUST_PROXY=1 (Render, Nginx): cantidad de proxies delante. Un número tiene que pasarse como número,
+// si no Express lo toma como una dirección IP y no confía en ningún proxy.
+function trustProxy(app) {
+  const tp = process.env.TRUST_PROXY;
+  if (tp) app.set('trust proxy', /^\d+$/.test(tp) ? Number(tp) : tp === 'true' ? true : tp);
+}
+
+function errorHandler(err, _req, res, _next) {
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'El archivo es demasiado grande (máximo 20 MB)' });
+  if (err instanceof SyntaxError) return res.status(400).json({ error: 'JSON inválido' });
+  if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, details: err.details });
+  if (err.status === 400 || err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Pedido inválido' });
+  if (/UNIQUE constraint/i.test(err.message)) return res.status(409).json({ error: 'Ya existe un registro con ese código / dato único' });
+  if (/FOREIGN KEY/i.test(err.message)) return res.status(409).json({ error: 'Referencia inválida o registro en uso' });
+  // El detalle queda en el registro del servidor; al navegador no se le muestran datos internos.
+  console.error(err);
+  res.status(500).json({ error: 'Error interno. Si se repite, avisale al administrador.' });
+}
+
+/**
+ * La API de una empresa: todas las rutas trabajan sólo con la base `db` de esa empresa.
+ * `company` y `platform` existen sólo en una instalación con varias empresas.
+ */
+function companyApi(db, { uploadsDir, company, platform }) {
+  const app = express();
+  app.disable('x-powered-by');
+  trustProxy(app);
+  const prefix = company ? `${company.id}.` : '';
+  const emailTaken = platform ? (email) => platform.emailTaken(email, company.id) : () => false;
+
+  app.use('/api/public/webform', webformRoutes(db));
+  app.use('/api/public/chat', chatRoutes(db));
+  app.use('/api/public/v1', publicRoutes(db));
+
+  app.post('/api/auth/login', sameOrigin, (req, res) => res.json(login(db, req, res, prefix)));
+  const auth = requireUser(db);
+  // La empresa va con el usuario: la pantalla la usa para armar los códigos del sitio web y la pestaña "Empresas".
+  const companyInfo = (req) =>
+    company ? { company: { slug: company.slug, name: company.name, principal: company.principal }, platform_admin: company.principal && req.user.role === 'admin' } : {};
+  app.get('/api/auth/me', auth, (req, res) => res.json({ ...req.user, ...companyInfo(req) }));
+  app.post('/api/auth/logout', sameOrigin, auth, (req, res) => {
+    logout(db, req, res);
+    res.json({ ok: true });
+  });
+  app.post('/api/auth/password', sameOrigin, auth, (req, res) => {
+    changePassword(db, req);
+    res.json({ ok: true });
+  });
+  const guarded = [sameOrigin, auth, requirePasswordChanged];
+  if (platform) app.use('/api/platform', guarded, platformRoutes(platform, company));
+  app.use(
+    '/api',
+    guarded,
+    catalogRoutes(db),
+    operationsRoutes(db),
+    fileRoutes(db, uploadsDir),
+    adminRoutes(db, { emailTaken, publicQuery: company && !company.principal ? `?empresa=${company.slug}` : '' }),
+    importRoutes(db),
+  );
+  app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Ruta inexistente')));
+  app.use(errorHandler);
+  return app;
+}
+
+/** Alta y listado de empresas: sólo para los administradores de la empresa principal. */
+function platformRoutes(platform, company) {
+  const router = express.Router();
+  router.use(requireAdmin, (_req, _res, next) => next(company.principal ? null : new HttpError(403, 'Sólo la empresa principal da de alta empresas')));
+  router.get('/companies', (_req, res) => res.json(platform.list().map(({ id, slug, name, created_at, principal }) => ({ id, slug, name, created_at, principal }))));
+  router.post('/companies', (req, res) => res.status(201).json(platform.create(req.body || {})));
+  return router;
+}
+
 /**
  * @param {object} [options]
  * @param {string} [options.uploadsDir] carpeta de fotos y documentos (por defecto, junto a la base de datos).
+ * @param {object} [options.platform] registro de empresas (src/platform.js). Sin él, la app atiende una sola empresa
+ *   con `db` (así funcionan la demo del navegador y las pruebas).
  */
 function createApp(db, options = {}) {
   const uploadsDir =
     options.uploadsDir ||
     process.env.UPLOADS_DIR ||
     path.join(path.dirname(process.env.DB_FILE || path.join(__dirname, '..', 'data', 'rentacar.db')), 'uploads');
+  const { platform } = options;
   const app = express();
   app.disable('x-powered-by');
-  // TRUST_PROXY=1 (Render, Nginx): cantidad de proxies delante. Un número tiene que pasarse como número,
-  // si no Express lo toma como una dirección IP y no confía en ningún proxy.
-  const tp = process.env.TRUST_PROXY;
-  if (tp) app.set('trust proxy', /^\d+$/.test(tp) ? Number(tp) : tp === 'true' ? true : tp);
+  trustProxy(app);
   app.use(httpsRedirect);
   app.use(securityHeaders);
   // Las importaciones de planillas traen más datos: su cuerpo se lee recién después de verificar la sesión.
@@ -64,11 +137,7 @@ function createApp(db, options = {}) {
     if (req.method === 'OPTIONS') return res.status(204).end();
     next();
   });
-  app.use('/api/public/webform', webformRoutes(db));
-  app.use('/api/public/chat', chatRoutes(db));
-  app.use('/api/public/v1', publicRoutes(db));
 
-  app.post('/api/auth/login', sameOrigin, (req, res) => res.json(login(db, req, res)));
   // Huella de las pantallas al arrancar: si cambian en disco (se bajó una versión nueva encima),
   // este proceso quedó viejo y hay que reiniciarlo.
   const uiFile = path.join(__dirname, '..', 'public', 'app.js');
@@ -82,19 +151,38 @@ function createApp(db, options = {}) {
   const bootHash = uiHash();
   app.get('/api/health', (_req, res) => res.json({ ok: true, stale: bootHash !== uiHash() }));
 
-  const auth = requireUser(db);
-  app.get('/api/auth/me', auth, (req, res) => res.json(req.user));
-  app.post('/api/auth/logout', sameOrigin, auth, (req, res) => {
-    logout(db, req, res);
-    res.json({ ok: true });
+  // Cada pedido va a la API de su empresa.
+  const apis = new Map();
+  const apiOf = (c) => {
+    if (!apis.has(c.id)) apis.set(c.id, companyApi(c.db, { uploadsDir: platform.uploadsDir(c, uploadsDir), company: c, platform }));
+    return apis.get(c.id);
+  };
+  const single = platform ? null : companyApi(db, { uploadsDir });
+  const COOKIE_COMPANY = /(?:^|;\s*)rc_session=(\d+)\./;
+  const companyFor = (req) => {
+    const p = req.path;
+    if (p === '/api/auth/login') return platform.byEmail(String((req.body && req.body.email) || '').trim().toLowerCase()) || platform.principal();
+    if (p.startsWith('/api/public/v1/')) return platform.byApiKey(req.get('x-api-key')) || platform.principal();
+    if (p.startsWith('/api/public/')) {
+      // Formulario web y asistente: la empresa va en la dirección (?empresa=...); sin ella, la principal.
+      if (!req.query.empresa) return platform.principal();
+      return platform.bySlug(req.query.empresa) || fail(404, 'Empresa inexistente');
+    }
+    // Sesión: la cookie lleva el número de empresa delante del token. Las sesiones anteriores son de la principal.
+    const m = String(req.get('cookie') || '').match(COOKIE_COMPANY);
+    return (m && platform.get(m[1])) || platform.principal();
+  };
+  app.use((req, res, next) => {
+    if (!req.path.startsWith('/api/')) return next();
+    if (single) return single(req, res, next);
+    let c;
+    try {
+      c = companyFor(req);
+    } catch (e) {
+      return next(e);
+    }
+    apiOf(c)(req, res, next);
   });
-  app.post('/api/auth/password', sameOrigin, auth, (req, res) => {
-    changePassword(db, req);
-    res.json({ ok: true });
-  });
-  app.use('/api', sameOrigin, auth, requirePasswordChanged, catalogRoutes(db), operationsRoutes(db), fileRoutes(db, uploadsDir), adminRoutes(db), importRoutes(db));
-
-  app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Ruta inexistente')));
 
   // Librerías para generar el contrato en PDF en el navegador (servidas desde la app: la política de seguridad no admite otros sitios).
   const vendor = {
@@ -106,17 +194,7 @@ function createApp(db, options = {}) {
   app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
 
   // eslint-disable-next-line no-unused-vars
-  app.use((err, _req, res, _next) => {
-    if (err.type === 'entity.too.large') return res.status(413).json({ error: 'El archivo es demasiado grande (máximo 20 MB)' });
-    if (err instanceof SyntaxError) return res.status(400).json({ error: 'JSON inválido' });
-    if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, details: err.details });
-    if (err.status === 400 || err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Pedido inválido' });
-    if (/UNIQUE constraint/i.test(err.message)) return res.status(409).json({ error: 'Ya existe un registro con ese código / dato único' });
-    if (/FOREIGN KEY/i.test(err.message)) return res.status(409).json({ error: 'Referencia inválida o registro en uso' });
-    // El detalle queda en el registro del servidor; al navegador no se le muestran datos internos.
-    console.error(err);
-    res.status(500).json({ error: 'Error interno. Si se repite, avisale al administrador.' });
-  });
+  app.use(errorHandler);
 
   return app;
 }

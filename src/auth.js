@@ -101,7 +101,8 @@ function cookieOptions(req) {
   return { httpOnly: true, sameSite: 'strict', secure: Boolean(req.secure), path: '/', maxAge: MAX_DAYS * 86400000 };
 }
 
-function login(db, req, res) {
+/** `prefix`: número de empresa delante del token ("2.abc…"), para saber a qué base va cada pedido. */
+function login(db, req, res, prefix = '') {
   const email = String((req.body && req.body.email) || '').trim().toLowerCase();
   const password = (req.body && req.body.password) || '';
   const ipKey = `ip:${req.ip}`;
@@ -129,7 +130,7 @@ function login(db, req, res) {
     now.toISOString(),
   );
   db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(now.toISOString());
-  res.cookie(COOKIE, token, cookieOptions(req));
+  res.cookie(COOKIE, prefix + token, cookieOptions(req));
   audit(db, req, 'login', null, user);
   return publicUser(user);
 }
@@ -145,7 +146,7 @@ function logout(db, req, res) {
 /** Middleware: requiere una sesión válida (cookie). Renueva el vencimiento por inactividad. */
 function requireUser(db) {
   return (req, _res, next) => {
-    const token = parseCookies(req.get('cookie'))[COOKIE];
+    const token = String(parseCookies(req.get('cookie'))[COOKIE] || '').replace(/^\d+\./, '');
     if (!token) return next(new HttpError(401, 'Sesión requerida'));
     const h = hashToken(token);
     const now = new Date();

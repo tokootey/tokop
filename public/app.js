@@ -328,7 +328,7 @@ const routes = [];
 const on = (pattern, handler, navKey) => routes.push({ pattern, handler, navKey });
 
 // Menú corto: "Flota y taller" y "Ajustes" agrupan varias pantallas, que se eligen con pestañas arriba.
-const NAV_GROUP = { flota: 'flota', mantenimiento: 'flota', tarifas: 'ajustes', cotizador: 'ajustes', config: 'ajustes', usuarios: 'ajustes', importar: 'ajustes', asistente: 'ajustes' };
+const NAV_GROUP = { flota: 'flota', mantenimiento: 'flota', tarifas: 'ajustes', cotizador: 'ajustes', config: 'ajustes', usuarios: 'ajustes', importar: 'ajustes', asistente: 'ajustes', empresas: 'ajustes' };
 const SUBNAV = {
   flota: [
     ['flota', '#/flota', 'Autos'],
@@ -341,11 +341,12 @@ const SUBNAV = {
     ['cotizador', '#/cotizador', 'Cotizador web', true],
     ['asistente', '#/asistente', 'Asistente web', true],
     ['importar', '#/importar', 'Importar datos', true],
+    ['empresas', '#/empresas', 'Empresas', 'platform'],
   ],
 };
 function renderSubnav(group, current) {
   const nav = $('#subnav');
-  const items = (SUBNAV[group] || []).filter(([, , , adminOnly]) => !adminOnly || isAdmin());
+  const items = (SUBNAV[group] || []).filter(([, , , only]) => !only || (only === 'platform' ? state.user.platform_admin : isAdmin()));
   nav.classList.toggle('hidden', items.length < 2);
   nav.innerHTML = items.map(([key, href, label]) => `<a href="${href}" class="${key === current ? 'active' : ''}">${esc(label)}</a>`).join('');
 }
@@ -2243,6 +2244,45 @@ on(/^\/usuarios$/, async (view) => {
   );
 }, 'usuarios');
 
+/* ---------- Empresas (varias agencias en la misma instalación) ---------- */
+on(/^\/empresas$/, async (view) => {
+  const list = await GET('/platform/companies');
+  view.innerHTML = `<div class="page-head"><h1>Empresas</h1><button class="btn primary" data-new>+ Nueva empresa</button></div>
+    <p class="muted">Cada empresa tiene sus propios datos: reservas, flota, clientes, usuarios, tarifas y configuración. Nadie de una empresa puede ver los datos de otra.</p>
+    <div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Código</th><th>Alta</th></tr></thead><tbody>${list
+      .map((c) => `<tr><td><b>${esc(c.name)}</b>${c.principal ? ' <span class="badge">principal</span>' : ''}</td><td><code>${esc(c.slug)}</code></td><td>${fmtD(c.created_at)}</td></tr>`)
+      .join('')}</tbody></table></div>`;
+  $('[data-new]', view).addEventListener('click', () =>
+    openModal(
+      'Nueva empresa',
+      formHtml(
+        [
+          { name: 'name', label: 'Nombre de la empresa', required: true, full: true },
+          { name: 'country', label: 'País', type: 'select', options: Object.entries(state.settings.country_presets || { AR: { name: 'Argentina' } }).map(([k, p]) => [k, p.name]), required: true },
+          { name: 'admin_name', label: 'Nombre del administrador', required: true },
+          { name: 'admin_email', label: 'Email del administrador', type: 'email', required: true, full: true },
+        ],
+        { country: 'AR' },
+        'Crear empresa',
+      ) + '<p class="muted">Se crea vacía, con los datos del país elegido. Te mostramos una contraseña inicial para pasarle al administrador: la cambia en su primer ingreso.</p>',
+      async (d) => {
+        const r = await POST('/platform/companies', d);
+        // La contraseña se muestra una sola vez: no queda guardada en ningún lado.
+        setTimeout(() =>
+          openModal(
+            'Empresa creada',
+            `<p><b>${esc(r.company.name)}</b> ya está lista. Pasale estos datos al administrador por un medio seguro (en persona o por teléfono):</p>
+             <dl class="info"><dt>Dirección</dt><dd>${esc(location.origin)}</dd><dt>Usuario</dt><dd><b>${esc(r.admin.email)}</b></dd><dt>Contraseña inicial</dt><dd><code style="font-size:16px">${esc(r.admin.password)}</code></dd></dl>
+             <p class="muted">Esta contraseña no se vuelve a mostrar. Al entrar, la app le pide elegir una propia y le muestra los primeros pasos para cargar su empresa.</p>
+             <div class="actions"><button class="btn primary" data-close>Listo</button></div>`,
+          ),
+        );
+        route();
+      },
+    ),
+  );
+}, 'empresas');
+
 /* ============================================================
    Importar datos de sistemas anteriores (sólo administradores)
    ============================================================ */
@@ -2448,7 +2488,9 @@ on(/^\/asistente$/, async (view) => {
     return;
   }
   const s = await GET('/settings');
-  const snippet = `<script src="${location.origin}/chat.js" async></script>`;
+  // En una instalación con varias empresas, el código lleva la empresa (salvo la principal).
+  const co = state.user.company;
+  const snippet = `<script src="${location.origin}/chat.js"${co && !co.principal ? ` data-empresa="${co.slug}"` : ''} async></script>`;
   view.innerHTML = `<div class="page-head"><h1>Asistente web</h1></div>
     <div class="grid cols-2">
       <div class="card">

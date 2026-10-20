@@ -36,7 +36,12 @@ function validCurrency(v) {
   }
 }
 
-function adminRoutes(db) {
+/**
+ * @param {object} [opts]
+ * @param {(email: string) => boolean} [opts.emailTaken] true si el email ya es de un usuario de otra empresa.
+ * @param {string} [opts.publicQuery] "?empresa=..." para las direcciones públicas de una empresa que no es la principal.
+ */
+function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
   const router = express.Router();
 
   // --- Configuración general ---
@@ -72,6 +77,7 @@ function adminRoutes(db) {
     const email = String((req.body && req.body.email) || '').trim().toLowerCase();
     if (!name || !email || !password) fail(400, 'Nombre, email y contraseña son obligatorios');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, 'El email no es válido');
+    if (emailTaken(email)) fail(409, 'Ese email ya lo usa un usuario de otra empresa');
     assertPassword(password, email);
     try {
       // La contraseña la eligió el administrador: la persona la cambia en su primer ingreso.
@@ -131,8 +137,8 @@ function adminRoutes(db) {
         mapping: getWebformMapping(db),
         allowed_origins: s.webform_allowed_origins,
         redirect_url: s.webform_redirect_url,
-        action_url: `${base}/api/public/webform`,
-        script_tag: `<script src="${base}/webform.js" data-form="form"></script>`,
+        action_url: `${base}/api/public/webform${publicQuery}`,
+        script_tag: `<script src="${base}/webform.js" data-form="form"${publicQuery ? ` data-empresa="${publicQuery.slice(9)}"` : ''}></script>`,
       },
       endpoints: {
         catalog: `${base}/api/public/v1/catalog`,
