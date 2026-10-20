@@ -86,7 +86,7 @@ small { font-size: 12px; }
 .card.alert .count { background: var(--danger-soft); color: var(--danger); }
 .empty { color: var(--muted); margin: 0; padding: 14px 0 4px; }
 .daylist { display: flex; flex-direction: column; }
-.dayrow { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 10px 8px; border-top: 1px solid var(--border); border-radius: 8px; }
+.dayrow { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto auto; gap: 14px; align-items: center; padding: 10px 8px; border-top: 1px solid var(--border); border-radius: 8px; }
 .daylist .dayrow:first-child { border-top: none; }
 .dayrow.click { cursor: pointer; }
 .dayrow.click:hover { background: var(--soft); }
@@ -265,7 +265,7 @@ pre { background: #0f172a; color: #dbe4f3; padding: 12px; border-radius: 8px; ov
   .kpi { padding: 14px; }
   .kpi .v { font-size: 22px; white-space: normal; overflow-wrap: anywhere; }
   dl.info { grid-template-columns: 104px minmax(0, 1fr); }
-  .dayrow { grid-template-columns: 52px minmax(0, 1fr) auto; gap: 10px; }
+  .dayrow { grid-template-columns: 52px minmax(0, 1fr) auto auto; gap: 10px; }
   .stale-bar { left: 16px; }
   .page-head .actions { width: 100%; }
 }

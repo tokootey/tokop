@@ -156,7 +156,8 @@ function field(f, value) {
   const req = f.required ? ' required' : '';
   if (f.type === 'photos') {
     return `<label class="full">${esc(f.label)}<input name="${f.name}" type="file" accept="image/*,application/pdf" multiple/>
-      <small class="muted">Desde el celular podés sacar la foto en el momento o elegirla de la galería. Se pueden elegir varias.</small></label>`;
+      <small class="muted">Desde el celular podés sacar las fotos de a una o elegirlas de la galería: se van sumando. Tocá una miniatura para sacarla.</small>
+      <div class="thumbs photo-preview" style="margin-top:8px"></div></label>`;
   }
   if (f.type === 'checkbox') {
     return `<label class="check${f.full ? ' full' : ''}"><input type="checkbox" name="${f.name}" ${Number(v) ? 'checked' : ''}/> ${esc(f.label)}</label>`;
@@ -174,6 +175,31 @@ function field(f, value) {
   const step = f.type === 'number' ? ` step="${f.step || 'any'}"` : '';
   return `<label${cls}>${esc(f.label)}<input name="${f.name}" type="${f.type || 'text'}" value="${esc(v)}"${step}${req} ${f.attrs || ''}/></label>`;
 }
+/* Fotos: cada elección se suma a las anteriores (con la cámara del celular sale una foto por vez) y se ven en miniatura. */
+const pickedFiles = new WeakMap();
+function setPhotos(input, files) {
+  const dt = new DataTransfer();
+  files.forEach((f) => dt.items.add(f));
+  input.files = dt.files;
+  pickedFiles.set(input, files);
+  const box = input.parentElement.querySelector('.photo-preview');
+  if (!box) return;
+  box.querySelectorAll('img').forEach((img) => URL.revokeObjectURL(img.src));
+  box.innerHTML = files
+    .map((f, i) => `<button type="button" class="thumb" data-unpick="${i}" title="Sacar ${esc(f.name)}">${f.type.startsWith('image/') ? `<img alt="${esc(f.name)}" src="${URL.createObjectURL(f)}"/>` : 'PDF'}</button>`)
+    .join('') + (files.length ? `<small class="muted">${files.length} archivo${files.length > 1 ? 's' : ''} elegido${files.length > 1 ? 's' : ''}</small>` : '');
+}
+document.addEventListener('change', (e) => {
+  if (e.target.matches('input[type=file][name=fotos]')) setPhotos(e.target, [...(pickedFiles.get(e.target) || []), ...e.target.files]);
+});
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-unpick]');
+  if (!b) return;
+  e.preventDefault(); // el botón está dentro del <label>: que no abra el selector de archivos
+  const input = b.closest('label').querySelector('input[type=file]');
+  setPhotos(input, (pickedFiles.get(input) || []).filter((_, i) => i !== Number(b.dataset.unpick)));
+});
+
 const formHtml = (fields, values = {}, submit = 'Guardar') =>
   `<form><div class="form-grid">${fields.map((f) => field(f, values[f.name])).join('')}</div>
    <div class="actions" style="margin-top:16px"><button class="btn primary" type="submit">${esc(submit)}</button><button class="btn" type="button" data-close>Cancelar</button></div></form>`;
@@ -363,6 +389,11 @@ function setupCard(setup) {
 on(/^\/panel$/, async (view) => {
   const d = await GET('/dashboard');
   // Lista de reservas del día: hora | cliente | auto, cada fila lleva a la reserva.
+  // Botón directo para entregar o recibir el auto sin entrar antes a la reserva.
+  const quick = (r) =>
+    r.status === 'en_curso'
+      ? `<a class="btn small ok" href="#/reservas/${r.id}?accion=checkin">Recibir</a>`
+      : `<a class="btn small ok" href="#/reservas/${r.id}?accion=checkout">Entregar</a>`;
   const list = (rows, kind, empty) =>
     rows.length
       ? `<div class="daylist">${rows
@@ -373,6 +404,7 @@ on(/^\/panel$/, async (view) => {
               <div class="when"><b>${fmtDT(at).slice(11)}</b><small>${fmtD(at).slice(0, 5)}</small></div>
               <div class="who"><b>${esc(r.customer_name)}</b><small>${esc(r.code)}${r.customer_phone ? ` · ${esc(r.customer_phone)}` : ''}${branch ? ` · ${esc(branch)}` : ''}</small></div>
               <div class="what">${r.vehicle_plate ? `<span class="plate">${esc(r.vehicle_plate)}</span>` : '<span class="badge b-pendiente">sin auto</span>'}<small>Cat. ${esc(r.category_code)}</small></div>
+              ${quick(r)}
             </div>`;
           })
           .join('')}</div>`
@@ -515,6 +547,9 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         <div class="form-grid">
           <label>Retiro<input type="datetime-local" name="pickup_at" value="${localISO(p0)}" required/></label>
           <label>Devolución<input type="datetime-local" name="return_at" value="${localISO(r0)}" required/></label>
+          <div class="full actions" id="durations"><small class="muted">Duración rápida:</small>${[1, 2, 3, 5, 7, 14]
+            .map((n) => `<button type="button" class="btn small" data-days="${n}">${n === 7 ? '1 semana' : n === 14 ? '2 semanas' : `${n} día${n > 1 ? 's' : ''}`}</button>`)
+            .join('')}</div>
           ${field({ name: 'pickup_branch_id', label: 'Lugar de retiro', type: 'select', options: branchOptions, required: true })}
           ${field({ name: 'return_branch_id', label: 'Lugar de devolución', type: 'select', options: branchOptions, required: true })}
         </div>
@@ -569,6 +604,13 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   if (preVehicle && preVehicle.branch_id && branchOptions().some(([id]) => id === preVehicle.branch_id)) pb.value = preVehicle.branch_id;
   form.return_branch_id.value = pb.value;
   pb.addEventListener('change', () => (form.return_branch_id.value = pb.value));
+  // La devolución queda a N días del retiro, a la misma hora.
+  $('#durations').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-days]');
+    if (!b || !form.pickup_at.value) return;
+    form.return_at.value = localISO(addDays(new Date(form.pickup_at.value), Number(b.dataset.days)));
+    refresh();
+  });
 
   const params = () => {
     const f = formData(form);
@@ -599,7 +641,8 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         (c) => `<div class="cat-card ${c.available ? '' : 'none'} ${sel.category_id === c.id ? 'selected' : ''}" data-cat="${c.id}">
           <div class="cat-name"><span class="cat-code">${esc(c.code)}</span>${esc(c.name)}</div>
           <div class="muted">${c.available} disponible(s) · ${c.quote.days} día(s)</div>
-          <div class="price">${money(c.quote.total)}</div>
+          <div class="price">${money(c.quote.total)} <small class="muted">total</small></div>
+          <small class="muted">${money(c.quote.total / (c.quote.days || 1))} promedio por día</small>
           <small class="muted">Garantía ${money(c.quote.deposit)}</small></div>`,
       )
       .join('');
@@ -660,16 +703,20 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
             .slice(0, 8)
             .map((c) => `<tr class="click" data-cust="${c.id}"><td><b>${esc(c.full_name)}</b></td><td>${esc(c.doc_number || '')}</td><td>${esc(c.phone || '')}</td><td>${esc(c.email || '')}</td></tr>`)
             .join('')}</tbody></table>`
-        : '<p class="muted">Sin resultados.</p>';
+        : `<p class="muted">No está cargado. <button type="button" class="btn small primary" id="cust-new-q">+ Cargar «${esc(q)}» como cliente nuevo</button></p>`;
       $$('[data-cust]').forEach((tr) => tr.addEventListener('click', () => pickCustomer(rows.find((c) => c.id === Number(tr.dataset.cust)))));
+      $('#cust-new-q')?.addEventListener('click', () => newCustomer(q));
     }, 250);
   });
   $('#cust-q').addEventListener('keydown', (e) => e.key === 'Enter' && e.preventDefault());
-  $('#cust-new').addEventListener('click', () =>
-    openModal('Cliente nuevo', formHtml(CUSTOMER_FIELDS), async (data) => {
+  // Lo que se escribió en la búsqueda pasa al formulario: así no hay que tipearlo dos veces.
+  const newCustomer = (q = '') => {
+    const pre = q.includes('@') ? { email: q } : /^[\d.\s-]+$/.test(q) ? { doc_number: q.replace(/\D/g, '') } : { full_name: q };
+    openModal('Cliente nuevo', formHtml(CUSTOMER_FIELDS, pre), async (data) => {
       pickCustomer(await POST('/customers', data));
-    }),
-  );
+    });
+  };
+  $('#cust-new').addEventListener('click', () => newCustomer($('#cust-q').value.trim()));
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -719,7 +766,7 @@ function breakdownHtml(q) {
 /* ============================================================
    Reserva: detalle y operación (entrega, devolución, pagos)
    ============================================================ */
-on(/^\/reservas\/(\d+)$/, async (view, id) => {
+on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   const r = await GET(`/reservations/${id}`);
   const c = r.contract;
   const canEdit = ['pendiente', 'confirmada'].includes(r.status);
@@ -733,6 +780,9 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
     more.push('<button data-act="edit">Modificar fechas o datos</button>');
   }
   if (r.status === 'en_curso') actions.push('<button class="btn ok" data-act="checkin">Registrar devolución</button>');
+  // Saldo a cobrar a la vista, con el importe: un toque abre el cobro ya completado.
+  if (['confirmada', 'en_curso', 'finalizada'].includes(r.status) && r.balance.pending > 0)
+    actions.push(`<button class="btn ${r.status === 'finalizada' ? 'primary' : ''}" data-act="pay">Cobrar ${money(r.balance.pending)}</button>`);
   if (['cancelada', 'no_show'].includes(r.status)) actions.push('<button class="btn" data-act="reopen">Reabrir</button>');
   if (!['cancelada', 'no_show'].includes(r.status)) {
     actions.push('<button class="btn" data-act="pdf">Contrato PDF</button>');
@@ -909,7 +959,8 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
           } catch (e) {
             toast(`La devolución quedó registrada, pero falló una foto: ${e.message}. Podés subirla desde la reserva.`, true);
           }
-          reload();
+          // Si quedó saldo (km o combustible de más, daños), se abre el cobro directo.
+          location.hash = `#/reservas/${r.id}?accion=pay`;
         },
       ),
     pay: () =>
@@ -1004,6 +1055,11 @@ on(/^\/reservas\/(\d+)$/, async (view, id) => {
   };
   $$('[data-act]', view).forEach((b) => b.addEventListener('click', () => handlers[b.dataset.act]()));
   wireFiles(view, r, reload);
+  // Con ?accion=checkout|checkin|pay se abre ese paso directo si el estado lo permite (pay: sólo si queda saldo).
+  if (accion) {
+    history.replaceState(null, '', `#/reservas/${r.id}`);
+    if (accion === 'pay' ? r.balance.pending > 0 : $(`[data-act="${accion}"]`, view)) handlers[accion]();
+  }
 }, 'reservas');
 
 const LOG_LABEL = {
