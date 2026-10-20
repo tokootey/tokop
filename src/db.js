@@ -398,6 +398,12 @@ const DEFAULT_SETTINGS = {
   invoice_tax_id: '', // CUIT o RUT de prueba
   invoice_point_of_sale: '1',
   invoice_tax_condition: 'RI', // Argentina: 'RI' (Responsable Inscripto) o 'MONO' (Monotributo)
+  // Política de devolución de dinero al cancelar (src/refunds.js). Es un ejemplo: cada agencia la ajusta a sus leyes.
+  refund_full_hours: '72', // con esta anticipación o más se devuelve el 100 %
+  refund_partial_hours: '24', // entre ésta y la anterior se devuelve refund_partial_pct
+  refund_partial_pct: '50',
+  refund_terms:
+    'La garantía se devuelve completa al cancelar. Las devoluciones se hacen por el mismo medio de pago dentro de los 10 días hábiles. Si la empresa cancela la reserva, se devuelve el 100 % de lo pagado.',
 };
 
 function openDb(file = process.env.DB_FILE || path.join(__dirname, '..', 'data', 'rentacar.db')) {

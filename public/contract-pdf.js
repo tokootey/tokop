@@ -271,22 +271,41 @@ function buildVoucherPdf(r) {
   doc.setFont('helvetica', 'normal').setFontSize(9).text(v.statusLine, W - M, 32, { align: 'right' });
   doc.setLineWidth(0.6).line(M, 36, W - M, 36);
 
-  table({
-    theme: 'grid',
-    startY: 42,
-    margin: { left: M, right: M },
-    styles: { fontSize: 10, cellPadding: 2.2, lineColor: [190, 190, 190], lineWidth: 0.2, textColor: [17, 17, 17] },
-    columnStyles: { 0: { fontStyle: 'bold', fillColor: [242, 244, 247], cellWidth: 45 } },
-    body: v.rows,
-  });
-  let y = doc.lastAutoTable.finalY + 8;
-  doc.setFont('helvetica', 'bold').setFontSize(10).text('Para retirar el auto', M, y);
-  doc.setFont('helvetica', 'normal').setFontSize(9.5);
-  const req = doc.splitTextToSize(v.requirements, W - 2 * M);
-  doc.text(req, M, y + 5);
-  y += 7 + req.length * 4.5;
-  if (v.contact) doc.setTextColor(70).text(doc.splitTextToSize(v.contact, W - 2 * M), M, y + 2);
-  doc.setFontSize(8).setTextColor(120).text(`Emitido el ${new Date().toLocaleDateString(locale())}. Presentá este voucher (impreso o en el celular) al retirar el vehículo.`, M, 285);
+  // Una tabla por sección (reserva, cliente, alquiler, precio, garantía); los importes del precio van a la derecha.
+  let y = 40;
+  for (const sec of v.sections) {
+    const isPrice = sec.title === 'Precio';
+    table({
+      theme: 'grid',
+      startY: y,
+      margin: { left: M, right: M },
+      head: [[{ content: sec.title.toUpperCase(), colSpan: 2 }]],
+      headStyles: { fillColor: [31, 41, 55], textColor: 255, fontSize: 8, cellPadding: 1.2 },
+      styles: { fontSize: 9, cellPadding: 1.2, lineColor: [200, 200, 200], lineWidth: 0.2, textColor: [17, 17, 17] },
+      columnStyles: isPrice ? { 0: { cellWidth: 'auto' }, 1: { halign: 'right', cellWidth: 45 } } : { 0: { fontStyle: 'bold', fillColor: [242, 244, 247], cellWidth: 40 } },
+      // Total y saldo en negrita.
+      didParseCell: (c) => {
+        if (isPrice && c.section === 'body' && ['Total', 'Saldo a pagar'].includes(c.row.raw[0])) c.cell.styles.fontStyle = 'bold';
+      },
+      body: sec.rows,
+    });
+    y = doc.lastAutoTable.finalY + 3;
+  }
+  const para = (title, text) => {
+    const lines = doc.setFont('helvetica', 'normal').setFontSize(9).splitTextToSize(text, W - 2 * M);
+    if (y + 6 + lines.length * 4 > 280) {
+      doc.addPage();
+      y = 18;
+    }
+    doc.setFont('helvetica', 'bold').setFontSize(9.5).setTextColor(17).text(title, M, y + 3);
+    doc.setFont('helvetica', 'normal').setFontSize(9).text(lines, M, y + 8);
+    y += 10 + lines.length * 4;
+  };
+  para('Para retirar el auto', v.requirements);
+  para('Cancelación y devoluciones', v.policy);
+  if (v.company) para('Contacto', v.company);
+  doc.setPage(1);
+  doc.setFontSize(8).setTextColor(120).text(`Emitido el ${new Date().toLocaleDateString(locale())}. Presentá este voucher (impreso o en el celular) al retirar el vehículo.`, M, 290);
   return { doc, filename: `voucher-${r.code}.pdf` };
 }
 

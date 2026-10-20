@@ -244,6 +244,18 @@ curl -X POST https://TU-SERVIDOR/api/public/v1/reservations \
 
 **Avisos salientes.** Si configurás una URL, el sistema envía un POST cuando una reserva se crea, modifica, confirma, cancela, entrega, devuelve o registra un pago. Los eventos son `reservation.created`, `reservation.confirmed`, `reservation.checked_out`, etc. Cada aviso va firmado con HMAC-SHA256 en el header `X-Signature`.
 
+## Cancelaciones y devolución de dinero
+
+Cada empresa configura su política en *Ajustes → Empresa y contrato → Cancelaciones y devolución de dinero*. Por defecto:
+
+- cancela con **72 h o más** de anticipación al retiro: se devuelve el **100 %** de lo pagado;
+- entre **72 y 24 h**: el **50 %**;
+- con **menos de 24 h** o si **no se presenta**: no hay devolución.
+
+Más un texto libre con condiciones extra. **Los valores y el texto son un ejemplo: cada agencia los revisa según las leyes de su país.**
+
+Al cancelar una reserva, la app muestra cuánto corresponde devolver y lo deja registrado en el historial de la reserva. No mueve dinero: la devolución se hace aparte y se anota en *Pagos* como "Devolución de dinero". La garantía se devuelve completa. La política sale en el voucher (WhatsApp, email y PDF) y como última cláusula del contrato.
+
 ## Factura electrónica (sólo prueba)
 
 Desde una reserva confirmada, en curso o finalizada se puede emitir la factura: *Más acciones → Facturar (prueba)*. **Por ahora todo es de prueba y no tiene validez fiscal.**

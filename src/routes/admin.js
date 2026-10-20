@@ -60,6 +60,12 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
     if (body.locale !== undefined && !validLocale(body.locale)) fail(400, 'Formato de números y fechas inválido');
     if (body.currency !== undefined && !validCurrency(body.currency)) fail(400, 'Moneda inválida');
     if (body.country !== undefined && !COUNTRY_PRESETS[body.country]) fail(400, 'País inválido');
+    const hrs = (k) => (body[k] !== undefined ? Number(body[k]) : Number(getSettings(db)[k]));
+    for (const k of ['refund_full_hours', 'refund_partial_hours', 'refund_partial_pct']) {
+      if (body[k] !== undefined && !(Number(body[k]) >= 0)) fail(400, 'Los valores de la política de devolución tienen que ser números positivos');
+    }
+    if (body.refund_partial_pct !== undefined && Number(body.refund_partial_pct) > 100) fail(400, 'El porcentaje de devolución no puede pasar de 100');
+    if (hrs('refund_partial_hours') > hrs('refund_full_hours')) fail(400, 'Las horas de la devolución parcial tienen que ser menos que las de la devolución total');
     for (const [k, v] of Object.entries(body)) {
       if (k in DEFAULT_SETTINGS && !SECRET_KEYS.includes(k) && !INTEGRATION_KEYS.includes(k)) setSetting(db, k, v);
     }
