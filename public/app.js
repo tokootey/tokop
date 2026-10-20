@@ -789,6 +789,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
     actions.push('<button class="btn" data-act="pdf">Contrato PDF</button>');
     more.push('<button data-act="print">Imprimir contrato</button>');
   }
+  const invoiced = (r.invoices || []).some((i) => i.status === 'emitida');
+  if (state.settings.invoice_provider && ['confirmada', 'en_curso', 'finalizada'].includes(r.status) && !invoiced) more.unshift('<button data-act="invoice">Facturar (prueba)</button>');
   if (canEdit) {
     more.push('<button class="danger" data-act="noshow">El cliente no se presentó</button>');
     more.push('<button class="danger" data-act="cancel">Cancelar reserva</button>');
@@ -835,6 +837,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         }</div>`
           : ''
       }
+      ${invoicesCardHtml(r)}
       ${filesCardHtml(r)}
       </div>
       <div class="col">
@@ -1010,6 +1013,9 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         },
       ),
     print: () => printContract(r),
+    invoice: () =>
+      confirm(`¿Emitir la factura de prueba por ${money(r.balance.due)}? No tiene validez fiscal.`) &&
+      run(() => POST(`/reservations/${r.id}/invoice`), 'Factura de prueba emitida').then(reload),
     pdf: async () => {
       if (!window.jspdf) return toast('No se pudo cargar el generador de PDF. Recargá la página e intentá de nuevo.', true);
       let built;
@@ -1079,8 +1085,9 @@ const LOG_LABEL = {
   devolucion_garantia: 'Garantía devuelta',
   archivo_subido: 'Archivo subido',
   archivo_borrado: 'Archivo borrado',
+  factura_emitida: 'Factura emitida',
 };
-const DETAIL_KEY = { status: 'estado', source: 'origen', contrato: 'contrato', km: 'km', combustible: 'combustible', cargos: 'cargos' };
+const DETAIL_KEY = { factura: 'factura', modo: 'modo', status: 'estado', source: 'origen', contrato: 'contrato', km: 'km', combustible: 'combustible', cargos: 'cargos' };
 
 function logDetail(d) {
   if (!d) return '';
@@ -1094,6 +1101,23 @@ function logDetail(d) {
   } catch {
     return d;
   }
+}
+
+/** Facturas de la reserva. Las de prueba se marcan bien a la vista: no tienen validez fiscal. */
+function invoicesCardHtml(r) {
+  if (!(r.invoices || []).length) return '';
+  return `<div class="card"><h2>Factura</h2>${r.invoices
+    .map(
+      (i) => `<dl class="info">
+        <dt>Comprobante</dt><dd><b>${esc(i.type_name)} ${i.provider === 'arca' ? `${String(i.point_of_sale).padStart(5, '0')}-${String(i.number).padStart(8, '0')}` : `N° ${i.number}`}</b>
+          <span class="badge b-pendiente">PRUEBA · ${i.mode === 'simulado' ? 'simulada' : 'homologación'} · sin validez fiscal</span></dd>
+        <dt>${i.provider === 'arca' ? 'CAE' : 'Track ID'}</dt><dd>${esc(i.auth_code || '—')}${i.auth_due ? ` <small class="muted">vence ${fmtD(i.auth_due)}</small>` : ''}</dd>
+        <dt>Cliente</dt><dd>${esc(i.customer_name)} ${i.customer_doc ? `<small class="muted">${esc(i.customer_doc)}</small>` : ''}</dd>
+        <dt>Importe</dt><dd>Neto ${money(i.net)} · ${esc(taxName())} ${money(i.tax)} · <b>Total ${money(i.total)}</b></dd>
+        <dt>Fecha</dt><dd>${fmtD(String(i.created_at).replace(' ', 'T'))}</dd>
+      </dl>`,
+    )
+    .join('')}</div>`;
 }
 
 /* ---------- Fotos y documentación del alquiler ---------- */
@@ -1556,7 +1580,7 @@ function enableDragToBook(container, p, days) {
    ============================================================ */
 const CUSTOMER_FIELDS = [
   { name: 'full_name', label: 'Nombre y apellido', required: true, full: true },
-  { name: 'doc_type', label: 'Tipo doc.', type: 'select', options: ['DNI', 'Pasaporte', 'CI', 'Otro'].map((x) => [x, x]), default: 'DNI' },
+  { name: 'doc_type', label: 'Tipo doc.', type: 'select', options: ['DNI', 'Pasaporte', 'CI', 'CUIT', 'RUT', 'Otro'].map((x) => [x, x]), default: 'DNI' },
   { name: 'doc_number', label: 'Número de documento' },
   { name: 'phone', label: 'Teléfono / WhatsApp' },
   { name: 'email', label: 'Email', type: 'email' },
@@ -2135,6 +2159,12 @@ on(/^\/config$/, async (view) => {
       { name: 'deductible_amount', label: 'Franquicia del seguro (vacío = la de la póliza)', type: 'number' },
       { name: 'jurisdiction', label: 'Jurisdicción del contrato (tribunales de...)', full: true },
       { name: 'contract_terms', label: 'Condiciones generales del contrato (un párrafo por cláusula, separadas por una línea en blanco)', type: 'textarea', full: true, rows: 16 },
+      // Factura electrónica: por ahora sólo de prueba (ver src/invoicing).
+      { name: 'invoice_provider', label: 'Factura electrónica (sólo prueba)', type: 'select', options: [['arca', 'ARCA · Argentina'], ['sii', 'SII · Chile']] },
+      { name: 'invoice_mode', label: 'Modo', type: 'select', required: true, options: [['simulado', 'Simulado (no se envía a ningún lado)'], ['homologacion', 'Homologación (servidor de prueba, necesita certificado)']] },
+      { name: 'invoice_tax_id', label: 'CUIT o RUT de prueba' },
+      { name: 'invoice_point_of_sale', label: 'Punto de venta (Argentina)', type: 'number' },
+      { name: 'invoice_tax_condition', label: 'Condición frente al IVA (Argentina)', type: 'select', required: true, options: [['RI', 'Responsable Inscripto (Factura A o B)'], ['MONO', 'Monotributo (Factura C)']] },
     ],
     s,
   )}</div>`;
@@ -2162,6 +2192,10 @@ on(/^\/config$/, async (view) => {
     Son condiciones de uso habitual: conviene que las revise un abogado antes de usarlas.</p>
     <button type="button" class="btn small" id="terms-reset">Restaurar condiciones sugeridas</button>`;
   terms.closest('label').after(help);
+  const invNote = document.createElement('div');
+  invNote.className = 'full';
+  invNote.innerHTML = `<h2 style="margin:12px 0 4px">Factura electrónica</h2><p class="muted" style="margin:0">Por ahora funciona <b>sólo en modo de prueba</b>: las facturas no tienen validez fiscal. Para facturar de verdad faltan el certificado digital de la empresa y su ${esc(s.tax_id_label || 'CUIT')} habilitado para factura electrónica (lo gestiona el contador).</p>`;
+  $('[name=invoice_provider]', view).closest('label').before(invNote);
   $('#terms-reset', view).addEventListener('click', () => {
     if (!confirm('¿Reemplazar el texto actual por las condiciones sugeridas? (se aplica al guardar)')) return;
     terms.value = s.contract_terms_default || '';

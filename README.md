@@ -218,6 +218,24 @@ curl -X POST https://TU-SERVIDOR/api/public/v1/reservations \
 
 **Avisos salientes.** Si configurás una URL, el sistema envía un POST cuando una reserva se crea, modifica, confirma, cancela, entrega, devuelve o registra un pago. Los eventos son `reservation.created`, `reservation.confirmed`, `reservation.checked_out`, etc. Cada aviso va firmado con HMAC-SHA256 en el header `X-Signature`.
 
+## Factura electrónica (sólo prueba)
+
+Desde una reserva confirmada, en curso o finalizada se puede emitir la factura: *Más acciones → Facturar (prueba)*. **Por ahora todo es de prueba y no tiene validez fiscal.**
+
+- **Argentina (ARCA, ex AFIP):** Factura A (cliente con CUIT), B (consumidor final) o C (monotributo), con el pedido real del web service WSFE (`FECAESolicitar`).
+- **Chile (SII):** boleta electrónica (tipo 39) o factura electrónica (tipo 33, cliente con RUT), con el DTE armado.
+
+Cada empresa carga sus datos en *Ajustes → Empresa y contrato → Factura electrónica*: sistema (ARCA o SII), modo, CUIT o RUT de prueba, punto de venta y condición frente al IVA.
+
+- **Simulado:** arma el pedido como lo pide el organismo pero no lo envía; el CAE o Track ID es inventado.
+- **Homologación:** es el servidor de prueba del organismo. Necesita el certificado de prueba de la empresa; mientras no esté, la app avisa qué falta y no emite nada.
+
+**Qué falta para facturar de verdad** (detalle en `src/invoicing/arca.js` y `src/invoicing/sii.js`):
+
+1. El CUIT o RUT de cada agencia habilitado para factura electrónica (punto de venta "Web Services" en ARCA; emisor electrónico en el SII). Lo gestiona el contador con la clave fiscal.
+2. El certificado digital de cada agencia: en ARCA, asociado al servicio `wsfe`; en el SII, un `.pfx` de una persona autorizada, más los folios (CAF).
+3. Conectar el envío real: pedir el permiso al WSAA (ARCA) o el token (SII), firmar y mandar el pedido que la app ya arma, y guardar la respuesta.
+
 ## Reglas de cálculo
 
 - **Días.** Se cobran bloques de 24 h. Si el cliente devuelve con hasta *N* horas de tolerancia (por defecto 2), no se cobra un día extra.
@@ -244,6 +262,7 @@ src/
   reservations.js    ciclo de vida de la reserva (crear, entregar, devolver, pagos)
   integration.js     traducción de cotizaciones externas a reservas
   webhooks.js        avisos salientes firmados
+  invoicing/         factura electrónica de prueba (ARCA Argentina, SII Chile)
   routes/            API interna, API pública y formulario web
 public/              interfaz web (sin necesidad de compilar)
 test/                pruebas automáticas
