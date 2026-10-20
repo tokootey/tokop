@@ -6,6 +6,7 @@ const { getSettings, setSetting, newApiKey, DEFAULT_SETTINGS, CONTRACT_TERMS, CO
 const { hashPassword, requireAdmin, assertPassword, audit } = require('../auth');
 const { getMapping, getWebformMapping, interpret, ingestQuote, reprocessInbox } = require('../integration');
 const { emit } = require('../webhooks');
+const { FAQ_DEFAULT } = require('./chat');
 const { fail } = require('../util');
 
 const SECRET_KEYS = ['api_key', 'webhook_secret'];
@@ -44,6 +45,7 @@ function adminRoutes(db) {
     for (const k of [...SECRET_KEYS, ...INTEGRATION_KEYS]) delete s[k];
     s.contract_terms_default = CONTRACT_TERMS; // para "Restaurar condiciones sugeridas"
     s.country_presets = COUNTRY_PRESETS;
+    s.chat_faq_default = FAQ_DEFAULT;
     res.json(s);
   });
 

@@ -328,3 +328,6 @@ details.filters .toolbar { margin-top: 10px; border: 0; padding: 0; box-shadow: 
 .steps li { font-size: 14px; }
 .steps li.done { color: var(--muted); text-decoration: line-through; }
 .steps a { font-weight: 600; }
+
+/* Asistente web */
+pre.snippet { color: var(--text); background: var(--soft); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow-x: auto; font-size: 13px; white-space: pre-wrap; word-break: break-all; }

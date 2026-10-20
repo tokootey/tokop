@@ -9,6 +9,7 @@ const { operationsRoutes } = require('./routes/operations');
 const { adminRoutes } = require('./routes/admin');
 const { publicRoutes } = require('./routes/public');
 const { webformRoutes } = require('./routes/webform');
+const { chatRoutes } = require('./routes/chat');
 const { fileRoutes } = require('./routes/files');
 const { importRoutes } = require('./routes/importer');
 const { HttpError } = require('./util');
@@ -64,6 +65,7 @@ function createApp(db, options = {}) {
     next();
   });
   app.use('/api/public/webform', webformRoutes(db));
+  app.use('/api/public/chat', chatRoutes(db));
   app.use('/api/public/v1', publicRoutes(db));
 
   app.post('/api/auth/login', sameOrigin, (req, res) => res.json(login(db, req, res)));

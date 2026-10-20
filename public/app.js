@@ -302,7 +302,7 @@ const routes = [];
 const on = (pattern, handler, navKey) => routes.push({ pattern, handler, navKey });
 
 // Menú corto: "Flota y taller" y "Ajustes" agrupan varias pantallas, que se eligen con pestañas arriba.
-const NAV_GROUP = { flota: 'flota', mantenimiento: 'flota', tarifas: 'ajustes', cotizador: 'ajustes', config: 'ajustes', usuarios: 'ajustes', importar: 'ajustes' };
+const NAV_GROUP = { flota: 'flota', mantenimiento: 'flota', tarifas: 'ajustes', cotizador: 'ajustes', config: 'ajustes', usuarios: 'ajustes', importar: 'ajustes', asistente: 'ajustes' };
 const SUBNAV = {
   flota: [
     ['flota', '#/flota', 'Autos'],
@@ -313,6 +313,7 @@ const SUBNAV = {
     ['config', '#/config', 'Empresa y contrato', true],
     ['usuarios', '#/usuarios', 'Usuarios', true],
     ['cotizador', '#/cotizador', 'Cotizador web', true],
+    ['asistente', '#/asistente', 'Asistente web', true],
     ['importar', '#/importar', 'Importar datos', true],
   ],
 };
@@ -2369,6 +2370,84 @@ on(/^\/importar$/, async (view) => {
     $('#imp-report').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 }, 'importar');
+
+/* ============================================================
+   Asistente web: el chat que la agencia pone en su página
+   ============================================================ */
+function loadChatScript() {
+  if (window.RentChat) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const sc = document.createElement('script');
+    sc.src = '/chat.js';
+    sc.setAttribute('data-manual', '1');
+    sc.onload = resolve;
+    sc.onerror = () => reject(new Error('No se pudo cargar el asistente'));
+    document.head.append(sc);
+  });
+}
+
+on(/^\/asistente$/, async (view) => {
+  if (!isAdmin()) {
+    view.innerHTML = '<div class="card"><p class="muted">Sólo los administradores configuran el asistente.</p></div>';
+    return;
+  }
+  const s = await GET('/settings');
+  const snippet = `<script src="${location.origin}/chat.js" async></script>`;
+  view.innerHTML = `<div class="page-head"><h1>Asistente web</h1></div>
+    <div class="grid cols-2">
+      <div class="card">
+        <h2>Configuración</h2>
+        <p class="muted">Un chat para la página web de la agencia: el cliente elige fechas, ve los autos libres con su precio y pide la reserva, que entra como <b>pendiente</b> para que la confirme el mostrador. Contesta solo, a cualquier hora, y no tiene costo por mensaje.</p>
+        <form id="chat-form" class="form-grid">
+          <label class="check full"><input type="checkbox" name="chat_enabled" ${s.chat_enabled === '1' ? 'checked' : ''}/> Asistente activado</label>
+          <label class="full">Mensaje de bienvenida<input name="chat_welcome" maxlength="300" placeholder="¡Hola! Soy el asistente de ${esc(s.company_name || '')}…" value="${esc(s.chat_welcome || '')}"/></label>
+          <label class="full">WhatsApp para hablar con una persona (con código de país, ej. 5492901123456)<input name="chat_whatsapp" maxlength="30" value="${esc(s.chat_whatsapp || '')}"/></label>
+          <label class="full">Preguntas frecuentes (una por línea: Pregunta | Respuesta)<textarea name="chat_faq" rows="7">${esc(s.chat_faq || s.chat_faq_default || '')}</textarea></label>
+          <div class="actions full"><button class="btn primary" type="submit">Guardar</button></div>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Vista previa</h2>
+        <p class="muted">Así lo ve el cliente. Las reservas que pidas acá entran de verdad como pendientes.</p>
+        <div id="chat-preview"></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Cómo ponerlo en la página web</h2>
+      <p>Quien administra la página tiene que pegar esta línea antes de <code>&lt;/body&gt;</code>:</p>
+      <pre class="snippet">${esc(snippet)}</pre>
+      <div class="actions"><button class="btn" type="button" id="copy-snippet">Copiar</button></div>
+      <p class="muted">La dirección de la página tiene que estar en <a href="#/cotizador">Cotizador web → sitios autorizados</a>. Opcional: <code>data-color="#0a7"</code> cambia el color del botón.</p>
+    </div>`;
+  $('#copy-snippet', view).addEventListener('click', () =>
+    (navigator.clipboard ? navigator.clipboard.writeText(snippet) : Promise.reject()).then(() => toast('Copiado'), () => toast('Seleccioná el texto y copialo', true)),
+  );
+  const preview = async () => {
+    const box = $('#chat-preview', view);
+    box.replaceChildren();
+    if (s.chat_enabled !== '1') {
+      box.innerHTML = '<p class="muted">Activá el asistente y guardá para verlo.</p>';
+      return;
+    }
+    try {
+      await loadChatScript();
+      const host = document.createElement('div');
+      box.append(host);
+      window.RentChat.mount(host, { base: '' });
+    } catch (e) {
+      box.innerHTML = `<p class="error">${esc(e.message)}</p>`;
+    }
+  };
+  $('#chat-form', view).addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = formData(e.target);
+    f.chat_enabled = f.chat_enabled ? '1' : '0';
+    await run(() => PUT('/settings', f), 'Asistente guardado');
+    Object.assign(s, f);
+    preview();
+  });
+  preview();
+}, 'asistente');
 
 /* ============================================================
    Inicio

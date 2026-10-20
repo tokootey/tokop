@@ -103,6 +103,9 @@ ${safe(fs.readFileSync(path.join(path.dirname(require.resolve('jspdf-autotable')
 ${safe(read('public/contract-pdf.js'))}
 </script>
 <script>
+${safe(read('public/chat.js'))}
+</script>
+<script>
 ${safe(read('public/app.js'))}
 </script>
 `;

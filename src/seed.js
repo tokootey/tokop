@@ -21,6 +21,8 @@ function seed(db) {
     "INSERT INTO branches (code, name, address, aliases) VALUES ('CEN', 'Oficina Centro', '25 de Mayo 260, Piso 2, Of. 9, Ushuaia', 'oficina,centro,ushuaia centro')",
   );
   ins("INSERT INTO branches (code, name, address, aliases) VALUES ('HTL', 'Entrega en hotel', 'Hoteles de Ushuaia', 'hotel,a domicilio')");
+  // En los datos de ejemplo el asistente de la web queda activado para poder probarlo.
+  db.prepare("UPDATE settings SET value = '1' WHERE key = 'chat_enabled'").run();
 
   const cats = {};
   for (const [code, name, daily, weekly, deposit, km, kmRate, seats, tr, aliases] of [

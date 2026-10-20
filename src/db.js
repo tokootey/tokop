@@ -359,6 +359,11 @@ const DEFAULT_SETTINGS = {
   webform_mapping: JSON.stringify(WEBFORM_MAPPING, null, 2),
   webform_allowed_origins: 'https://www.discoverushuaia.com.ar,https://discoverushuaia.com.ar',
   webform_redirect_url: '',
+  // Asistente de reservas (chat para la página web de la agencia)
+  chat_enabled: '0',
+  chat_welcome: '',
+  chat_whatsapp: '',
+  chat_faq: '',
 };
 
 function openDb(file = process.env.DB_FILE || path.join(__dirname, '..', 'data', 'rentacar.db')) {
