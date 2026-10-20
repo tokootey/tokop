@@ -104,3 +104,46 @@ test('configuración: las copias van al lado de la base, salvo que se indique ot
   assert.equal(c.keep, 14);
   assert.equal(backupConfig({ DB_FILE: '/var/data/rentacar.db', BACKUP_DIR: '/var/data/otra', BACKUP_KEEP: '30' }).keep, 30);
 });
+
+test('con varias empresas: se respaldan y se restauran las bases de todas', (t) => {
+  const { openDb } = require('../src/db');
+  const { openPlatform } = require('../src/platform');
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rc-backup-multi-'));
+  const backupDir = path.join(dataDir, 'respaldos');
+  const dbFile = path.join(dataDir, 'rentacar.db');
+  let platform;
+  t.after(() => {
+    platform.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  // Instalación con la empresa principal y dos agencias más, cada una con un cliente propio.
+  platform = openPlatform(openDb(dbFile), dbFile);
+  const andes = platform.create({ name: 'Andes Autos', country: 'CL', admin_email: 'a@andes.test' }).company;
+  const sur = platform.create({ name: 'Sur Rent', country: 'AR', admin_email: 'b@sur.test' }).company;
+  const addCustomer = (id, name) => platform.get(id).db.prepare('INSERT INTO customers (full_name) VALUES (?)').run(name);
+  const customers = (p, id) => p.get(id).db.prepare('SELECT full_name FROM customers ORDER BY id').all().map((c) => c.full_name);
+  addCustomer(1, 'Cliente principal');
+  addCustomer(andes.id, 'Cliente Andes');
+  addCustomer(sur.id, 'Cliente Sur');
+
+  const stamp = backupNow({ dataDir, backupDir });
+  assert.deepEqual(databases(path.join(backupDir, stamp)).sort(), ['empresas.db', 'empresas/andes-autos.db', 'empresas/sur-rent.db', 'rentacar.db']);
+
+  // Después de la copia se cargan más datos en las dos agencias y se cierra la app.
+  addCustomer(andes.id, 'Cargado después en Andes');
+  addCustomer(sur.id, 'Cargado después en Sur');
+  platform.close();
+
+  restore({ dataDir, backupDir, stamp });
+  platform = openPlatform(openDb(dbFile), dbFile);
+  assert.deepEqual(
+    platform.list().map((c) => c.slug),
+    ['principal', 'andes-autos', 'sur-rent'],
+  );
+  assert.deepEqual(customers(platform, 1), ['Cliente principal']);
+  assert.deepEqual(customers(platform, andes.id), ['Cliente Andes']);
+  assert.deepEqual(customers(platform, sur.id), ['Cliente Sur']);
+  // Cada empresa sigue viendo sólo lo suyo después de restaurar.
+  assert.equal(platform.byEmail('a@andes.test').id, andes.id);
+});
