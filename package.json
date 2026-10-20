@@ -5,7 +5,7 @@
   "main": "src/server.js",
   "private": true,
   "scripts": {
-    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "start": "node --disable-warning=ExperimentalWarning --require ./src/backup-auto.js src/server.js",
     "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
     "seed": "node --disable-warning=ExperimentalWarning src/seed.js",
     "demo": "node scripts/build-demo.js",
