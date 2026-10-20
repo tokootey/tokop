@@ -84,6 +84,40 @@ La app ya está preparada para publicarse en [Render](https://render.com). Lleva
 - Las columnas que no tienen lugar se guardan en "Observaciones" para no perder nada.
 - El archivo no se guarda; en la actividad de Usuarios queda sólo quién importó y cuántas filas (sin datos personales). Después de importar, borrá el CSV de la computadora y dejá de compartir la planilla vieja.
 
+## Asistente web (chat para la página de la agencia)
+
+En **Ajustes → Asistente web** se activa un chat para la página web de la agencia:
+
+- El cliente elige fechas y lugar, y el chat le muestra los autos libres con su precio final. Nunca muestra cuántos autos quedan.
+- El cliente deja sus datos y la reserva entra como **pendiente**, con origen "Formulario web", para que el mostrador la confirme.
+- Responde preguntas frecuentes, que se cargan una por línea con el formato `Pregunta | Respuesta`, y ofrece seguir por WhatsApp con una persona.
+- No usa inteligencia artificial paga, así que no tiene costo por mensaje.
+
+Para ponerlo en la página web, quien la administra pega una línea antes de `</body>`:
+
+```html
+<script src="https://TU-SERVIDOR/chat.js" async></script>
+```
+
+`data-color="#0a7"` cambia el color del botón. El chat se dibuja aislado de los estilos de la página.
+
+La dirección de la página tiene que estar en *Cotizador web → sitios autorizados*. Además, cada IP tiene un límite de consultas y de pedidos, y hay un campo trampa contra robots.
+
+## Instalar el sistema para otra empresa
+
+Cada empresa tiene su propia instalación, con su base de datos separada:
+
+1. En Render, *New → Blueprint* con este repositorio (usa `render.yaml`).
+2. Entrar con `admin@rentacar.local` y la contraseña generada (ver la variable `ADMIN_PASSWORD` en Render) y cambiarla.
+3. En el Panel aparece **Primeros pasos**: empresa y país, lugares de entrega, categorías con tarifas, autos (o *Importar datos*), usuarios y condiciones del contrato.
+4. Al elegir el país en *Ajustes → Empresa y contrato* se completan solos:
+   - la moneda;
+   - el impuesto (IVA, IGV, ITBIS, IGIC…) y su alícuota;
+   - el nombre de la identificación fiscal (CUIT, RUT, RFC, NIF…);
+   - el formato de números y fechas.
+
+   Países incluidos: Argentina, Chile, Uruguay, Paraguay, Bolivia, Perú, Colombia, Ecuador, México, Costa Rica, Panamá, República Dominicana, Guatemala, España (península y Canarias) y Estados Unidos.
+
 ## Seguridad y datos de los clientes
 
 **Acceso**
