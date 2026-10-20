@@ -887,6 +887,9 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
     },
     noshow: () => confirm('¿Marcar como no show?') && run(() => POST(`/reservations/${r.id}/status`, { status: 'no_show' }), 'Marcada como no show').then(reload),
     reopen: () => run(() => POST(`/reservations/${r.id}/status`, { status: 'pendiente' }), 'Reserva reabierta').then(reload),
+    invoice: () =>
+      confirm(`¿Emitir la factura de prueba por ${money(r.balance.due)}? No tiene validez fiscal.`) &&
+      run(() => POST(`/reservations/${r.id}/invoice`), 'Factura de prueba emitida').then(reload),
     assign: async () => {
       const list = await GET(`/reservations/${r.id}/available-vehicles`);
       openModal(
@@ -1013,9 +1016,6 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         },
       ),
     print: () => printContract(r),
-    invoice: () =>
-      confirm(`¿Emitir la factura de prueba por ${money(r.balance.due)}? No tiene validez fiscal.`) &&
-      run(() => POST(`/reservations/${r.id}/invoice`), 'Factura de prueba emitida').then(reload),
     pdf: async () => {
       if (!window.jspdf) return toast('No se pudo cargar el generador de PDF. Recargá la página e intentá de nuevo.', true);
       let built;
