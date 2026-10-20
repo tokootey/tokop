@@ -677,16 +677,20 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
             .slice(0, 8)
             .map((c) => `<tr class="click" data-cust="${c.id}"><td><b>${esc(c.full_name)}</b></td><td>${esc(c.doc_number || '')}</td><td>${esc(c.phone || '')}</td><td>${esc(c.email || '')}</td></tr>`)
             .join('')}</tbody></table>`
-        : '<p class="muted">Sin resultados.</p>';
+        : `<p class="muted">No está cargado. <button type="button" class="btn small primary" id="cust-new-q">+ Cargar «${esc(q)}» como cliente nuevo</button></p>`;
       $$('[data-cust]').forEach((tr) => tr.addEventListener('click', () => pickCustomer(rows.find((c) => c.id === Number(tr.dataset.cust)))));
+      $('#cust-new-q')?.addEventListener('click', () => newCustomer(q));
     }, 250);
   });
   $('#cust-q').addEventListener('keydown', (e) => e.key === 'Enter' && e.preventDefault());
-  $('#cust-new').addEventListener('click', () =>
-    openModal('Cliente nuevo', formHtml(CUSTOMER_FIELDS), async (data) => {
+  // Lo que se escribió en la búsqueda pasa al formulario: así no hay que tipearlo dos veces.
+  const newCustomer = (q = '') => {
+    const pre = q.includes('@') ? { email: q } : /^[\d.\s-]+$/.test(q) ? { doc_number: q.replace(/\D/g, '') } : { full_name: q };
+    openModal('Cliente nuevo', formHtml(CUSTOMER_FIELDS, pre), async (data) => {
       pickCustomer(await POST('/customers', data));
-    }),
-  );
+    });
+  };
+  $('#cust-new').addEventListener('click', () => newCustomer($('#cust-q').value.trim()));
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
