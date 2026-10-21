@@ -31,6 +31,10 @@ services:
         value: "14"
       - key: TRUST_PROXY
         value: "1"
+      # Dominio de Floty para que cada empresa tenga su subdominio (floty.app → andes.floty.app).
+      # Se carga en Environment cuando exista el dominio; vacío = una sola dirección para todas.
+      - key: FLOTY_DOMAIN
+        sync: false
       - key: ADMIN_EMAIL
         value: admin@rentacar.local
       - key: ADMIN_PASSWORD

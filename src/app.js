@@ -103,8 +103,11 @@ function companyApi(db, { uploadsDir, company, platform }) {
 function platformRoutes(platform, company) {
   const router = express.Router();
   router.use(requireAdmin, (_req, _res, next) => next(company.principal ? null : new HttpError(403, 'Sólo la empresa principal da de alta empresas')));
-  router.get('/companies', (_req, res) => res.json(platform.list().map(({ id, slug, name, created_at, principal }) => ({ id, slug, name, created_at, principal }))));
+  router.get('/companies', (_req, res) =>
+    res.json(platform.list().map(({ id, slug, name, created_at, principal, domain, address }) => ({ id, slug, name, created_at, principal, domain, address }))),
+  );
   router.post('/companies', (req, res) => res.status(201).json(platform.create(req.body || {})));
+  router.put('/companies/:id/domain', (req, res) => res.json(platform.setDomain(req.params.id, (req.body || {}).domain)));
   return router;
 }
 
@@ -160,6 +163,10 @@ function createApp(db, options = {}) {
   const single = platform ? null : companyApi(db, { uploadsDir });
   const COOKIE_COMPANY = /(?:^|;\s*)rc_session=(\d+)\./;
   const companyFor = (req) => {
+    // Entrando por la dirección de una empresa (su subdominio o su dominio propio), todo va a esa empresa:
+    // un usuario o una sesión de otra no existen ahí.
+    const byHost = platform.byHost(req.hostname);
+    if (byHost) return byHost;
     const p = req.path;
     if (p === '/api/auth/login') return platform.byEmail(String((req.body && req.body.email) || '').trim().toLowerCase()) || platform.principal();
     if (p.startsWith('/api/public/v1/')) return platform.byApiKey(req.get('x-api-key')) || platform.principal();
