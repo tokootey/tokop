@@ -193,11 +193,16 @@ function operationsRoutes(db) {
     const byStatus = Object.fromEntries(fleet.map((f) => [f.status, f.n]));
     const total = fleet.reduce((a, f) => a + f.n, 0);
     const operational = total - (byStatus.mantenimiento || 0) - (byStatus.fuera_servicio || 0);
-    const baseSelect = `SELECT r.id, r.code, r.status, r.pickup_at, r.return_at, c.full_name AS customer_name, c.phone AS customer_phone,
-        cat.code AS category_code, v.plate AS vehicle_plate, pb.name AS pickup_branch_name, rb.name AS return_branch_name
+    // total y paid: la pantalla Hoy muestra cuánto debe cada cliente.
+    const baseSelect = `SELECT r.id, r.code, r.status, r.pickup_at, r.return_at, r.total, c.full_name AS customer_name, c.phone AS customer_phone,
+        cat.code AS category_code, cat.name AS category_name, v.plate AS vehicle_plate, v.brand AS vehicle_brand, v.model AS vehicle_model,
+        pb.name AS pickup_branch_name, rb.name AS return_branch_name,
+        (SELECT COALESCE(SUM(CASE WHEN p.kind = 'pago' THEN p.amount WHEN p.kind = 'devolucion' THEN -p.amount ELSE 0 END), 0) FROM payments p WHERE p.reservation_id = r.id) AS paid
       FROM reservations r JOIN customers c ON c.id = r.customer_id JOIN categories cat ON cat.id = r.category_id
       LEFT JOIN vehicles v ON v.id = r.vehicle_id LEFT JOIN branches pb ON pb.id = r.pickup_branch_id LEFT JOIN branches rb ON rb.id = r.return_branch_id`;
     const month = today.slice(0, 7);
+    const t = new Date();
+    const tomorrow = fmtLocal(new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1)).slice(0, 10);
     res.json({
       now,
       fleet: { total, operational, ...byStatus },
@@ -215,6 +220,10 @@ function operationsRoutes(db) {
         .get(month).n,
       month_reservations: db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE substr(created_at,1,7) = ? AND status <> 'cancelada'`).get(month).n,
       from_quoter_month: db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE substr(created_at,1,7) = ? AND source = 'cotizador'`).get(month).n,
+      tomorrow: {
+        pickups: db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE status IN ('pendiente','confirmada') AND substr(pickup_at,1,10) = ?`).get(tomorrow).n,
+        returns: db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE status IN ('pendiente','confirmada','en_curso') AND substr(return_at,1,10) = ?`).get(tomorrow).n,
+      },
       quote_errors: db.prepare(`SELECT COUNT(*) AS n FROM quote_inbox WHERE status = 'error'`).get().n,
       alerts: {
         documents: db
