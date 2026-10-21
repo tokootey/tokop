@@ -284,13 +284,17 @@
       }
     }
     const req = makeRequire('');
-    const { openDb, setSetting } = req('./src/db.js');
+    const { openDb, getSetting, setSetting } = req('./src/db.js');
     const { createApp, ensureAdmin } = req('./src/app.js');
     const db = openDb(':memory:');
     if (!initialBytes) {
       ensureAdmin(db);
       req('./src/seed.js').seed(db);
-      setSetting(db, 'company_name', 'Austral Rent a Car (demo)');
+      setSetting(db, 'company_name', 'Demo Rent a Car');
+      scheduleSave();
+    } else if (getSetting(db, 'company_name') === 'Austral Rent a Car (demo)') {
+      // Quien ya había abierto la demo con el nombre anterior ve el nuevo sin reiniciar sus datos.
+      setSetting(db, 'company_name', 'Demo Rent a Car');
       scheduleSave();
     }
     // En la demo no se obliga a cambiar la contraseña de ejemplo.
