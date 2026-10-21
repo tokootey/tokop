@@ -53,6 +53,11 @@ small { font-size: 12px; }
 .user-actions { display: flex; gap: 14px; flex-wrap: wrap; }
 .user-box .btn.link { color: #9fb3d1; font-size: 13px; }
 .user-box .btn.link:hover { color: #fff; }
+.lang-switch { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+.lang-switch .btn.link.active { font-weight: 700; text-decoration: none; cursor: default; }
+.login-card .lang-switch { justify-content: center; }
+.user-box .lang-switch { color: #9fb3d1; }
+.user-box .lang-switch .btn.link.active { color: #fff; }
 
 /* El contenido queda centrado y no se estira más allá de un ancho cómodo. */
 .view { flex: 1; min-width: 0; width: 100%; max-width: var(--content); margin: 0 auto; padding: 28px 32px 48px; }

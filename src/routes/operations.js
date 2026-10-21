@@ -5,6 +5,8 @@ const { computeQuote } = require('../pricing');
 const { categoryAvailability, availableVehicles, BLOCKING } = require('../availability');
 const R = require('../reservations');
 const invoicing = require('../invoicing/index');
+const { getSettings } = require('../db');
+const { refundFor } = require('../refunds');
 const { fail, normDateTime, nowLocal, parseLocal, fmtLocal } = require('../util');
 
 /**
@@ -133,6 +135,12 @@ function operationsRoutes(db) {
 
   router.put('/reservations/:id', (req, res) => res.json(R.updateReservation(db, req.params.id, req.body, req.user.id)));
   router.post('/reservations/:id/status', (req, res) => res.json(R.changeStatus(db, req.params.id, req.body.status, req.user.id, req.body.reason)));
+  // Cuánto se devolvería si se cancela ahora (para mostrarlo antes de confirmar la cancelación).
+  router.get('/reservations/:id/refund', (req, res) => {
+    const r = R.getReservation(db, req.params.id);
+    if (!r) fail(404, 'Reserva inexistente');
+    res.json(refundFor(r, getSettings(db), new Date(), req.query.motivo === 'no_show' ? 'no_show' : 'cancelada'));
+  });
   router.post('/reservations/:id/assign', (req, res) => res.json(R.assignVehicle(db, req.params.id, req.body.vehicle_id, req.user.id)));
   router.post('/reservations/:id/checkout', (req, res) => res.json(R.checkout(db, req.params.id, req.body, req.user.id)));
   router.post('/reservations/:id/checkin', (req, res) => res.json(R.checkin(db, req.params.id, req.body, req.user.id)));

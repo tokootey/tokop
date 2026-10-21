@@ -153,6 +153,18 @@ Las instalaciones de antes siguen igual: su base pasa a ser la empresa principal
 
    Países incluidos: Argentina, Chile, Uruguay, Paraguay, Bolivia, Perú, Colombia, Ecuador, México, Costa Rica, Panamá, República Dominicana, Guatemala, España (península y Canarias) y Estados Unidos.
 
+## Idioma: español o inglés
+
+Abajo de la pantalla de ingreso y en el menú (debajo del usuario) se elige **Español** o **English**. El idioma queda guardado en ese navegador.
+
+- En inglés se traducen todas las pantallas, los avisos y los mensajes de error.
+- También salen en inglés el **contrato** (impreso y PDF), el **voucher** (WhatsApp, email y PDF) y la política de devolución.
+- Las condiciones del contrato, la jurisdicción y las condiciones extra de cancelación tienen su versión en inglés en *Ajustes → Empresa y contrato → Textos en inglés*. Vienen con una traducción sugerida de las condiciones de fábrica; si una empresa cambió las suyas en español, tiene que actualizar también las de inglés.
+- Lo que carga cada empresa (nombres de categorías, adicionales, lugares, notas) se muestra tal como está escrito.
+- El chat de la página web de la agencia (asistente) sigue en español.
+
+Las traducciones están en `public/i18n.js`. Un texto nuevo de la pantalla sale en español hasta que se agregue ahí.
+
 ## Seguridad y datos de los clientes
 
 **Acceso**
@@ -243,6 +255,18 @@ curl -X POST https://TU-SERVIDOR/api/public/v1/reservations \
 **Precio.** Se puede respetar el total que envía el cotizador o recalcularlo con las tarifas del sistema. Las reservas pueden entrar confirmadas automáticamente o como pendientes.
 
 **Avisos salientes.** Si configurás una URL, el sistema envía un POST cuando una reserva se crea, modifica, confirma, cancela, entrega, devuelve o registra un pago. Los eventos son `reservation.created`, `reservation.confirmed`, `reservation.checked_out`, etc. Cada aviso va firmado con HMAC-SHA256 en el header `X-Signature`.
+
+## Cancelaciones y devolución de dinero
+
+Cada empresa configura su política en *Ajustes → Empresa y contrato → Cancelaciones y devolución de dinero*. Por defecto:
+
+- cancela con **72 h o más** de anticipación al retiro: se devuelve el **100 %** de lo pagado;
+- entre **72 y 24 h**: el **50 %**;
+- con **menos de 24 h** o si **no se presenta**: no hay devolución.
+
+Más un texto libre con condiciones extra. **Los valores y el texto son un ejemplo: cada agencia los revisa según las leyes de su país.**
+
+Al cancelar una reserva, la app muestra cuánto corresponde devolver y lo deja registrado en el historial de la reserva. No mueve dinero: la devolución se hace aparte y se anota en *Pagos* como "Devolución de dinero". La garantía se devuelve completa. La política sale en el voucher (WhatsApp, email y PDF) y como última cláusula del contrato.
 
 ## Factura electrónica (sólo prueba)
 

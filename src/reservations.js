@@ -3,6 +3,8 @@
 const { computeQuote, computeReturnCharges } = require('./pricing');
 const { categoryAvailability, isVehicleFree } = require('./availability');
 const { emit } = require('./webhooks');
+const { getSettings } = require('./db');
+const { refundFor } = require('./refunds');
 const { fail, normDateTime, nowLocal, round2, tx } = require('./util');
 
 const STATUSES = ['pendiente', 'confirmada', 'en_curso', 'finalizada', 'cancelada', 'no_show'];
@@ -238,7 +240,14 @@ function changeStatus(db, id, status, userId, detail) {
   if (status === 'pendiente') assertAvailability(db, r, r.id);
   db.prepare('UPDATE reservations SET status = ?, updated_at = ? WHERE id = ?').run(status, nowLocal(), r.id);
   log(db, r.id, userId, status, detail);
+  // Al cancelar (o si no se presentó) queda registrado cuánto corresponde devolver según la política de la empresa.
+  let refund = null;
+  if (status === 'cancelada' || status === 'no_show') {
+    refund = refundFor(r, getSettings(db), new Date(), status);
+    log(db, r.id, userId, 'devolucion_calculada', { porcentaje: refund.percent, devolver: refund.amount, pagado: refund.paid, regla: refund.rule });
+  }
   const updated = getReservation(db, r.id);
+  if (refund) updated.refund = refund;
   const event = { confirmada: 'reservation.confirmed', cancelada: 'reservation.cancelled', no_show: 'reservation.no_show', pendiente: 'reservation.reopened' };
   emit(db, event[status], publicView(updated));
   return updated;

@@ -331,6 +331,37 @@ const CONTRACT_TERMS = `1. OBJETO. {empresa} (en adelante, "la Empresa") entrega
 
 15. JURISDICCIÓN. Para cualquier diferencia que surja de este contrato, las partes se someten a los tribunales ordinarios de {jurisdiccion}.`;
 
+/** Las mismas condiciones en inglés: se usan cuando la app está en inglés (mismas {palabras}). */
+const CONTRACT_TERMS_EN = `1. PURPOSE. {empresa} (hereinafter "the Company") rents to the Customer the vehicle described in this agreement, in good working order and clean, with the mandatory documents, spare wheel, jack, wheel wrench, fire extinguisher and warning triangles.
+
+2. TERM AND RETURN. The Customer shall return the vehicle on the agreed date, time and place. There is a grace period of {tolerancia} hours; after that, an additional day will be charged for each day or part of a day of delay. Early return does not entitle the Customer to a refund, unless agreed in writing with the Company.
+
+3. DRIVERS. Only the Customer and the additional drivers registered in this agreement may drive, if they are over {edad_minima} years old and hold a valid driver's license for the vehicle category. Driving under the influence of alcohol, drugs or medication that affects driving is forbidden.
+
+4. USE OF THE VEHICLE. It is forbidden to: sublet or lend it; use it for commercial transport of passengers or goods, races, tests, towing or driving lessons; drive off authorized roads; carry more people than allowed; smoke inside the vehicle and carry animals without a carrier.
+
+5. LEAVING THE COUNTRY. The vehicle may not leave Argentine territory, including crossing Chile to reach the mainland, without prior written authorization from the Company, the corresponding customs documents and international insurance, with the charges informed.
+
+6. FUEL. The vehicle is delivered with the fuel level stated in this agreement and must be returned with the same level. Each missing eighth will be charged {cargo_combustible}.
+
+7. MILEAGE. {kilometraje}
+
+8. INSURANCE AND DEDUCTIBLE. The vehicle is insured according to the policy in force. The Customer is liable for damage to the vehicle up to {franquicia} per event, unless the no-deductible cover was purchased. If the damage results from forbidden use, an unauthorized driver, alcohol or drugs, or breach of this agreement, the Customer is liable for the full damage.
+
+9. ACCIDENTS, THEFT AND BREAKDOWNS. In case of an accident, theft or breakdown, the Customer must notify the Company immediately and, where applicable, file a police report and hand in the documents within 24 hours. The Customer must not admit fault or settle with third parties, nor carry out repairs without the Company's authorization.
+
+10. FINES, TOLLS AND PARKING. Traffic fines, tolls and parking incurred during the rental are paid by the Customer, even if notified after the return. The Company may report the driver's details to the authority that requests them.
+
+11. DEPOSIT. The Customer leaves a deposit of {garantia} (in cash or as a credit card pre-authorization), which will be returned when the vehicle is received in the agreed condition, minus any outstanding charges.
+
+12. CONDITION OF THE VEHICLE. The Customer declares receiving the vehicle in the condition recorded in this agreement and in the photos taken at pick-up, and undertakes to return it in the same condition, except for normal wear and tear. Damage not recorded at pick-up will be considered to have occurred during the rental. Extraordinary cleaning may be charged separately.
+
+13. WEATHER CONDITIONS. In winter the Customer must drive carefully, use chains when road conditions or the authorities require it, and respect road closures.
+
+14. PERSONAL DATA. The Customer agrees that the Company processes their personal data in order to manage this rental, in accordance with Law 25,326. The Customer may request access to, correction or deletion of their data from the Company.
+
+15. JURISDICTION. For any dispute arising from this agreement, the parties submit to the ordinary courts of {jurisdiccion}.`;
+
 /**
  * Datos de cada país para que la app sirva a agencias de otros lugares: al elegir el país en
  * Configuración se completan la moneda, el impuesto, el nombre de la identificación fiscal y el
@@ -375,6 +406,9 @@ const DEFAULT_SETTINGS = {
   contract_terms: CONTRACT_TERMS,
   deductible_amount: '',
   jurisdiction: 'la ciudad de Ushuaia, Provincia de Tierra del Fuego',
+  // Versión en inglés de los textos propios de la empresa (contrato y voucher con la app en inglés).
+  contract_terms_en: CONTRACT_TERMS_EN,
+  jurisdiction_en: 'the city of Ushuaia, Province of Tierra del Fuego',
   // Integración con cotizador
   api_key: '',
   quote_mapping: JSON.stringify(DEFAULT_MAPPING, null, 2),
@@ -398,6 +432,14 @@ const DEFAULT_SETTINGS = {
   invoice_tax_id: '', // CUIT o RUT de prueba
   invoice_point_of_sale: '1',
   invoice_tax_condition: 'RI', // Argentina: 'RI' (Responsable Inscripto) o 'MONO' (Monotributo)
+  // Política de devolución de dinero al cancelar (src/refunds.js). Es un ejemplo: cada agencia la ajusta a sus leyes.
+  refund_full_hours: '72', // con esta anticipación o más se devuelve el 100 %
+  refund_partial_hours: '24', // entre ésta y la anterior se devuelve refund_partial_pct
+  refund_partial_pct: '50',
+  refund_terms:
+    'La garantía se devuelve completa al cancelar. Las devoluciones se hacen por el mismo medio de pago dentro de los 10 días hábiles. Si la empresa cancela la reserva, se devuelve el 100 % de lo pagado.',
+  refund_terms_en:
+    'The deposit is returned in full on cancellation. Refunds are made with the same payment method within 10 business days. If the company cancels the booking, 100 % of the amount paid is refunded.',
 };
 
 function openDb(file = process.env.DB_FILE || path.join(__dirname, '..', 'data', 'rentacar.db')) {
@@ -445,4 +487,4 @@ function setSetting(db, key, value) {
   );
 }
 
-module.exports = { COUNTRY_PRESETS, openDb, getSetting, getSettings, setSetting, newApiKey, DEFAULT_MAPPING, WEBFORM_MAPPING, DEFAULT_SETTINGS, CONTRACT_TERMS };
+module.exports = { COUNTRY_PRESETS, openDb, getSetting, getSettings, setSetting, newApiKey, DEFAULT_MAPPING, WEBFORM_MAPPING, DEFAULT_SETTINGS, CONTRACT_TERMS, CONTRACT_TERMS_EN };

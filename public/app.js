@@ -882,10 +882,25 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   const handlers = {
     // Al confirmar se abre el envío del voucher, que es lo que sigue.
     confirm: () => run(() => POST(`/reservations/${r.id}/status`, { status: 'confirmada' }), 'Reserva confirmada').then(() => (location.hash = `#/reservas/${r.id}?accion=voucher`)),
-    cancel: () => {
-      const reason = prompt('Motivo de la cancelación (opcional):');
-      if (reason === null) return;
-      run(() => POST(`/reservations/${r.id}/status`, { status: 'cancelada', reason }), 'Reserva cancelada').then(reload);
+    // Antes de cancelar se muestra cuánto corresponde devolver según la política; al confirmar queda registrado.
+    cancel: async () => {
+      const f = await run(() => GET(`/reservations/${r.id}/refund`));
+      openModal(
+        `Cancelar ${r.code}`,
+        `<div class="card" style="margin-bottom:12px">
+           <p style="margin:0">Según la política de la empresa (cancela <b>${esc(f.rule)}</b> del retiro) corresponde devolver
+             <b>${f.percent} %</b> de lo pagado: <b style="font-size:18px">${money(f.amount)}</b>${f.paid ? ` de ${money(f.paid)}` : ' (no hay pagos registrados)'}.</p>
+           ${r.balance.deposit_held > 0 ? `<p class="muted" style="margin:6px 0 0">La garantía (${money(r.balance.deposit_held)}) se devuelve aparte, completa.</p>` : ''}
+         </div>
+         <form><div class="form-grid"><label class="full">Motivo de la cancelación (opcional)<input name="reason"/></label></div>
+         <p class="muted">El sistema sólo calcula y deja registrada la devolución: el dinero lo devolvés vos y lo anotás en Pagos como "Devolución de dinero".</p>
+         <div class="actions"><button class="btn danger" type="submit">Cancelar la reserva</button><button class="btn" type="button" data-close>Volver</button></div></form>`,
+        async (d) => {
+          const res = await POST(`/reservations/${r.id}/status`, { status: 'cancelada', reason: d.reason });
+          toast(`Reserva cancelada. Corresponde devolver ${money(res.refund ? res.refund.amount : 0)}.`);
+          reload();
+        },
+      );
     },
     noshow: () => confirm('¿Marcar como no show?') && run(() => POST(`/reservations/${r.id}/status`, { status: 'no_show' }), 'Marcada como no show').then(reload),
     reopen: () => run(() => POST(`/reservations/${r.id}/status`, { status: 'pendiente' }), 'Reserva reabierta').then(reload),
@@ -1073,55 +1088,142 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
 }, 'reservas');
 
 /* ---------- Voucher de la reserva (PDF, WhatsApp y email) ---------- */
-/** Datos del voucher en texto plano: los usan el PDF (contract-pdf.js) y el mensaje. */
+/** Política de devolución de la empresa, en una frase (va en el voucher y en el contrato). */
+function refundPolicyText(s = state.settings) {
+  const n = (v, d) => (v === '' || v === undefined || v === null || !Number.isFinite(Number(v)) ? d : Number(v));
+  const full = n(s.refund_full_hours, 72);
+  const partial = Math.min(full, n(s.refund_partial_hours, 24));
+  const pct = n(s.refund_partial_pct, 50);
+  if (LANG === 'en') {
+    const extra = s.refund_terms_en || s.refund_terms;
+    return `If cancelled ${full} h or more before pick-up, 100 % of the amount paid is refunded${partial < full ? `; between ${full} and ${partial} h, ${pct} %` : ''}; with less than ${partial} h or if the customer does not show up, there is no refund.${extra ? ` ${extra}` : ''}`;
+  }
+  const middle = partial < full ? `; entre ${full} y ${partial} h, el ${pct} %` : '';
+  return `Si se cancela con ${full} h o más de anticipación al retiro, se devuelve el 100 % de lo pagado${middle}; con menos de ${partial} h o si el cliente no se presenta, no hay devolución.${s.refund_terms ? ` ${s.refund_terms}` : ''}`;
+}
+
+/** Datos del voucher en texto plano, por secciones: los usan el PDF (contract-pdf.js) y el email. */
 function voucherLines(r) {
   const s = state.settings;
-  const dt = (v) => (v ? `${String(v).slice(8, 10)}/${String(v).slice(5, 7)}/${String(v).slice(0, 4)} ${String(v).slice(11, 16)}` : '');
-  const vehicle = `Categoría ${r.category_code} · ${r.category_name}${r.vehicle_plate ? ` (${r.vehicle_brand || ''} ${r.vehicle_model || ''}, patente ${r.vehicle_plate})`.replace(/\s+/g, ' ') : ''}`;
-  const rows = [
-    ['Cliente', r.customer_name],
-    ['Retiro', `${dt(r.pickup_at)} · ${r.pickup_branch_name || ''}`],
-    ['Devolución', `${dt(r.return_at)} · ${r.return_branch_name || ''}`],
-    ['Vehículo', vehicle],
-    ...(r.extras.length ? [['Adicionales', r.extras.map((x) => x.name).join(', ')]] : []),
-    ...(r.flight ? [['Vuelo', r.flight]] : []),
-    ['Total', `${money(r.total)} (${r.days} día${r.days === 1 ? '' : 's'})`],
+  const d = (v) => (v ? `${String(v).slice(8, 10)}/${String(v).slice(5, 7)}/${String(v).slice(0, 4)}` : '');
+  const dt = (v) => (v ? `${d(v)} ${String(v).slice(11, 16)}` : '');
+  const q = r.pricing || {};
+  const days = `${r.days} día${r.days === 1 ? '' : 's'}`;
+  const vehicle = `Categoría ${r.category_code} · ${r.category_name}${
+    r.vehicle_plate ? ` · ${r.vehicle_brand || ''} ${r.vehicle_model || ''} patente ${r.vehicle_plate}`.replace(/\s+/g, ' ') : ' (el auto se asigna al retirar)'
+  }`;
+  const price = [
+    q.base !== undefined ? [`Tarifa ${days}${q.per_day ? ` × ${money(q.per_day)}` : ''}`, money(q.base)] : null,
+    q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
+    ...(q.extras || []).map((x) => [`${x.name}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount)]),
+    q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
+    q.discount ? [`Descuento ${q.discount_pct} %`, `−${money(q.discount)}`] : null,
+    q.tax_rate ? [`${taxName()} ${q.tax_rate} %${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
+    ['Total', money(r.balance.due)],
     ['Pagado', money(r.balance.paid)],
     ['Saldo a pagar', money(r.balance.pending)],
-    ['Garantía', `${money(r.deposit)} (se toma al retirar y se devuelve al entregar el auto)`],
+  ].filter(Boolean);
+  const sections = [
+    { title: 'Reserva', rows: [['Código', r.code], ['Estado', STATUS_LABEL[r.status] || r.status]] },
+    {
+      title: 'Cliente y conductor',
+      rows: [
+        ['Nombre', r.customer_name],
+        r.customer_doc ? ['Documento', `${r.customer_doc_type || 'DNI'} ${r.customer_doc}`] : null,
+        r.customer_phone ? ['Teléfono', r.customer_phone] : null,
+        r.customer_email ? ['Email', r.customer_email] : null,
+        ['Conductor', r.customer_license ? `El titular · licencia ${r.customer_license}${r.customer_license_expiry ? ` (vence ${d(r.customer_license_expiry)})` : ''}` : 'El titular · traer la licencia al retirar'],
+      ].filter(Boolean),
+    },
+    {
+      title: 'Alquiler',
+      rows: [
+        ['Vehículo', vehicle],
+        ['Retiro', `${dt(r.pickup_at)} · ${r.pickup_branch_name || ''}`],
+        ['Devolución', `${dt(r.return_at)} · ${r.return_branch_name || ''}`],
+        ['Duración', days],
+        ['Kilometraje', q.km_included ? `${num(q.km_included)} km incluidos` : 'Libre'],
+        ['Adicionales', r.extras.map((x) => x.name).join(', ') || 'Ninguno'],
+        ...(r.flight ? [['Vuelo', r.flight]] : []),
+      ],
+    },
+    { title: 'Precio', rows: price },
+    ...(Number(r.deposit) > 0 ? [{ title: 'Garantía', rows: [['Depósito', `${money(r.deposit)} (se toma al retirar el auto y se devuelve al entregarlo en las mismas condiciones)`]] }] : []),
   ];
   return {
-    rows,
+    sections,
     statusLine: r.status === 'pendiente' ? 'Pendiente de confirmación' : r.status === 'en_curso' ? 'Alquiler en curso' : 'Reserva confirmada',
     requirements: `Licencia de conducir vigente, documento o pasaporte y tarjeta de crédito para la garantía. Edad mínima: ${Number(s.min_driver_age) || 21} años.`,
-    contact: [s.company_phone && `Consultas: ${s.company_phone}`, s.company_address].filter(Boolean).join(' · '),
+    policy: refundPolicyText(s),
+    company: [s.company_name, s.company_tax_id ? `${taxIdLabel()} ${s.company_tax_id}` : '', s.company_address, s.company_phone && `Tel. ${s.company_phone}`].filter(Boolean).join(' · '),
   };
 }
 
-/** Mensaje para WhatsApp o email, con los mismos datos del voucher. */
-function voucherMessage(r) {
-  const v = voucherLines(r);
+const voucherIntro = (r) => {
   const first = String(r.customer_name || '').split(' ')[0];
-  const intro =
-    r.status === 'pendiente'
-      ? `Hola ${first}, recibimos tu reserva en ${state.settings.company_name}. Te avisamos apenas esté confirmada.`
-      : `Hola ${first}, te confirmamos tu reserva en ${state.settings.company_name}.`;
-  return [intro, '', `Reserva: ${r.code}`, ...v.rows.slice(1).map(([k, val]) => `${k}: ${val}`), '', `Para retirar el auto: ${v.requirements}`, v.contact].filter((x) => x !== undefined && x !== null).join('\n').trim();
+  return r.status === 'pendiente'
+    ? `Hola ${first}, recibimos tu reserva en ${state.settings.company_name}. Te avisamos apenas esté confirmada.`
+    : `Hola ${first}, te confirmamos tu reserva en ${state.settings.company_name}.`;
+};
+
+/** Mensaje de WhatsApp: corto, con lo esencial. El detalle completo va en el PDF y el email. */
+function voucherWhatsapp(r) {
+  const v = voucherLines(r);
+  const get = (title, key) => (v.sections.find((x) => x.title === title).rows.find(([k]) => k === key) || [])[1];
+  const p = refundPolicyText({ ...state.settings, refund_terms: '' }).replace(/^Si se cancela con /, 'con ');
+  return [
+    voucherIntro(r),
+    '',
+    `Reserva ${r.code} (${get('Reserva', 'Estado')})`,
+    `Retiro: ${get('Alquiler', 'Retiro')}`,
+    `Devolución: ${get('Alquiler', 'Devolución')} (${get('Alquiler', 'Duración')})`,
+    `Auto: categoría ${r.category_code} · ${r.category_name}`,
+    `Total ${money(r.balance.due)} · Pagado ${money(r.balance.paid)} · Saldo ${money(r.balance.pending)}`,
+    ...(Number(r.deposit) > 0 ? [`Garantía: ${money(r.deposit)} (se devuelve al entregar el auto)`] : []),
+    '',
+    'Traé licencia de conducir, documento y tarjeta de crédito.',
+    `Cancelación: ${p}`,
+    state.settings.company_phone ? `Consultas: ${state.settings.company_phone}` : '',
+  ]
+    .map(trDoc)
+    .join('\n')
+    .trim();
+}
+
+/** Email: el voucher completo en texto. */
+function voucherEmail(r) {
+  const v = voucherLines(r);
+  return [
+    voucherIntro(r),
+    ...v.sections.flatMap((sec) => ['', sec.title.toUpperCase(), ...sec.rows.map(([k, val]) => `${k}: ${val}`)]),
+    '',
+    'PARA RETIRAR EL AUTO',
+    v.requirements,
+    '',
+    'CANCELACIÓN Y DEVOLUCIONES',
+    v.policy,
+    '',
+    v.company,
+  ]
+    .map(trDoc)
+    .join('\n')
+    .trim();
 }
 
 function sendVoucher(r) {
   if (!window.jspdf) return toast('No se pudo cargar el generador de PDF. Recargá la página e intentá de nuevo.', true);
   const { doc, filename } = buildVoucherPdf(r);
   const file = new File([doc.output('blob')], filename, { type: 'application/pdf' });
-  const text = voucherMessage(r);
+  const text = voucherWhatsapp(r);
+  const emailText = voucherEmail(r);
   // WhatsApp necesita el número con código de país, sin signos: +54 9 2901 123456 → 5492901123456.
   const phone = String(r.customer_phone || '').replace(/\D/g, '');
   const wa = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
-  const mail = `mailto:${encodeURIComponent(r.customer_email || '')}?subject=${encodeURIComponent(`Voucher de tu reserva ${r.code} · ${state.settings.company_name}`)}&body=${encodeURIComponent(text)}`;
+  const mail = `mailto:${encodeURIComponent(r.customer_email || '')}?subject=${encodeURIComponent(trDoc(`Voucher de tu reserva ${r.code} · ${state.settings.company_name}`))}&body=${encodeURIComponent(emailText)}`;
   const canShare = navigator.canShare && navigator.canShare({ files: [file] });
   openModal(
     `Enviar voucher · ${r.code}`,
-    `<p class="muted">Elegí cómo mandárselo a <b>${esc(r.customer_name)}</b>. El mensaje lleva todos los datos de la reserva; el PDF es el mismo voucher para imprimir o guardar.</p>
+    `<p class="muted">Elegí cómo mandárselo a <b>${esc(r.customer_name)}</b>. Por WhatsApp va un resumen corto; el email y el PDF llevan el voucher completo.</p>
      <div class="stack" style="gap:10px">
        ${canShare ? '<button class="btn primary" type="button" id="v-share">Compartir el PDF (WhatsApp, email…)</button>' : ''}
        <a class="btn ${canShare ? '' : 'primary'}" href="${esc(wa)}" target="_blank" rel="noopener" id="v-wa">WhatsApp${phone ? ` a ${esc(r.customer_phone)}` : ' (elegís el contacto)'}</a>
@@ -1129,7 +1231,7 @@ function sendVoucher(r) {
        <button class="btn" type="button" id="v-pdf">Descargar el PDF</button>
      </div>
      ${phone && phone.length < 11 ? '<p class="error">El teléfono parece no tener código de país (por ejemplo 54 9 para Argentina): WhatsApp puede no encontrarlo.</p>' : ''}
-     <details class="more-opts" style="margin-top:12px"><summary>Ver el mensaje</summary><pre class="snippet" style="white-space:pre-wrap">${esc(text)}</pre></details>
+     <details class="more-opts" style="margin-top:12px"><summary>Ver el mensaje de WhatsApp</summary><pre class="snippet" style="white-space:pre-wrap">${esc(text)}</pre></details>
      <p class="muted" style="margin-top:8px">Por WhatsApp o email desde la computadora va el mensaje; si querés mandar también el PDF, descargalo y adjuntalo.</p>`,
   );
   $('#v-pdf').addEventListener('click', () => downloadBlob(file, filename));
@@ -1153,8 +1255,9 @@ const LOG_LABEL = {
   archivo_subido: 'Archivo subido',
   archivo_borrado: 'Archivo borrado',
   factura_emitida: 'Factura emitida',
+  devolucion_calculada: 'Devolución según la política',
 };
-const DETAIL_KEY = { factura: 'factura', modo: 'modo', status: 'estado', source: 'origen', contrato: 'contrato', km: 'km', combustible: 'combustible', cargos: 'cargos' };
+const DETAIL_KEY = { porcentaje: 'porcentaje', devolver: 'a devolver', pagado: 'pagado', regla: 'cancelación', factura: 'factura', modo: 'modo', status: 'estado', source: 'origen', contrato: 'contrato', km: 'km', combustible: 'combustible', cargos: 'cargos' };
 
 function logDetail(d) {
   if (!d) return '';
@@ -1162,7 +1265,7 @@ function logDetail(d) {
     const o = JSON.parse(d);
     return typeof o === 'object' && o
       ? Object.entries(o)
-          .map(([k, v]) => `${DETAIL_KEY[k] || k}: ${k === 'combustible' ? `${v}/8` : k === 'cargos' ? money(v) : STATUS_LABEL[v] || v}`)
+          .map(([k, v]) => `${DETAIL_KEY[k] || k}: ${k === 'combustible' ? `${v}/8` : ['cargos', 'devolver', 'pagado'].includes(k) ? money(v) : k === 'porcentaje' ? `${v} %` : STATUS_LABEL[v] || v}`)
           .join(' · ')
       : String(o);
   } catch {
@@ -1307,19 +1410,25 @@ function contractTermsList(r) {
   const s = state.settings;
   const km = Number(r.category_km_per_day) || 0;
   const values = {
-    empresa: s.company_name || 'la Empresa',
+    empresa: s.company_name || L('la Empresa', 'the Company'),
     tolerancia: Number(s.grace_hours) || 0,
     edad_minima: Number(s.min_driver_age) || 21,
-    cargo_combustible: Number(s.fuel_charge_per_eighth) > 0 ? money(s.fuel_charge_per_eighth) : 'el valor del combustible faltante más un cargo por servicio',
+    cargo_combustible:
+      Number(s.fuel_charge_per_eighth) > 0
+        ? money(s.fuel_charge_per_eighth)
+        : L('el valor del combustible faltante más un cargo por servicio', 'the cost of the missing fuel plus a service charge'),
     kilometraje:
       km > 0
-        ? `El alquiler incluye ${km} km por día (${km * (r.days || 1)} km en total). Cada km excedente se cobrará ${money(r.category_extra_km_rate)}.`
-        : 'El alquiler tiene kilometraje libre.',
-    franquicia: Number(s.deductible_amount) > 0 ? money(s.deductible_amount) : 'el monto de la franquicia de la póliza vigente',
+        ? L(
+            `El alquiler incluye ${km} km por día (${km * (r.days || 1)} km en total). Cada km excedente se cobrará ${money(r.category_extra_km_rate)}.`,
+            `The rental includes ${km} km per day (${km * (r.days || 1)} km in total). Each extra km will be charged ${money(r.category_extra_km_rate)}.`,
+          )
+        : L('El alquiler tiene kilometraje libre.', 'The rental has unlimited mileage.'),
+    franquicia: Number(s.deductible_amount) > 0 ? money(s.deductible_amount) : L('el monto de la franquicia de la póliza vigente', 'the deductible of the policy in force'),
     garantia: money(r.deposit),
-    jurisdiccion: s.jurisdiction || 'la ciudad donde se celebra este contrato',
+    jurisdiccion: L(s.jurisdiction, s.jurisdiction_en || s.jurisdiction) || L('la ciudad donde se celebra este contrato', 'the city where this agreement is signed'),
   };
-  return String(s.contract_terms || '')
+  const terms = String(L(s.contract_terms, s.contract_terms_en || s.contract_terms) || '')
     .split(/\n\s*\n/)
     .map((p) => p.trim())
     .filter(Boolean)
@@ -1328,6 +1437,8 @@ function contractTermsList(r) {
       const title = filled.match(/^(\d+\.\s*[^.]{2,60}\.)\s*/);
       return title ? { title: title[1], body: filled.slice(title[0].length) } : { title: '', body: filled };
     });
+  // La política de devolución de Ajustes va siempre como última cláusula, numerada a continuación.
+  return [...terms, { title: `${terms.length + 1}. ${L('CANCELACIÓN Y DEVOLUCIONES', 'CANCELLATION AND REFUNDS')}.`, body: refundPolicyText(s) }];
 }
 
 /** Condiciones en HTML para el contrato impreso. */
@@ -1486,6 +1597,12 @@ function printContract(r) {
 </div>
 </body></html>`);
   w.document.close();
+  // La demo muestra el contrato en la misma página (sin body propio) y lo traduce ella.
+  if (w.document.body) {
+    w.document.documentElement.lang = LANG;
+    w.document.title = tr(w.document.title);
+    translateTree(w.document.body, true);
+  }
   w.focus();
   setTimeout(() => w.print(), 300);
 }
@@ -1529,7 +1646,7 @@ on(/^\/planning$/, async (view) => {
     const d = addDays(planningFrom, i);
     const ds = localISO(d).slice(0, 10);
     const wk = d.getDay() === 0 || d.getDay() === 6;
-    return `<div class="${ds === todayStr ? 'today' : wk ? 'weekend' : ''}">${['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sá'][d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}</div>`;
+    return `<div class="${ds === todayStr ? 'today' : wk ? 'weekend' : ''}">${L(['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sá'], ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'])[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}</div>`;
   }).join('');
   const track = `background-size:${100 / days}% 100%`;
 
@@ -2232,6 +2349,15 @@ on(/^\/config$/, async (view) => {
       { name: 'invoice_tax_id', label: 'CUIT o RUT de prueba' },
       { name: 'invoice_point_of_sale', label: 'Punto de venta (Argentina)', type: 'number' },
       { name: 'invoice_tax_condition', label: 'Condición frente al IVA (Argentina)', type: 'select', required: true, options: [['RI', 'Responsable Inscripto (Factura A o B)'], ['MONO', 'Monotributo (Factura C)']] },
+      // Política de devolución de dinero al cancelar (src/refunds.js).
+      { name: 'refund_full_hours', label: 'Devolución del 100 % si cancela con esta anticipación o más (horas)', type: 'number', attrs: 'min="0"' },
+      { name: 'refund_partial_hours', label: 'Devolución parcial si cancela con esta anticipación o más (horas)', type: 'number', attrs: 'min="0"' },
+      { name: 'refund_partial_pct', label: 'Porcentaje de la devolución parcial (%)', type: 'number', attrs: 'min="0" max="100"' },
+      { name: 'refund_terms', label: 'Condiciones extra de cancelación y devoluciones', type: 'textarea', full: true, rows: 3 },
+      // Versión en inglés: contrato, voucher y política cuando la app está en inglés (i18n.js).
+      { name: 'jurisdiction_en', label: 'Jurisdicción del contrato en inglés (courts of...)', full: true },
+      { name: 'contract_terms_en', label: 'Condiciones generales del contrato en inglés (se usan cuando la app está en inglés)', type: 'textarea', full: true, rows: 12 },
+      { name: 'refund_terms_en', label: 'Condiciones extra de cancelación y devoluciones en inglés', type: 'textarea', full: true, rows: 3 },
     ],
     s,
   )}</div>`;
@@ -2263,9 +2389,26 @@ on(/^\/config$/, async (view) => {
   invNote.className = 'full';
   invNote.innerHTML = `<h2 style="margin:12px 0 4px">Factura electrónica</h2><p class="muted" style="margin:0">Por ahora funciona <b>sólo en modo de prueba</b>: las facturas no tienen validez fiscal. Para facturar de verdad faltan el certificado digital de la empresa y su ${esc(s.tax_id_label || 'CUIT')} habilitado para factura electrónica (lo gestiona el contador).</p>`;
   $('[name=invoice_provider]', view).closest('label').before(invNote);
+  const refNote = document.createElement('div');
+  refNote.className = 'full';
+  refNote.innerHTML = `<h2 style="margin:12px 0 4px">Cancelaciones y devolución de dinero</h2><p class="muted" style="margin:0">Con menos horas que la devolución parcial, o si el cliente no se presenta, no hay devolución. Al cancelar una reserva, el sistema calcula cuánto corresponde devolver y lo deja registrado (no mueve dinero). Esta política sale en el voucher y en el contrato. <b>Los valores y el texto son un ejemplo: cada agencia los tiene que revisar según las leyes de su país</b> (por ejemplo, las de defensa del consumidor).</p>`;
+  $('[name=refund_full_hours]', view).closest('label').before(refNote);
   $('#terms-reset', view).addEventListener('click', () => {
     if (!confirm('¿Reemplazar el texto actual por las condiciones sugeridas? (se aplica al guardar)')) return;
     terms.value = s.contract_terms_default || '';
+  });
+  const enNote = document.createElement('div');
+  enNote.className = 'full';
+  enNote.innerHTML = `<h2 style="margin:12px 0 4px">Textos en inglés</h2><p class="muted" style="margin:0">Cuando la app está en inglés, el contrato, el voucher y la política de devolución usan estos textos. Si quedan vacíos se usan los de arriba.</p>`;
+  $('[name=jurisdiction_en]', view).closest('label').before(enNote);
+  const termsEn = $('[name=contract_terms_en]', view);
+  const resetEn = document.createElement('div');
+  resetEn.className = 'full';
+  resetEn.innerHTML = '<button type="button" class="btn small">Restaurar condiciones sugeridas en inglés</button>';
+  termsEn.closest('label').after(resetEn);
+  $('button', resetEn).addEventListener('click', () => {
+    if (!confirm('¿Reemplazar el texto actual por las condiciones sugeridas? (se aplica al guardar)')) return;
+    termsEn.value = s.contract_terms_en_default || '';
   });
 }, 'config');
 
