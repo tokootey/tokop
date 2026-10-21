@@ -20,6 +20,15 @@ const { fail } = require('./util');
  */
 const PRINCIPAL_ID = 1;
 
+/** "Reservas.SuAgencia.com.ar:443" → "reservas.suagencia.com.ar" ('' si no hay). */
+const normHost = (h) =>
+  String(h || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/[/:].*$/, '')
+    .replace(/\.$/, '');
+
 function openPlatform(principalDb, principalFile) {
   const dir = path.dirname(path.resolve(principalFile));
   const reg = new DatabaseSync(path.join(dir, 'empresas.db'));
@@ -31,6 +40,8 @@ function openPlatform(principalDb, principalFile) {
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )`);
+  // Dominio propio de la empresa (reservas.suagencia.com.ar); vacío = sólo su subdominio de Floty.
+  if (!reg.prepare('PRAGMA table_info(companies)').all().some((c) => c.name === 'domain')) reg.exec('ALTER TABLE companies ADD COLUMN domain TEXT');
   if (!reg.prepare('SELECT 1 FROM companies WHERE id = ?').get(PRINCIPAL_ID)) {
     reg
       .prepare('INSERT INTO companies (id, slug, name, db_file) VALUES (?, ?, ?, ?)')
@@ -46,13 +57,48 @@ function openPlatform(principalDb, principalFile) {
   };
   const withDb = (c) => (c ? { ...c, principal: c.id === PRINCIPAL_ID, db: dbOf(c) } : null);
   const all = () => reg.prepare('SELECT * FROM companies WHERE active = 1 ORDER BY id').all();
+  // Dirección de cada empresa: su dominio propio o, si la instalación tiene FLOTY_DOMAIN, su subdominio.
+  const addressOf = (c) => {
+    const base = normHost(process.env.FLOTY_DOMAIN);
+    if (c.domain) return `https://${c.domain}`;
+    if (!base) return null;
+    return c.id === PRINCIPAL_ID ? `https://${base}` : `https://${c.slug}.${base}`;
+  };
 
   const platform = {
     dir,
     principal: () => withDb(reg.prepare('SELECT * FROM companies WHERE id = ?').get(PRINCIPAL_ID)),
     get: (id) => withDb(reg.prepare('SELECT * FROM companies WHERE id = ? AND active = 1').get(Number(id))),
     bySlug: (slug) => withDb(reg.prepare('SELECT * FROM companies WHERE slug = ? AND active = 1').get(String(slug))),
-    list: () => all().map((c) => ({ ...c, principal: c.id === PRINCIPAL_ID })),
+    list: () => all().map((c) => ({ ...c, principal: c.id === PRINCIPAL_ID, address: addressOf(c) })),
+
+    /**
+     * Empresa por la dirección con la que se entra: su dominio propio, o su subdominio de Floty
+     * (<código>.<FLOTY_DOMAIN>, por ejemplo andes.floty.app). Sin coincidencia: null (se usa la regla de siempre).
+     */
+    byHost(host) {
+      const h = normHost(host);
+      if (!h) return null;
+      const own = reg.prepare('SELECT * FROM companies WHERE domain = ? AND active = 1').get(h);
+      if (own) return withDb(own);
+      const base = normHost(process.env.FLOTY_DOMAIN);
+      if (!base || !h.endsWith(`.${base}`)) return null;
+      const label = h.slice(0, -(base.length + 1));
+      return label.includes('.') ? null : platform.bySlug(label);
+    },
+
+    /** Guarda (o borra, con vacío) el dominio propio de una empresa. */
+    setDomain(id, domain) {
+      const c = reg.prepare('SELECT * FROM companies WHERE id = ? AND active = 1').get(Number(id));
+      if (!c) fail(404, 'Empresa inexistente');
+      const d = normHost(domain);
+      if (d && !/^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(d)) fail(400, 'El dominio no es válido (por ejemplo: reservas.suagencia.com.ar)');
+      const base = normHost(process.env.FLOTY_DOMAIN);
+      if (d && base && (d === base || d.endsWith(`.${base}`))) fail(400, 'Ese dominio es de Floty: cada empresa ya tiene su subdominio');
+      if (d && reg.prepare('SELECT 1 FROM companies WHERE domain = ? AND id <> ?').get(d, c.id)) fail(409, 'Ese dominio ya lo usa otra empresa');
+      reg.prepare('UPDATE companies SET domain = ? WHERE id = ?').run(d || null, c.id);
+      return { id: c.id, domain: d || null, address: addressOf({ ...c, domain: d || null }) };
+    },
     /** Todas las bases abiertas, con su archivo (para las copias de seguridad). */
     databases: () => all().map((c) => ({ company: c, db: dbOf(c), file: fileOf(c) })),
 
@@ -121,7 +167,7 @@ function openPlatform(principalDb, principalFile) {
       );
       const r = reg.prepare('INSERT INTO companies (slug, name, db_file) VALUES (?, ?, ?)').run(slug, name, dbFile.split(path.sep).join('/'));
       open.set(Number(r.lastInsertRowid), db);
-      return { company: { id: Number(r.lastInsertRowid), slug, name }, admin: { email, password } };
+      return { company: { id: Number(r.lastInsertRowid), slug, name, address: addressOf({ slug }) }, admin: { email, password } };
     },
 
     close() {

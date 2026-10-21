@@ -226,6 +226,8 @@ async function startSession() {
   $('#shell').classList.remove('hidden');
   $('#user-name').textContent = state.user.name;
   $$('.admin-only').forEach((el) => el.classList.toggle('hidden', state.user.role !== 'admin'));
+  // Panel de Floty: sólo el dueño de Floty (empresas y dominios), nunca las agencias.
+  $('#floty-panel').classList.toggle('hidden', !state.user.platform_admin);
   await loadCatalogs();
   checkStale();
   route();
@@ -330,7 +332,7 @@ const on = (pattern, handler, navKey) => routes.push({ pattern, handler, navKey 
 // Menú corto: "Flota y taller" y "Ajustes" agrupan varias pantallas, que se eligen con pestañas arriba.
 // Sección del menú que queda marcada (Ajustes, Reservas y Clientes están en "Más").
 const NAV_MENU = { ajustes: 'mas', reservas: 'mas', clientes: 'mas', completa: 'mas' };
-const NAV_GROUP = { flota: 'flota', mantenimiento: 'flota', tarifas: 'ajustes', cotizador: 'ajustes', config: 'ajustes', usuarios: 'ajustes', importar: 'ajustes', asistente: 'ajustes', empresas: 'ajustes' };
+const NAV_GROUP = { flota: 'flota', mantenimiento: 'flota', tarifas: 'ajustes', cotizador: 'ajustes', config: 'ajustes', usuarios: 'ajustes', importar: 'ajustes', asistente: 'ajustes' };
 const SUBNAV = {
   flota: [
     ['flota', '#/flota', 'Autos'],
@@ -343,7 +345,6 @@ const SUBNAV = {
     ['cotizador', '#/cotizador', 'Cotizador web', true],
     ['asistente', '#/asistente', 'Link de reservas', true],
     ['importar', '#/importar', 'Importar datos', true],
-    ['empresas', '#/empresas', 'Empresas', 'platform'],
   ],
 };
 function renderSubnav(group, current) {
@@ -1021,7 +1022,6 @@ on(/^\/mas$/, async (view) => {
       ${admin ? tile('#/cotizador', 'Página web: formulario', 'Que las cotizaciones de tu página entren solas') : ''}
       ${admin ? tile('#/asistente', 'Link de reservas (opcional)', '¿No tenés reservas por internet? Un link para Instagram y WhatsApp') : ''}
       ${admin ? tile('#/importar', 'Pasar datos de una planilla', 'Autos, clientes y reservas desde Excel o Drive') : ''}
-      ${state.user.platform_admin ? tile('#/empresas', 'Empresas', 'Otras agencias en la misma instalación') : ''}
     </div>
     ${
       // Sólo en la demo del navegador (scripts/demo/runtime.js define __demoReset).
@@ -2777,11 +2777,36 @@ on(/^\/usuarios$/, async (view) => {
 /* ---------- Empresas (varias agencias en la misma instalación) ---------- */
 on(/^\/empresas$/, async (view) => {
   const list = await GET('/platform/companies');
-  view.innerHTML = `<div class="page-head"><h1>Empresas</h1><button class="btn primary" data-new>+ Nueva empresa</button></div>
+  if (!state.user.platform_admin) {
+    view.innerHTML = '<div class="card"><p class="muted">Sólo el dueño de Floty maneja las empresas.</p></div>';
+    return;
+  }
+  view.innerHTML = `<div class="page-head"><h1>Panel de Floty</h1><button class="btn primary" data-new>+ Nueva empresa</button></div>
+    <p class="muted"><b>Sólo lo ves vos.</b> Acá se dan de alta las agencias y se cargan sus direcciones. Los administradores de cada agencia no tienen acceso.</p>
     <p class="muted">Cada empresa tiene sus propios datos: reservas, flota, clientes, usuarios, tarifas y configuración. Nadie de una empresa puede ver los datos de otra.</p>
-    <div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Código</th><th>Alta</th></tr></thead><tbody>${list
-      .map((c) => `<tr><td><b>${esc(c.name)}</b>${c.principal ? ' <span class="badge">principal</span>' : ''}</td><td><code>${esc(c.slug)}</code></td><td>${fmtD(c.created_at)}</td></tr>`)
-      .join('')}</tbody></table></div>`;
+    <div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Dirección</th><th>Alta</th><th></th></tr></thead><tbody>${list
+      .map(
+        (c) => `<tr><td><b>${esc(c.name)}</b>${c.principal ? ' <span class="badge">principal</span>' : ''}<br><small class="muted">Código: <code>${esc(c.slug)}</code></small></td>
+          <td>${c.address ? `<a href="${esc(c.address)}" target="_blank" rel="noopener" data-notr>${esc(c.address.replace(/^https:\/\//, ''))}</a>${c.domain ? ' <span class="badge">dominio propio</span>' : ''}` : '<span class="muted">La de esta página</span>'}</td>
+          <td>${fmtD(c.created_at)}</td>
+          <td class="right"><button class="btn small" type="button" data-domain="${c.id}">Dominio propio</button></td></tr>`,
+      )
+      .join('')}</tbody></table></div>
+    <p class="muted">Cada empresa entra por su propia dirección: su subdominio de Floty (por ejemplo <code>andes.floty.app</code>) o un dominio suyo. Para que funcione su dominio, quien lo maneja tiene que agregar un registro <b>CNAME</b> que apunte a Floty.</p>`;
+  $$('[data-domain]', view).forEach((b) =>
+    b.addEventListener('click', () => {
+      const c = list.find((x) => x.id === Number(b.dataset.domain));
+      openModal(
+        `Dominio propio · ${c.name}`,
+        formHtml([{ name: 'domain', label: 'Dominio (vacío = sin dominio propio)', full: true, attrs: 'placeholder="reservas.suagencia.com.ar"' }], { domain: c.domain || '' }) +
+          '<p class="muted">Primero, quien maneja el dominio (en NIC.ar si es .com.ar, o donde lo haya comprado) agrega un registro <b>CNAME</b> que apunte a la dirección de Floty. Después se carga acá y en Render (Settings → Custom Domains). Puede tardar hasta 24 horas en funcionar.</p>',
+        async (d) => {
+          await run(() => PUT(`/platform/companies/${c.id}/domain`, { domain: d.domain }), 'Dominio guardado');
+          route();
+        },
+      );
+    }),
+  );
   $('[data-new]', view).addEventListener('click', () =>
     openModal(
       'Nueva empresa',
@@ -2802,7 +2827,7 @@ on(/^\/empresas$/, async (view) => {
           openModal(
             'Empresa creada',
             `<p><b>${esc(r.company.name)}</b> ya está lista. Pasale estos datos al administrador por un medio seguro (en persona o por teléfono):</p>
-             <dl class="info"><dt>Dirección</dt><dd>${esc(location.origin)}</dd><dt>Usuario</dt><dd><b>${esc(r.admin.email)}</b></dd><dt>Contraseña inicial</dt><dd><code style="font-size:16px">${esc(r.admin.password)}</code></dd></dl>
+             <dl class="info"><dt>Dirección</dt><dd data-notr>${esc(r.company.address || location.origin)}</dd><dt>Usuario</dt><dd><b>${esc(r.admin.email)}</b></dd><dt>Contraseña inicial</dt><dd><code style="font-size:16px">${esc(r.admin.password)}</code></dd></dl>
              <p class="muted">Esta contraseña no se vuelve a mostrar. Al entrar, la app le pide elegir una propia y le muestra los primeros pasos para cargar su empresa.</p>
              <div class="actions"><button class="btn primary" data-close>Listo</button></div>`,
           ),

@@ -216,6 +216,93 @@ test('API del cotizador y formulario web: cada empresa recibe lo suyo', async ()
   assert.notEqual((await call(null, 'GET', '/api/public/chat/config')).data.company, 'Patagonia Autos');
 });
 
+/** Pedido entrando por otra dirección (fetch no deja cambiar el encabezado Host). */
+function viaHost(host, method, url, body, cookie) {
+  const http = require('node:http');
+  const data = body === undefined ? null : JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      `${base}${url}`,
+      { method, headers: { Host: host, 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}), ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {}) } },
+      (res) => {
+        let text = '';
+        res.on('data', (c) => (text += c));
+        res.on('end', () => {
+          let json = null;
+          try {
+            json = JSON.parse(text);
+          } catch {}
+          resolve({ status: res.statusCode, data: json, cookie: (res.headers['set-cookie'] || [''])[0].split(';')[0] });
+        });
+      },
+    );
+    req.on('error', reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
+test('cada empresa entra por su subdominio o por su dominio propio', async () => {
+  process.env.FLOTY_DOMAIN = 'floty.test';
+  try {
+    const sub = `${companyB.slug}.floty.test`;
+    // El subdominio alcanza para saber la empresa: el asistente no necesita ?empresa=.
+    assert.equal((await viaHost(sub, 'GET', '/api/public/chat/config')).data.company, 'Patagonia Autos');
+    assert.notEqual((await viaHost('floty.test', 'GET', '/api/public/chat/config')).data.company, 'Patagonia Autos');
+
+    // En la dirección de una empresa sólo entran sus usuarios, y una sesión de otra empresa no sirve ahí.
+    const loginB = await viaHost(sub, 'POST', '/api/auth/login', B);
+    assert.equal(loginB.status, 200);
+    assert.equal((await viaHost(sub, 'GET', '/api/auth/me', undefined, loginB.cookie)).data.company.slug, companyB.slug);
+    assert.equal((await viaHost(sub, 'POST', '/api/auth/login', A)).status, 401);
+    assert.equal((await viaHost(sub, 'GET', '/api/auth/me', undefined, cookieA)).status, 401);
+
+    // La pantalla Empresas muestra la dirección de cada una.
+    const list = (await call(cookieA, 'GET', '/api/platform/companies')).data;
+    assert.equal(list.find((c) => c.slug === companyB.slug).address, `https://${sub}`);
+
+    // Dominio propio: se valida, no puede repetirse ni ser de Floty, y después también lleva a la empresa.
+    const put = (domain, cookie = cookieA) => call(cookie, 'PUT', `/api/platform/companies/${companyB.id}/domain`, { domain });
+    assert.equal((await put('no es un dominio')).status, 400);
+    assert.equal((await put('otra.floty.test')).status, 400);
+    assert.equal((await put('reservas.patagonia.test', cookieB)).status, 403);
+    const ok = await put('Reservas.Patagonia.test');
+    assert.equal(ok.status, 200);
+    assert.equal(ok.data.address, 'https://reservas.patagonia.test');
+    assert.equal((await viaHost('reservas.patagonia.test', 'GET', '/api/public/chat/config')).data.company, 'Patagonia Autos');
+    assert.equal(platform.byHost('reservas.patagonia.test:443').id, companyB.id);
+    assert.equal((await put('')).data.domain, null);
+    assert.equal(platform.byHost('reservas.patagonia.test'), null);
+  } finally {
+    delete process.env.FLOTY_DOMAIN;
+  }
+  // Sin FLOTY_DOMAIN no hay subdominios: todo sigue como antes.
+  assert.equal(platform.byHost(`${companyB.slug}.floty.test`), null);
+});
+
+test('Panel de Floty: con FLOTY_OWNERS sólo el dueño maneja empresas y dominios', async () => {
+  // Otro administrador de la empresa principal (por ejemplo, alguien del mostrador con permisos de admin).
+  const other = { email: 'encargado@rentacar.local', password: 'Mostrador2026Clave' };
+  assert.equal((await call(cookieA, 'POST', '/api/users', { name: 'Encargado', email: other.email, password: 'Inicial2026Clave', role: 'admin' })).status, 201);
+  const cookieOther = await firstLogin(other.email, 'Inicial2026Clave', other.password);
+  process.env.FLOTY_OWNERS = ` ${A.email.toUpperCase()} , dueno@floty.test`;
+  try {
+    assert.equal((await call(cookieA, 'GET', '/api/auth/me')).data.platform_admin, true);
+    assert.equal((await call(cookieA, 'GET', '/api/platform/companies')).status, 200);
+    for (const cookie of [cookieOther, cookieB]) {
+      assert.equal((await call(cookie, 'GET', '/api/auth/me')).data.platform_admin, false);
+      assert.equal((await call(cookie, 'GET', '/api/platform/companies')).status, 403);
+      assert.equal((await call(cookie, 'PUT', `/api/platform/companies/${companyB.id}/domain`, { domain: 'robado.test' })).status, 403);
+      assert.equal((await call(cookie, 'POST', '/api/platform/companies', { name: 'Trucha', country: 'AR', admin_name: 'X', admin_email: 'x@trucha.test' })).status, 403);
+    }
+  } finally {
+    delete process.env.FLOTY_OWNERS;
+  }
+  // Sin la variable, como antes: cualquier administrador de la principal (nunca los de una agencia).
+  assert.equal((await call(cookieOther, 'GET', '/api/platform/companies')).status, 200);
+  assert.equal((await call(cookieB, 'GET', '/api/platform/companies')).status, 403);
+});
+
 test('cada empresa guarda su base en su propio archivo, y el registro sobrevive a un reinicio', () => {
   assert.ok(fs.existsSync(path.join(dir, 'empresas.db')));
   assert.ok(fs.existsSync(path.join(dir, 'empresas', `${companyB.slug}.db`)));
