@@ -34,7 +34,7 @@ La app queda abierta mientras esté abierta la ventana negra. Así solo la ves v
 
 ## Puesta en marcha
 
-Requiere **Node.js 22.5 o superior** (usa la base SQLite que ya trae Node, sin instalar ningún motor de base de datos).
+Requiere **Node.js 22.13 o superior** (usa la base SQLite que ya trae Node, sin instalar ningún motor de base de datos).
 
 ```bash
 npm install
