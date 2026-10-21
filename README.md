@@ -112,9 +112,17 @@ Variables: `BACKUP_DIR` (carpeta de las copias; por defecto, `respaldos` al lado
 - Las columnas que no tienen lugar se guardan en "Observaciones" para no perder nada.
 - El archivo no se guarda; en la actividad de Usuarios queda sólo quién importó y cuántas filas (sin datos personales). Después de importar, borrá el CSV de la computadora y dejá de compartir la planilla vieja.
 
-## Asistente web (chat para la página de la agencia)
+## Link de reservas (opcional)
 
-En **Ajustes → Asistente web** se activa un chat para la página web de la agencia:
+Para las agencias que no tienen reservas por internet. Viene apagado: se activa en **Más → Link de reservas (opcional)**. Si la agencia ya tiene su página o su propio link de reservas, conviene dejarlo apagado y conectar su página con **Página web: formulario** (ver *Conexión con el cotizador*).
+
+- Es una página propia de la agencia (`/reservar`, y `/reservar?empresa=…` para las demás empresas) para poner en la biografía de Instagram y mandar por WhatsApp.
+- El cliente elige fechas, ve las categorías libres con el precio y deja su nombre y WhatsApp. El pedido aparece en **Hoy → Para confirmar**, con un botón para confirmarlo y mandarle el voucher.
+- Usa las mismas protecciones que el chat (límite por IP y campo trampa contra robots) y nunca muestra cuántos autos quedan.
+
+### Chat para la página de la agencia
+
+En la misma pantalla, abajo, está el chat para pegar en la página web de la agencia:
 
 - El cliente elige fechas y lugar, y el chat le muestra los autos libres con su precio final. Nunca muestra cuántos autos quedan.
 - El cliente deja sus datos y la reserva entra como **pendiente**, con origen "Formulario web", para que el mostrador la confirme.

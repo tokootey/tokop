@@ -457,7 +457,7 @@ on(/^\/panel$/, async (view) => {
       <a href="#/mantenimiento"><b>${d.fleet.mantenimiento || 0}</b><span>en el taller</span></a>
     </div>
     ${d.quote_errors ? `<div class="notice warn">Hay <b>${d.quote_errors}</b> solicitud(es) del cotizador o del formulario web con error. <a href="#/cotizador">Revisar bandeja</a></div>` : ''}
-    ${d.pending.length ? `<div class="hoy-col"><h2>Para confirmar <span class="count">${d.pending_confirmation}</span></h2>${d.pending.map(pend).join('')}</div>` : ''}
+    ${d.pending.length ? `<div class="hoy-col"><h2>Para confirmar <span class="count">${d.pending_confirmation}</span></h2><div class="hoy-pending">${d.pending.map(pend).join('')}</div></div>` : ''}
     <div class="hoy-cols">
       ${column('Salen hoy', 'M5 12h14M13 6l6 6-6 6', 'var(--primary)', out, 'out', 'Hoy no sale ningún auto.')}
       ${column('Vuelven hoy', 'M19 12H5M11 6l-6 6 6 6', '#c2410c', back, 'back', 'Hoy no vuelve ningún auto.')}
@@ -495,7 +495,7 @@ const TOUR = [
   ['#nav a[data-route=panel]', 'Hoy', 'Lo primero que mirás cada mañana: quién retira y quién devuelve un auto, cuánto debe cada uno y los pedidos para confirmar.'],
   ['#fab', 'Nueva reserva', 'Fechas, auto y cliente en un minuto. Después le mandás el voucher por WhatsApp.'],
   ['#nav a[data-route=planning]', 'Calendario', 'Qué auto está ocupado cada día. Tocá un espacio libre para reservar ahí.'],
-  ['#nav a[data-route=mas]', 'Link de reservas', 'Un link para la biografía de Instagram y para WhatsApp: el cliente elige fechas y auto, y el pedido te aparece en Hoy para confirmar. Está en Más.'],
+  ['#nav a[data-route=mas]', 'Más', 'Todas las reservas, los clientes, el taller, los precios y los ajustes. Los pedidos que llegan de tu página web te aparecen en Hoy, en "Para confirmar".'],
 ];
 const tourSeen = () => {
   try {
@@ -517,7 +517,8 @@ function showTour(step = 0) {
   if (step >= TOUR.length) return end();
   const [target, title, text] = TOUR[step];
   const el = target && $(target);
-  if (el && el.offsetParent) el.classList.add('tour-hi');
+  // getClientRects y no offsetParent: el botón "Nueva reserva" es fijo y no tiene offsetParent.
+  if (el && el.getClientRects().length) el.classList.add('tour-hi');
   const box = document.createElement('div');
   box.id = 'tour';
   box.className = 'tour';
@@ -1007,9 +1008,8 @@ on(/^\/mas$/, async (view) => {
       ${tile('#/clientes', 'Clientes', 'Datos, licencia y sus reservas')}
       ${tile('#/mantenimiento', 'Taller', 'Autos en el taller y services')}
     </div>
-    <div class="mas-group">Clientes nuevos</div>
+    <div class="mas-group">Para explicar Floty</div>
     <div class="mas">
-      ${admin ? tile('#/asistente', 'Link de reservas', 'Para Instagram y WhatsApp: el cliente pide la reserva solo') : ''}
       ${tile('#/guia', 'Cómo funciona Floty', 'El recorrido de cinco pasos, otra vez')}
       ${tile('/como-funciona', 'Hoja para mostrar Floty', 'Una página para imprimir o mandar')}
     </div>
@@ -1019,6 +1019,7 @@ on(/^\/mas$/, async (view) => {
       ${admin ? tile('#/config', 'Empresa y contrato', 'Datos de la empresa, contrato, cancelaciones y factura') : ''}
       ${admin ? tile('#/usuarios', 'Usuarios', 'Quién entra al sistema y qué hizo') : ''}
       ${admin ? tile('#/cotizador', 'Página web: formulario', 'Que las cotizaciones de tu página entren solas') : ''}
+      ${admin ? tile('#/asistente', 'Link de reservas (opcional)', '¿No tenés reservas por internet? Un link para Instagram y WhatsApp') : ''}
       ${admin ? tile('#/importar', 'Pasar datos de una planilla', 'Autos, clientes y reservas desde Excel o Drive') : ''}
       ${state.user.platform_admin ? tile('#/empresas', 'Empresas', 'Otras agencias en la misma instalación') : ''}
     </div>`;
@@ -3019,6 +3020,7 @@ on(/^\/asistente$/, async (view) => {
     <div class="grid cols-2">
       <div class="card">
         <h2>Tu link</h2>
+        <p class="muted">Es opcional: sirve si tu agencia no tiene reservas por internet. Si ya tenés tu página o tu link de reservas, dejalo apagado y conectá tu página en <a href="#/cotizador">Página web: formulario</a>.</p>
         <p class="muted">Ponelo en la biografía de Instagram y mandalo por WhatsApp. El cliente elige las fechas, ve los autos libres con su precio y pide la reserva. Te aparece en Hoy, en "Para confirmar".</p>
         <input id="link-url" readonly value="${esc(link)}" data-notr/>
         <div class="actions" style="margin-top:10px">
@@ -3293,7 +3295,7 @@ function howItWorksPage() {
       <li><b>Hoy</b><span>Al abrirlo ves quién retira y quién devuelve un auto, cuánto debe cada cliente y los pedidos para confirmar.</span></li>
       <li><b>Reservas en un minuto</b><span>Fechas, auto y cliente. El voucher y el contrato salen solos y se mandan por WhatsApp.</span></li>
       <li><b>Calendario y autos</b><span>Qué auto está ocupado cada día, cuáles están en el taller y qué seguro o VTV está por vencer.</span></li>
-      <li><b>Link de reservas</b><span>Un link para Instagram y WhatsApp: el cliente elige fechas y auto, ve el precio y pide la reserva. Vos la confirmás.</span></li>
+      <li><b>Pedidos de internet</b><span>Los pedidos de tu página web entran solos y los confirmás con un toque. Si no tenés reservas por internet, podés activar un link para Instagram y WhatsApp.</span></li>
     </ol>
     <h2>Qué hace falta para arrancar</h2>
     <ul>

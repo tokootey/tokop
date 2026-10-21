@@ -451,3 +451,8 @@ pre.snippet { color: var(--text); background: var(--soft); border: 1px solid var
 .tour-hi { outline: 3px solid #f59e0b !important; outline-offset: 3px; border-radius: 12px; position: relative; z-index: 89; }
 @media (max-width: 800px) { .tour { bottom: calc(72px + env(safe-area-inset-bottom)); } }
 @media (min-width: 801px) { .tour { inset: auto 24px 24px auto; justify-content: flex-end; } }
+
+/* Pedidos para confirmar: en la compu, de a varios por fila para que "Salen hoy" quede a la vista. */
+.hoy-pending { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; margin-bottom: 18px; }
+.hoy-pending .trip { margin-bottom: 0; }
+@media (max-width: 800px) { .hoy-pending { grid-template-columns: minmax(0, 1fr); } }

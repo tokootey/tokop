@@ -1086,7 +1086,16 @@ const EN = {
   'Fechas, auto y cliente en un minuto. Después le mandás el voucher por WhatsApp.': 'Dates, car and customer in one minute. Then you send the voucher by WhatsApp.',
   'Qué auto está ocupado cada día. Tocá un espacio libre para reservar ahí.': 'Which car is booked each day. Tap a free slot to book it.',
   'Link de reservas': 'Booking link',
-  'Un link para la biografía de Instagram y para WhatsApp: el cliente elige fechas y auto, y el pedido te aparece en Hoy para confirmar. Está en Más.': 'A link for your Instagram bio and for WhatsApp: the customer picks dates and a car, and the request shows up in Today for you to confirm. It is under More.',
+  'Todas las reservas, los clientes, el taller, los precios y los ajustes. Los pedidos que llegan de tu página web te aparecen en Hoy, en "Para confirmar".':
+    'All bookings, customers, the workshop, prices and settings. Requests from your website show up in Today, under "To confirm".',
+  'Link de reservas (opcional)': 'Booking link (optional)',
+  '¿No tenés reservas por internet? Un link para Instagram y WhatsApp': 'No online bookings? A link for Instagram and WhatsApp',
+  'Es opcional: sirve si tu agencia no tiene reservas por internet. Si ya tenés tu página o tu link de reservas, dejalo apagado y conectá tu página en':
+    'It is optional: it helps if your agency has no online bookings. If you already have your own website or booking link, leave it off and connect your website in',
+  'Para explicar Floty': 'To explain Floty',
+  'Pedidos de internet': 'Online requests',
+  'Los pedidos de tu página web entran solos y los confirmás con un toque. Si no tenés reservas por internet, podés activar un link para Instagram y WhatsApp.':
+    'Requests from your website come in on their own and you confirm them with one tap. If you have no online bookings, you can turn on a link for Instagram and WhatsApp.',
   Siguiente: 'Next',
   Saltar: 'Skip',
   'Cómo funciona Floty': 'How Floty works',
