@@ -31,7 +31,8 @@ services:
         value: "14"
       - key: TRUST_PROXY
         value: "1"
-      # Dominio de Floty para que cada empresa tenga su subdominio (floty.app → andes.floty.app).
+      # Dominio de Floty para que cada empresa tenga su subdominio: flotyapp.com.ar → andes-rent.flotyapp.com.ar.
+      # El dueño de Floty entra por app.flotyapp.com.ar; flotyapp.com.ar a secas es la página web (Netlify).
       # Se carga en Environment cuando exista el dominio; vacío = una sola dirección para todas.
       - key: FLOTY_DOMAIN
         sync: false

@@ -20,6 +20,12 @@ const { fail } = require('./util');
  */
 const PRINCIPAL_ID = 1;
 
+/**
+ * Subdominios que nunca son de una agencia: "app" es la entrada del dueño de Floty (app.flotyapp.com.ar)
+ * y los demás quedan para la página web y servicios propios.
+ */
+const RESERVED = new Set(['app', 'www', 'api', 'admin', 'panel', 'mail', 'email', 'blog', 'ayuda', 'soporte', 'floty', 'principal']);
+
 /** "Reservas.SuAgencia.com.ar:443" → "reservas.suagencia.com.ar" ('' si no hay). */
 const normHost = (h) =>
   String(h || '')
@@ -62,7 +68,8 @@ function openPlatform(principalDb, principalFile) {
     const base = normHost(process.env.FLOTY_DOMAIN);
     if (c.domain) return `https://${c.domain}`;
     if (!base) return null;
-    return c.id === PRINCIPAL_ID ? `https://${base}` : `https://${c.slug}.${base}`;
+    // El dominio a secas suele ser la página web de Floty: la empresa principal entra por app.<dominio>.
+    return c.id === PRINCIPAL_ID ? `https://app.${base}` : `https://${c.slug}.${base}`;
   };
 
   const platform = {
@@ -84,7 +91,8 @@ function openPlatform(principalDb, principalFile) {
       const base = normHost(process.env.FLOTY_DOMAIN);
       if (!base || !h.endsWith(`.${base}`)) return null;
       const label = h.slice(0, -(base.length + 1));
-      return label.includes('.') ? null : platform.bySlug(label);
+      // app.<dominio> y los otros reservados no son de ninguna agencia: siguen la regla de siempre (la principal).
+      return label.includes('.') || RESERVED.has(label) ? null : platform.bySlug(label);
     },
 
     /** Guarda (o borra, con vacío) el dominio propio de una empresa. */
@@ -143,7 +151,7 @@ function openPlatform(principalDb, principalFile) {
           .replace(/^-|-$/g, '')
           .slice(0, 40) || 'empresa';
       let slug = baseSlug;
-      for (let i = 2; reg.prepare('SELECT 1 FROM companies WHERE slug = ?').get(slug); i++) slug = `${baseSlug}-${i}`;
+      for (let i = 2; RESERVED.has(slug) || reg.prepare('SELECT 1 FROM companies WHERE slug = ?').get(slug); i++) slug = `${baseSlug}-${i}`;
 
       const dbFile = path.join('empresas', `${slug}.db`);
       if (fs.existsSync(path.resolve(dir, dbFile))) fail(409, 'Ya hay una base de datos con ese nombre en el servidor');
