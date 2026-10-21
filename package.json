@@ -13,7 +13,7 @@
     "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.js\""
   },
   "engines": {
-    "node": ">=22.5"
+    "node": ">=22.13"
   },
   "dependencies": {
     "express": "^5.2.1",

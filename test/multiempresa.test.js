@@ -261,6 +261,20 @@ test('cada empresa entra por su subdominio o por su dominio propio', async () =>
     const list = (await call(cookieA, 'GET', '/api/platform/companies')).data;
     assert.equal(list.find((c) => c.slug === companyB.slug).address, `https://${sub}`);
 
+    // El dueño de Floty entra por app.<dominio> (el dominio a secas es la página web): ahí va a la principal.
+    assert.equal(list.find((c) => c.principal).address, 'https://app.floty.test');
+    assert.equal(platform.byHost('app.floty.test'), null);
+    const loginApp = await viaHost('app.floty.test', 'POST', '/api/auth/login', A);
+    assert.equal(loginApp.status, 200);
+    assert.equal((await viaHost('app.floty.test', 'GET', '/api/auth/me', undefined, loginApp.cookie)).data.company.principal, true);
+    // Una agencia que se llame "App" o "www" no puede quedarse con esas direcciones.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rc-reservados-'));
+    const other = openPlatform(openDb(path.join(tmp, 'rentacar.db')), path.join(tmp, 'rentacar.db'));
+    assert.equal(other.create({ name: 'App', country: 'AR', admin_email: 'duenio@app-agencia.test' }).company.slug, 'app-2');
+    assert.equal(other.create({ name: 'WWW', country: 'AR', admin_email: 'duenio@www-agencia.test' }).company.slug, 'www-2');
+    other.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
+
     // Dominio propio: se valida, no puede repetirse ni ser de Floty, y después también lleva a la empresa.
     const put = (domain, cookie = cookieA) => call(cookie, 'PUT', `/api/platform/companies/${companyB.id}/domain`, { domain });
     assert.equal((await put('no es un dominio')).status, 400);

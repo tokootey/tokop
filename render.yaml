@@ -22,7 +22,7 @@ services:
     healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
-        value: "22.12.0"
+        value: "22.14.0" # node:sqlite sin bandera desde 22.13: con 22.12 la app no arranca
       - key: DB_FILE
         value: /var/data/rentacar.db
       - key: BACKUP_DIR
@@ -31,7 +31,8 @@ services:
         value: "14"
       - key: TRUST_PROXY
         value: "1"
-      # Dominio de Floty para que cada empresa tenga su subdominio (floty.app → andes.floty.app).
+      # Dominio de Floty para que cada empresa tenga su subdominio: flotyapp.com.ar → andes-rent.flotyapp.com.ar.
+      # El dueño de Floty entra por app.flotyapp.com.ar; flotyapp.com.ar a secas es la página web (Netlify).
       # Se carga en Environment cuando exista el dominio; vacío = una sola dirección para todas.
       - key: FLOTY_DOMAIN
         sync: false
