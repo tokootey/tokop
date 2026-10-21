@@ -70,7 +70,7 @@ function chatRoutes(db) {
     const s = req.settings;
     res.json({
       company: s.company_name,
-      welcome: s.chat_welcome || `¡Hola! Soy el asistente de ${s.company_name}. Te cuento qué autos hay disponibles y cuánto cuestan.`,
+      welcome: s.chat_welcome || `¡Hola! Elegí las fechas y te mostramos los autos disponibles de ${s.company_name} con su precio.`,
       whatsapp: str(s.chat_whatsapp, 30).replace(/[^\d]/g, ''),
       currency: s.currency,
       locale: s.locale,
@@ -120,7 +120,7 @@ function chatRoutes(db) {
       lugar_retiro: str(b.pickup_branch, 20),
       lugar_devolucion: str(b.pickup_branch, 20),
       vuelo: str(b.flight, 40),
-      comentarios: ['Pedido desde el asistente de la web', str(b.notes, 500)].filter(Boolean).join('. '),
+      comentarios: ['Pedido desde el link de reservas', str(b.notes, 500)].filter(Boolean).join('. '),
     };
     try {
       const result = ingestQuote(db, payload, undefined, 'web');

@@ -48,7 +48,7 @@ const STATUS_LABEL = {
   error: 'Error',
   recibida: 'Recibida',
   cotizador: 'Cotizador',
-  web: 'Formulario web',
+  web: 'Por internet',
   manual: 'Mostrador',
   importado: 'Importada',
   abierto: 'Abierto',
@@ -341,7 +341,7 @@ const SUBNAV = {
     ['config', '#/config', 'Empresa y contrato', true],
     ['usuarios', '#/usuarios', 'Usuarios', true],
     ['cotizador', '#/cotizador', 'Cotizador web', true],
-    ['asistente', '#/asistente', 'Asistente web', true],
+    ['asistente', '#/asistente', 'Link de reservas', true],
     ['importar', '#/importar', 'Importar datos', true],
     ['empresas', '#/empresas', 'Empresas', 'platform'],
   ],
@@ -430,6 +430,14 @@ on(/^\/panel$/, async (view) => {
       <div class="trip-actions">${action}${waLink(r.customer_phone)}</div>
     </div>`;
   };
+  // Pedidos sin confirmar (del link de reservas, del cotizador o cargados como pendientes).
+  const pend = (r) => `<div class="trip">
+      <div class="trip-top" data-href="#/reservas/${r.id}">
+        <div><b>${esc(r.customer_name)}</b><small>${esc(r.category_name)} · ${esc(STATUS_LABEL[r.source] || r.source)}</small><small>${dayName(r.pickup_at)} ${fmtDT(r.pickup_at).slice(11)} → ${dayName(r.return_at)}</small></div>
+        <span class="pill">${money(r.total)}</span>
+      </div>
+      <div class="trip-actions"><button class="btn primary" type="button" data-confirm="${r.id}">Confirmar</button>${waLink(r.customer_phone)}</div>
+    </div>`;
   const column = (title, icon, color, rows, kind, empty) => `<div class="hoy-col">
       <h2><svg viewBox="0 0 24 24" stroke="${color}" aria-hidden="true"><path d="${icon}"/></svg>${title}</h2>
       ${rows.length ? rows.map((r) => trip(r, kind)).join('') : `<p class="hoy-empty">${empty}</p>`}
@@ -449,7 +457,7 @@ on(/^\/panel$/, async (view) => {
       <a href="#/mantenimiento"><b>${d.fleet.mantenimiento || 0}</b><span>en el taller</span></a>
     </div>
     ${d.quote_errors ? `<div class="notice warn">Hay <b>${d.quote_errors}</b> solicitud(es) del cotizador o del formulario web con error. <a href="#/cotizador">Revisar bandeja</a></div>` : ''}
-    ${d.pending_confirmation ? `<div class="notice">Hay <b>${d.pending_confirmation}</b> reserva(s) para confirmar. <a href="#/reservas">Ver reservas</a></div>` : ''}
+    ${d.pending.length ? `<div class="hoy-col"><h2>Para confirmar <span class="count">${d.pending_confirmation}</span></h2>${d.pending.map(pend).join('')}</div>` : ''}
     <div class="hoy-cols">
       ${column('Salen hoy', 'M5 12h14M13 6l6 6-6 6', 'var(--primary)', out, 'out', 'Hoy no sale ningún auto.')}
       ${column('Vuelven hoy', 'M19 12H5M11 6l-6 6 6 6', '#c2410c', back, 'back', 'Hoy no vuelve ningún auto.')}
@@ -466,6 +474,68 @@ on(/^\/panel$/, async (view) => {
             .join('')}</div></div>`
         : ''
     }`;
+  // Al confirmar se abre el voucher, listo para mandarlo por WhatsApp.
+  $$('[data-confirm]', view).forEach((b) =>
+    b.addEventListener('click', async () => {
+      b.disabled = true;
+      try {
+        await run(() => POST(`/reservations/${b.dataset.confirm}/status`, { status: 'confirmada' }), 'Reserva confirmada');
+        location.hash = `#/reservas/${b.dataset.confirm}?accion=voucher`;
+      } catch {
+        b.disabled = false;
+      }
+    }),
+  );
+  if (!tourSeen()) showTour();
+}, 'panel');
+
+/* ---------- Guía: recorrido corto la primera vez que se entra a Hoy ---------- */
+const TOUR = [
+  [null, 'Bienvenido a Floty', 'Te mostramos en un minuto cómo se usa. Son cinco pasos.'],
+  ['#nav a[data-route=panel]', 'Hoy', 'Lo primero que mirás cada mañana: quién retira y quién devuelve un auto, cuánto debe cada uno y los pedidos para confirmar.'],
+  ['#fab', 'Nueva reserva', 'Fechas, auto y cliente en un minuto. Después le mandás el voucher por WhatsApp.'],
+  ['#nav a[data-route=planning]', 'Calendario', 'Qué auto está ocupado cada día. Tocá un espacio libre para reservar ahí.'],
+  ['#nav a[data-route=mas]', 'Link de reservas', 'Un link para la biografía de Instagram y para WhatsApp: el cliente elige fechas y auto, y el pedido te aparece en Hoy para confirmar. Está en Más.'],
+];
+const tourSeen = () => {
+  try {
+    return localStorage.getItem('floty_tour') === '1';
+  } catch {
+    return true; // sin almacenamiento no se puede recordar: mejor no mostrarlo cada vez
+  }
+};
+function showTour(step = 0) {
+  $('#tour')?.remove();
+  $$('.tour-hi').forEach((el) => el.classList.remove('tour-hi'));
+  const end = () => {
+    $('#tour')?.remove();
+    $$('.tour-hi').forEach((el) => el.classList.remove('tour-hi'));
+    try {
+      localStorage.setItem('floty_tour', '1');
+    } catch {}
+  };
+  if (step >= TOUR.length) return end();
+  const [target, title, text] = TOUR[step];
+  const el = target && $(target);
+  if (el && el.offsetParent) el.classList.add('tour-hi');
+  const box = document.createElement('div');
+  box.id = 'tour';
+  box.className = 'tour';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-label', 'Cómo funciona Floty');
+  box.innerHTML = `<div class="card tour-card">
+      <div class="tour-dots" aria-hidden="true">${TOUR.map((_, i) => `<i class="${i === step ? 'on' : ''}"></i>`).join('')}</div>
+      <h2>${esc(title)}</h2><p>${esc(text)}</p>
+      <div class="actions"><button class="btn primary" type="button" data-next>${step === TOUR.length - 1 ? 'Listo' : 'Siguiente'}</button><button class="btn link" type="button" data-skip>Saltar</button></div>
+    </div>`;
+  document.body.appendChild(box);
+  $('[data-next]', box).addEventListener('click', () => showTour(step + 1));
+  $('[data-skip]', box).addEventListener('click', end);
+  $('[data-next]', box).focus();
+}
+on(/^\/guia$/, () => {
+  location.hash = '#/panel';
+  showTour();
 }, 'panel');
 
 // Los menús "Más acciones" se cierran al elegir una opción o al tocar afuera.
@@ -491,7 +561,7 @@ on(/^\/reservas$/, async (view) => {
         ${['pendiente', 'confirmada', 'en_curso', 'finalizada', 'cancelada', 'no_show'].map((s) => `<option value="${s}">${STATUS_LABEL[s]}</option>`).join('')}</select></label>
       <button class="btn">Buscar</button>
       <details class="more-opts filters"><summary>Más filtros</summary><div class="toolbar">
-      <label>Origen<select name="source"><option value="">Todos</option><option value="manual">Mostrador</option><option value="cotizador">Cotizador</option><option value="web">Formulario web</option><option value="importado">Importadas</option></select></label>
+      <label>Origen<select name="source"><option value="">Todos</option><option value="manual">Mostrador</option><option value="cotizador">Cotizador</option><option value="web">Por internet</option><option value="importado">Importadas</option></select></label>
       <label>Desde<input type="date" name="from"/></label>
       <label>Hasta<input type="date" name="to"/></label>
       </div></details>
@@ -937,13 +1007,18 @@ on(/^\/mas$/, async (view) => {
       ${tile('#/clientes', 'Clientes', 'Datos, licencia y sus reservas')}
       ${tile('#/mantenimiento', 'Taller', 'Autos en el taller y services')}
     </div>
+    <div class="mas-group">Clientes nuevos</div>
+    <div class="mas">
+      ${admin ? tile('#/asistente', 'Link de reservas', 'Para Instagram y WhatsApp: el cliente pide la reserva solo') : ''}
+      ${tile('#/guia', 'Cómo funciona Floty', 'El recorrido de cinco pasos, otra vez')}
+      ${tile('/como-funciona', 'Hoja para mostrar Floty', 'Una página para imprimir o mandar')}
+    </div>
     <div class="mas-group">Ajustes</div>
     <div class="mas">
       ${tile('#/tarifas', 'Precios y lugares', 'Categorías, tarifas, temporadas, adicionales y lugares')}
       ${admin ? tile('#/config', 'Empresa y contrato', 'Datos de la empresa, contrato, cancelaciones y factura') : ''}
       ${admin ? tile('#/usuarios', 'Usuarios', 'Quién entra al sistema y qué hizo') : ''}
       ${admin ? tile('#/cotizador', 'Página web: formulario', 'Que las cotizaciones de tu página entren solas') : ''}
-      ${admin ? tile('#/asistente', 'Página web: chat', 'Un chat de reservas para tu página') : ''}
       ${admin ? tile('#/importar', 'Pasar datos de una planilla', 'Autos, clientes y reservas desde Excel o Drive') : ''}
       ${state.user.platform_admin ? tile('#/empresas', 'Empresas', 'Otras agencias en la misma instalación') : ''}
     </div>`;
@@ -2912,7 +2987,7 @@ on(/^\/importar$/, async (view) => {
 }, 'importar');
 
 /* ============================================================
-   Asistente web: el chat que la agencia pone en su página
+   Link de reservas (y el chat para pegar en la página web de la agencia)
    ============================================================ */
 function loadChatScript() {
   if (window.RentChat) return Promise.resolve();
@@ -2928,47 +3003,61 @@ function loadChatScript() {
 
 on(/^\/asistente$/, async (view) => {
   if (!isAdmin()) {
-    view.innerHTML = '<div class="card"><p class="muted">Sólo los administradores configuran el asistente.</p></div>';
+    view.innerHTML = '<div class="card"><p class="muted">Sólo los administradores configuran el link de reservas.</p></div>';
     return;
   }
   const s = await GET('/settings');
-  // En una instalación con varias empresas, el código lleva la empresa (salvo la principal).
+  // En una instalación con varias empresas, el link y el código llevan la empresa (salvo la principal).
   const co = state.user.company;
-  const snippet = `<script src="${location.origin}/chat.js"${co && !co.principal ? ` data-empresa="${co.slug}"` : ''} async></script>`;
-  view.innerHTML = `<div class="page-head"><h1>Asistente web</h1></div>
+  const empresa = co && !co.principal ? co.slug : '';
+  const link = `${location.origin}/reservar${empresa ? `?empresa=${encodeURIComponent(empresa)}` : ''}`;
+  const share = `https://wa.me/?text=${encodeURIComponent(`${L('Reservá tu auto acá', 'Book your car here')}: ${link}`)}`;
+  const snippet = `<script src="${location.origin}/chat.js"${empresa ? ` data-empresa="${empresa}"` : ''} async></script>`;
+  const copy = (text) =>
+    (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(() => toast('Copiado'), () => toast('Seleccioná el texto y copialo', true));
+  view.innerHTML = `<div class="page-head"><h1>Link de reservas</h1></div>
     <div class="grid cols-2">
       <div class="card">
-        <h2>Configuración</h2>
-        <p class="muted">Un chat para la página web de la agencia: el cliente elige fechas, ve los autos libres con su precio y pide la reserva, que entra como <b>pendiente</b> para que la confirme el mostrador. Contesta solo, a cualquier hora, y no tiene costo por mensaje.</p>
+        <h2>Tu link</h2>
+        <p class="muted">Ponelo en la biografía de Instagram y mandalo por WhatsApp. El cliente elige las fechas, ve los autos libres con su precio y pide la reserva. Te aparece en Hoy, en "Para confirmar".</p>
+        <input id="link-url" readonly value="${esc(link)}" data-notr/>
+        <div class="actions" style="margin-top:10px">
+          <button class="btn primary" type="button" id="copy-link">Copiar el link</button>
+          <a class="btn" href="${esc(link)}" target="_blank" rel="noopener">Abrir</a>
+          <a class="btn" href="${esc(share)}" target="_blank" rel="noopener">${WA_ICON}Compartir por WhatsApp</a>
+        </div>
+        ${s.chat_enabled === '1' ? '' : '<p class="notice warn" style="margin-top:12px">El link está apagado: activalo abajo y guardá.</p>'}
+      </div>
+      <div class="card">
+        <h2>Lo que ve el cliente</h2>
         <form id="chat-form" class="form-grid">
-          <label class="check full"><input type="checkbox" name="chat_enabled" ${s.chat_enabled === '1' ? 'checked' : ''}/> Asistente activado</label>
-          <label class="full">Mensaje de bienvenida<input name="chat_welcome" maxlength="300" placeholder="¡Hola! Soy el asistente de ${esc(s.company_name || '')}…" value="${esc(s.chat_welcome || '')}"/></label>
-          <label class="full">WhatsApp para hablar con una persona (con código de país, ej. 5492901123456)<input name="chat_whatsapp" maxlength="30" value="${esc(s.chat_whatsapp || '')}"/></label>
+          <label class="check full"><input type="checkbox" name="chat_enabled" ${s.chat_enabled === '1' ? 'checked' : ''}/> Link de reservas activado</label>
+          <label class="full">Mensaje de bienvenida<input name="chat_welcome" maxlength="300" placeholder="¡Hola! Elegí las fechas y te mostramos los autos libres." value="${esc(s.chat_welcome || '')}"/></label>
+          <label class="full">WhatsApp de la agencia (con código de país, ej. 5492901123456)<input name="chat_whatsapp" maxlength="30" value="${esc(s.chat_whatsapp || '')}"/></label>
           <label class="full">Preguntas frecuentes (una por línea: Pregunta | Respuesta)<textarea name="chat_faq" rows="7">${esc(s.chat_faq || s.chat_faq_default || '')}</textarea></label>
           <div class="actions full"><button class="btn primary" type="submit">Guardar</button></div>
         </form>
       </div>
-      <div class="card">
-        <h2>Vista previa</h2>
-        <p class="muted">Así lo ve el cliente. Las reservas que pidas acá entran de verdad como pendientes.</p>
-        <div id="chat-preview"></div>
-      </div>
     </div>
-    <div class="card" style="margin-top:16px">
-      <h2>Cómo ponerlo en la página web</h2>
-      <p>Quien administra la página tiene que pegar esta línea antes de <code>&lt;/body&gt;</code>:</p>
+    <details class="card" id="chat-web" style="margin-top:16px">
+      <summary>Si tenés página web: un chat de reservas para pegar en ella</summary>
+      <p class="muted">Hace lo mismo que el link, pero adentro de tu página. Quien administra la página tiene que pegar esta línea antes de <code>&lt;/body&gt;</code>:</p>
       <pre class="snippet">${esc(snippet)}</pre>
       <div class="actions"><button class="btn" type="button" id="copy-snippet">Copiar</button></div>
       <p class="muted">La dirección de la página tiene que estar en <a href="#/cotizador">Cotizador web → sitios autorizados</a>. Opcional: <code>data-color="#0a7"</code> cambia el color del botón.</p>
-    </div>`;
-  $('#copy-snippet', view).addEventListener('click', () =>
-    (navigator.clipboard ? navigator.clipboard.writeText(snippet) : Promise.reject()).then(() => toast('Copiado'), () => toast('Seleccioná el texto y copialo', true)),
-  );
+      <h3>Vista previa</h3>
+      <p class="muted">Las reservas que pidas acá entran de verdad como pendientes.</p>
+      <div id="chat-preview"></div>
+    </details>`;
+  $('#copy-link', view).addEventListener('click', () => copy(link));
+  $('#copy-snippet', view).addEventListener('click', () => copy(snippet));
+  const details = $('#chat-web', view);
   const preview = async () => {
     const box = $('#chat-preview', view);
+    if (!details.open) return;
     box.replaceChildren();
     if (s.chat_enabled !== '1') {
-      box.innerHTML = '<p class="muted">Activá el asistente y guardá para verlo.</p>';
+      box.innerHTML = '<p class="muted">Activá el link de reservas y guardá para verlo.</p>';
       return;
     }
     try {
@@ -2980,16 +3069,247 @@ on(/^\/asistente$/, async (view) => {
       box.innerHTML = `<p class="error">${esc(e.message)}</p>`;
     }
   };
+  details.addEventListener('toggle', preview);
   $('#chat-form', view).addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = formData(e.target);
     f.chat_enabled = f.chat_enabled ? '1' : '0';
-    await run(() => PUT('/settings', f), 'Asistente guardado');
-    Object.assign(s, f);
-    preview();
+    await run(() => PUT('/settings', f), 'Link de reservas guardado');
+    route(); // vuelve a dibujar la pantalla (el aviso de apagado y la vista previa)
   });
-  preview();
 }, 'asistente');
+
+/* ============================================================
+   Páginas públicas (sin usuario): el link de reservas y la hoja "Cómo funciona"
+   ============================================================ */
+function publicPage(html) {
+  document.body.classList.add('public-mode');
+  const page = document.createElement('main');
+  page.className = 'pub';
+  page.innerHTML = html;
+  page.appendChild(languageSwitch());
+  document.body.appendChild(page);
+  return page;
+}
+
+/** /reservar[?empresa=slug]: la página que la agencia pone en Instagram y manda por WhatsApp. */
+async function bookingPage() {
+  const empresa = new URLSearchParams(location.search).get('empresa');
+  const call = async (method, p, body) => {
+    const res = await fetch(`/api/public/chat${p}${empresa ? `?empresa=${encodeURIComponent(empresa)}` : ''}`, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+    return data;
+  };
+  let cfg;
+  try {
+    cfg = await call('GET', '/config');
+  } catch {
+    publicPage('<div class="card pub-done"><h1>Reservas</h1><p class="muted">Este link de reservas no está disponible por ahora.</p></div>');
+    return;
+  }
+  Object.assign(state.settings, { currency: cfg.currency, locale: cfg.locale });
+  document.title = `${cfg.company} · ${L('Reservas', 'Bookings')}`;
+  const t = new Date();
+  let from = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1, 10, 0);
+  let to = addDays(from, 3);
+  let options = [];
+  let pick = null;
+  const QUICK = [
+    [1, '1 día'],
+    [3, '3 días'],
+    [7, '1 semana'],
+  ];
+  const page = publicPage(`
+    <header class="pub-head"><h1>${esc(cfg.company)}</h1><p>${esc(cfg.welcome)}</p></header>
+    <form class="qr" id="bk" novalidate>
+      <section>
+        <h2>¿Cuándo?</h2>
+        <div class="qr-dates">
+          <label class="qr-field">Retiro<input type="datetime-local" name="from" required></label>
+          <label class="qr-field">Devolución<input type="datetime-local" name="to" required></label>
+        </div>
+        <div class="chips">${QUICK.map(([n, label]) => `<button type="button" class="chip" data-days="${n}">${label}</button>`).join('')}</div>
+        ${
+          cfg.branches.length > 1
+            ? `<label class="qr-field" style="margin-top:8px">Lugar de retiro<select name="branch">${cfg.branches.map((b) => `<option value="${esc(b.code)}">${esc(b.name)}</option>`).join('')}</select></label>`
+            : ''
+        }
+      </section>
+      <section>
+        <h2>Elegí el auto</h2>
+        <div class="cars" id="bk-cars"><p class="muted">Cargando…</p></div>
+      </section>
+      <section>
+        <h2>Tus datos</h2>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <label class="qr-field">Nombre y apellido<input name="name" autocomplete="name" maxlength="120" required></label>
+          <label class="qr-field">WhatsApp (con código de país)<input name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" placeholder="+54 9 2901 555123" required></label>
+          <label class="qr-field">Email (opcional)<input name="email" type="email" autocomplete="email" maxlength="160"></label>
+          <label class="trap" aria-hidden="true">No completar<input name="_gotcha" tabindex="-1" autocomplete="off"></label>
+        </div>
+      </section>
+      <div class="qr-total">
+        <div class="sum"><span class="muted" id="bk-what">Elegí un auto</span><b id="bk-sum"></b></div>
+        <button class="btn primary big" type="submit">Pedir la reserva</button>
+        <small class="muted">No pagás nada ahora. La agencia te confirma por WhatsApp.</small>
+      </div>
+    </form>
+    ${
+      cfg.faq.length
+        ? `<section class="pub-faq"><h2>Preguntas frecuentes</h2>${cfg.faq.map((f) => `<details><summary>${esc(f.q)}</summary><p>${esc(f.a)}</p></details>`).join('')}</section>`
+        : ''
+    }`);
+  const form = $('#bk', page);
+  const days = () => Math.max(1, Math.round((to - from) / 86400000));
+  const set = () => {
+    form.from.value = localISO(from);
+    form.to.value = localISO(to);
+    form.from.min = localISO(new Date(t.getFullYear(), t.getMonth(), t.getDate()));
+    $$('.chip', form).forEach((c) => c.classList.toggle('on', Number(c.dataset.days) === Math.round((to - from) / 86400000)));
+  };
+  const dayWord = (n) => (n === 1 ? L('día', 'day') : L('días', 'days'));
+  const summary = () => {
+    const o = options.find((x) => x.code === pick);
+    $('#bk-what', form).textContent = o ? `${o.name} · ${o.days} ${dayWord(o.days)}` : L('Elegí un auto', 'Choose a car');
+    $('#bk-sum', form).textContent = o ? money(o.total) : '';
+  };
+  const paint = () => {
+    if (!options.some((o) => o.code === pick)) pick = null;
+    $('#bk-cars', form).innerHTML = options.length
+      ? options
+          .map((o) => {
+            const info = [o.description, o.seats ? `${o.seats} ${L('asientos', 'seats')}` : ''].filter(Boolean).join(' · ');
+            return `<button type="button" class="car${o.code === pick ? ' on' : ''}" data-cat="${esc(o.code)}" aria-pressed="${o.code === pick}">
+              <span><b>${esc(o.name)}</b>${info ? `<small>${esc(info)}</small>` : ''}</span>
+              <span class="price">${money(o.total)}<small class="muted">${o.days} ${dayWord(o.days)}</small></span>
+            </button>`;
+          })
+          .join('')
+      : '<p class="hoy-empty">No quedan autos libres en esas fechas. Probá con otras.</p>';
+    summary();
+  };
+  // Disponibilidad y precio de cada categoría (al público nunca se le dice cuántos autos quedan).
+  const load = async () => {
+    try {
+      options = (await call('POST', '/quote', { pickup_at: localISO(from), return_at: localISO(to), pickup_branch: form.branch ? form.branch.value : undefined })).options;
+      paint();
+    } catch (e) {
+      options = [];
+      summary();
+      $('#bk-cars', form).innerHTML = `<p class="error">${esc(e.message)}</p>`;
+    }
+  };
+  form.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-days]');
+    if (chip) {
+      to = addDays(from, Number(chip.dataset.days));
+      set();
+      load();
+    }
+    const c = e.target.closest('[data-cat]');
+    if (c) {
+      pick = c.dataset.cat;
+      paint();
+    }
+  });
+  form.addEventListener('change', (e) => {
+    if (e.target.name === 'branch') return load();
+    if (e.target.name !== 'from' && e.target.name !== 'to') return;
+    const f = new Date(form.from.value);
+    const tt = new Date(form.to.value);
+    if (Number.isNaN(f.getTime()) || Number.isNaN(tt.getTime())) return;
+    // Si cambia el retiro, la devolución se corre igual: se mantienen los días elegidos.
+    if (e.target.name === 'from') to = addDays(f, days());
+    else to = tt;
+    from = f;
+    set();
+    load();
+  });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const o = options.find((x) => x.code === pick);
+    const name = form.name.value.trim();
+    const phone = form.phone.value.trim();
+    if (!o) return toast(L('Elegí un auto', 'Choose a car'), true);
+    if (name.length < 3) return toast(L('Escribí tu nombre y apellido', 'Write your full name'), true);
+    if (phone.replace(/\D/g, '').length < 6) return toast(L('Escribí tu WhatsApp con el código de país', 'Write your WhatsApp number with the country code'), true);
+    const btn = form.querySelector('[type=submit]');
+    btn.disabled = true;
+    try {
+      const r = await call('POST', '/book', {
+        pickup_at: localISO(from),
+        return_at: localISO(to),
+        pickup_branch: form.branch ? form.branch.value : cfg.branches[0] && cfg.branches[0].code,
+        category: o.code,
+        name,
+        phone,
+        email: form.email.value.trim(),
+        _gotcha: form._gotcha.value,
+        notes: L('', 'El cliente eligió inglés'),
+      });
+      const when = `${dayName(localISO(from))} ${fmtDT(localISO(from)).slice(11)} → ${dayName(localISO(to))} ${fmtDT(localISO(to)).slice(11)}`;
+      const text = L(
+        `Hola, soy ${name}. Acabo de pedir una reserva${r.code ? ` (${r.code})` : ''}: ${o.name}, ${when}.`,
+        `Hi, I'm ${name}. I just requested a booking${r.code ? ` (${r.code})` : ''}: ${o.name}, ${when}.`,
+      );
+      form.remove();
+      $('.pub-faq', page)?.remove();
+      $('.pub-head', page).insertAdjacentHTML(
+        'afterend',
+        `<div class="card pub-done">
+          <div class="pub-ok" aria-hidden="true">✓</div>
+          <h1>¡Listo! Te confirmamos por WhatsApp</h1>
+          <p>${esc(o.name)} · ${when} · <b>${money(o.total)}</b></p>
+          <p class="muted">${L(`${esc(cfg.company)} te va a escribir para confirmar la reserva.`, `${esc(cfg.company)} will message you to confirm the booking.`)}</p>
+          ${cfg.whatsapp ? `<a class="btn ok big" href="https://wa.me/${esc(cfg.whatsapp)}?text=${encodeURIComponent(text)}" target="_blank" rel="noopener">${WA_ICON}Escribirle a la agencia</a>` : ''}
+        </div>`,
+      );
+      window.scrollTo(0, 0);
+    } catch (err) {
+      toast(err.message, true);
+      btn.disabled = false;
+    }
+  });
+  set();
+  load();
+}
+
+/** /como-funciona: una hoja para mostrar o imprimir cuando se le explica Floty a una agencia. */
+function howItWorksPage() {
+  document.title = L('Cómo funciona Floty', 'How Floty works');
+  // En la demo el logo va dentro de la página (no hay archivos aparte): se toma el de la pantalla de ingreso.
+  const logo = $('.login-brand img')?.getAttribute('src') || '/floty.svg';
+  const page = publicPage(`<article class="card sheet">
+    <div class="login-brand"><img src="${esc(logo)}" alt="" width="44" height="44"><div><h1>Floty</h1><p class="muted">Gestión simple para tu rent a car</p></div></div>
+    <h2>Qué es</h2>
+    <p>Un sistema para llevar las reservas, los autos y los clientes de un rent a car. Se usa desde la compu o desde el celular, y cada persona del equipo entra con su usuario.</p>
+    <h2>Qué hace</h2>
+    <ol class="sheet-list">
+      <li><b>Hoy</b><span>Al abrirlo ves quién retira y quién devuelve un auto, cuánto debe cada cliente y los pedidos para confirmar.</span></li>
+      <li><b>Reservas en un minuto</b><span>Fechas, auto y cliente. El voucher y el contrato salen solos y se mandan por WhatsApp.</span></li>
+      <li><b>Calendario y autos</b><span>Qué auto está ocupado cada día, cuáles están en el taller y qué seguro o VTV está por vencer.</span></li>
+      <li><b>Link de reservas</b><span>Un link para Instagram y WhatsApp: el cliente elige fechas y auto, ve el precio y pide la reserva. Vos la confirmás.</span></li>
+    </ol>
+    <h2>Qué hace falta para arrancar</h2>
+    <ul>
+      <li>Una compu o un celular con internet.</li>
+      <li>Los datos de la agencia y los lugares de entrega (aeropuerto, oficina, hoteles).</li>
+      <li>Las categorías de autos con su tarifa diaria.</li>
+      <li>Los autos: uno por uno o desde una planilla de Excel.</li>
+      <li>Un usuario para cada persona del equipo.</li>
+    </ul>
+    <h2>Probalo</h2>
+    <p>Demo con datos de ejemplo: <a href="https://pruebarent.netlify.app" data-notr>pruebarent.netlify.app</a></p>
+    <p class="muted">Usuario y clave: <span data-notr>admin@rentacar.local</span> / <span data-notr>admin123</span></p>
+    <div class="actions no-print"><button class="btn primary" type="button" id="print">Imprimir</button><a class="btn" href="/">Entrar a Floty</a></div>
+  </article>`);
+  $('#print', page).addEventListener('click', () => window.print());
+}
 
 /* ============================================================
    Inicio
@@ -2998,4 +3318,6 @@ on(/^\/asistente$/, async (view) => {
 try {
   localStorage.removeItem('token');
 } catch {}
-startSession();
+// El link de reservas y la hoja "Cómo funciona" son públicos: no piden usuario.
+const PUBLIC_PAGES = { '/reservar': bookingPage, '/como-funciona': howItWorksPage };
+(PUBLIC_PAGES[location.pathname.replace(/\/+$/, '')] || startSession)();
