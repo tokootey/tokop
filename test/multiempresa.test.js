@@ -280,6 +280,29 @@ test('cada empresa entra por su subdominio o por su dominio propio', async () =>
   assert.equal(platform.byHost(`${companyB.slug}.floty.test`), null);
 });
 
+test('Panel de Floty: con FLOTY_OWNERS sólo el dueño maneja empresas y dominios', async () => {
+  // Otro administrador de la empresa principal (por ejemplo, alguien del mostrador con permisos de admin).
+  const other = { email: 'encargado@rentacar.local', password: 'Mostrador2026Clave' };
+  assert.equal((await call(cookieA, 'POST', '/api/users', { name: 'Encargado', email: other.email, password: 'Inicial2026Clave', role: 'admin' })).status, 201);
+  const cookieOther = await firstLogin(other.email, 'Inicial2026Clave', other.password);
+  process.env.FLOTY_OWNERS = ` ${A.email.toUpperCase()} , dueno@floty.test`;
+  try {
+    assert.equal((await call(cookieA, 'GET', '/api/auth/me')).data.platform_admin, true);
+    assert.equal((await call(cookieA, 'GET', '/api/platform/companies')).status, 200);
+    for (const cookie of [cookieOther, cookieB]) {
+      assert.equal((await call(cookie, 'GET', '/api/auth/me')).data.platform_admin, false);
+      assert.equal((await call(cookie, 'GET', '/api/platform/companies')).status, 403);
+      assert.equal((await call(cookie, 'PUT', `/api/platform/companies/${companyB.id}/domain`, { domain: 'robado.test' })).status, 403);
+      assert.equal((await call(cookie, 'POST', '/api/platform/companies', { name: 'Trucha', country: 'AR', admin_name: 'X', admin_email: 'x@trucha.test' })).status, 403);
+    }
+  } finally {
+    delete process.env.FLOTY_OWNERS;
+  }
+  // Sin la variable, como antes: cualquier administrador de la principal (nunca los de una agencia).
+  assert.equal((await call(cookieOther, 'GET', '/api/platform/companies')).status, 200);
+  assert.equal((await call(cookieB, 'GET', '/api/platform/companies')).status, 403);
+});
+
 test('cada empresa guarda su base en su propio archivo, y el registro sobrevive a un reinicio', () => {
   assert.ok(fs.existsSync(path.join(dir, 'empresas.db')));
   assert.ok(fs.existsSync(path.join(dir, 'empresas', `${companyB.slug}.db`)));

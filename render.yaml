@@ -35,6 +35,10 @@ services:
       # Se carga en Environment cuando exista el dominio; vacío = una sola dirección para todas.
       - key: FLOTY_DOMAIN
         sync: false
+      # Emails del dueño de Floty (separados por coma): sólo ellos ven el Panel de Floty (empresas y dominios).
+      # Vacío = cualquier administrador de la empresa principal.
+      - key: FLOTY_OWNERS
+        sync: false
       - key: ADMIN_EMAIL
         value: admin@rentacar.local
       - key: ADMIN_PASSWORD

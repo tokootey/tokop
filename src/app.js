@@ -2,7 +2,7 @@
 
 const path = require('node:path');
 const express = require('express');
-const { DEFAULT_PASSWORD, login, logout, requireUser, requirePasswordChanged, requireAdmin, changePassword, hashPassword, verifyPassword } = require('./auth');
+const { DEFAULT_PASSWORD, login, logout, requireUser, requirePasswordChanged, changePassword, hashPassword, verifyPassword } = require('./auth');
 const { securityHeaders, httpsRedirect, sameOrigin } = require('./security');
 const { catalogRoutes } = require('./routes/catalog');
 const { operationsRoutes } = require('./routes/operations');
@@ -73,7 +73,7 @@ function companyApi(db, { uploadsDir, company, platform }) {
   const auth = requireUser(db);
   // La empresa va con el usuario: la pantalla la usa para armar los códigos del sitio web y la pestaña "Empresas".
   const companyInfo = (req) =>
-    company ? { company: { slug: company.slug, name: company.name, principal: company.principal }, platform_admin: company.principal && req.user.role === 'admin' } : {};
+    company ? { company: { slug: company.slug, name: company.name, principal: company.principal }, platform_admin: isFlotyOwner(req.user, company) } : {};
   app.get('/api/auth/me', auth, (req, res) => res.json({ ...req.user, ...companyInfo(req) }));
   app.post('/api/auth/logout', sameOrigin, auth, (req, res) => {
     logout(db, req, res);
@@ -99,10 +99,24 @@ function companyApi(db, { uploadsDir, company, platform }) {
   return app;
 }
 
-/** Alta y listado de empresas: sólo para los administradores de la empresa principal. */
+/**
+ * Dueño de Floty: quien maneja las empresas y sus dominios (el "Panel de Floty").
+ * Con FLOTY_OWNERS (emails separados por coma) sólo esos usuarios; sin ella, cualquier administrador
+ * de la empresa principal, como hasta ahora. Los administradores de las agencias nunca.
+ */
+function isFlotyOwner(user, company) {
+  if (!user || !company || !company.principal || user.role !== 'admin') return false;
+  const owners = String(process.env.FLOTY_OWNERS || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  return owners.length === 0 || owners.includes(String(user.email).toLowerCase());
+}
+
+/** Panel de Floty: alta de empresas y sus dominios. Sólo el dueño de Floty. */
 function platformRoutes(platform, company) {
   const router = express.Router();
-  router.use(requireAdmin, (_req, _res, next) => next(company.principal ? null : new HttpError(403, 'Sólo la empresa principal da de alta empresas')));
+  router.use((req, _res, next) => next(isFlotyOwner(req.user, company) ? null : new HttpError(403, 'Sólo el dueño de Floty maneja las empresas')));
   router.get('/companies', (_req, res) =>
     res.json(platform.list().map(({ id, slug, name, created_at, principal, domain, address }) => ({ id, slug, name, created_at, principal, domain, address }))),
   );

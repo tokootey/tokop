@@ -143,7 +143,7 @@ La dirección de la página tiene que estar en *Cotizador web → sitios autoriz
 
 Una sola instalación puede atender a varias agencias. Cada una tiene sus propios datos (reservas, flota, clientes, usuarios, tarifas y configuración del país) en su propia base, y nadie de una empresa puede ver los datos de otra.
 
-1. Entrá como administrador de la empresa principal (la primera de la instalación) y andá a *Ajustes → Empresas → + Nueva empresa*.
+1. Entrá como dueño de Floty y tocá **Panel de Floty** (abajo, junto a *Salir*) → *+ Nueva empresa*. El panel sólo lo ven los emails de la variable `FLOTY_OWNERS`; si está vacía, cualquier administrador de la empresa principal. Los administradores de las agencias nunca lo ven.
 2. Poné el nombre, el país y el nombre y email de quien la va a administrar. La app muestra una **contraseña inicial** una sola vez: pasásela a esa persona en persona o por teléfono.
 3. Esa persona entra en la misma dirección con su email. La app le pide cambiar la contraseña y le muestra los primeros pasos.
 
@@ -156,7 +156,7 @@ Las instalaciones de antes siguen igual: su base pasa a ser la empresa principal
 Cada empresa puede entrar por su propia dirección, como hacen Rently y otros sistemas:
 
 - **Subdominio de Floty:** `<código de la empresa>.<dominio de Floty>`, por ejemplo `andes.floty.app`. Funciona solo cuando la instalación tiene la variable `FLOTY_DOMAIN` (por ejemplo `floty.app`) y el dominio tiene un registro comodín `*.floty.app` que apunta al servidor. En Render: *Settings → Custom Domains* → agregar `floty.app` y `*.floty.app`.
-- **Dominio propio de la agencia:** por ejemplo `reservas.suagencia.com.ar`. Se carga en *Ajustes → Empresas → Dominio propio*. Quien maneja ese dominio (en NIC.ar si es .com.ar) agrega un registro **CNAME** que apunte al servidor de Floty, y el dominio también se agrega en Render (*Custom Domains*). Puede tardar hasta 24 horas en funcionar.
+- **Dominio propio de la agencia:** por ejemplo `reservas.suagencia.com.ar`. Lo carga el dueño de Floty en *Panel de Floty → Dominio propio* (las agencias no pueden). Quien maneja ese dominio (en NIC.ar si es .com.ar) agrega un registro **CNAME** que apunte al servidor de Floty, y el dominio también se agrega en Render (*Custom Domains*). Puede tardar hasta 24 horas en funcionar.
 
 Entrando por la dirección de una empresa, todo va a esa empresa: el ingreso, el link de reservas, el formulario web y el asistente (sin necesidad de `?empresa=`). Un usuario o una sesión de otra empresa no sirven ahí. Sin `FLOTY_DOMAIN` ni dominios propios, todo funciona como antes, por una sola dirección.
 

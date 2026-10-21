@@ -226,6 +226,8 @@ async function startSession() {
   $('#shell').classList.remove('hidden');
   $('#user-name').textContent = state.user.name;
   $$('.admin-only').forEach((el) => el.classList.toggle('hidden', state.user.role !== 'admin'));
+  // Panel de Floty: sólo el dueño de Floty (empresas y dominios), nunca las agencias.
+  $('#floty-panel').classList.toggle('hidden', !state.user.platform_admin);
   await loadCatalogs();
   checkStale();
   route();
@@ -330,7 +332,7 @@ const on = (pattern, handler, navKey) => routes.push({ pattern, handler, navKey 
 // Menú corto: "Flota y taller" y "Ajustes" agrupan varias pantallas, que se eligen con pestañas arriba.
 // Sección del menú que queda marcada (Ajustes, Reservas y Clientes están en "Más").
 const NAV_MENU = { ajustes: 'mas', reservas: 'mas', clientes: 'mas', completa: 'mas' };
-const NAV_GROUP = { flota: 'flota', mantenimiento: 'flota', tarifas: 'ajustes', cotizador: 'ajustes', config: 'ajustes', usuarios: 'ajustes', importar: 'ajustes', asistente: 'ajustes', empresas: 'ajustes' };
+const NAV_GROUP = { flota: 'flota', mantenimiento: 'flota', tarifas: 'ajustes', cotizador: 'ajustes', config: 'ajustes', usuarios: 'ajustes', importar: 'ajustes', asistente: 'ajustes' };
 const SUBNAV = {
   flota: [
     ['flota', '#/flota', 'Autos'],
@@ -343,7 +345,6 @@ const SUBNAV = {
     ['cotizador', '#/cotizador', 'Cotizador web', true],
     ['asistente', '#/asistente', 'Link de reservas', true],
     ['importar', '#/importar', 'Importar datos', true],
-    ['empresas', '#/empresas', 'Empresas', 'platform'],
   ],
 };
 function renderSubnav(group, current) {
@@ -1021,7 +1022,6 @@ on(/^\/mas$/, async (view) => {
       ${admin ? tile('#/cotizador', 'Página web: formulario', 'Que las cotizaciones de tu página entren solas') : ''}
       ${admin ? tile('#/asistente', 'Link de reservas (opcional)', '¿No tenés reservas por internet? Un link para Instagram y WhatsApp') : ''}
       ${admin ? tile('#/importar', 'Pasar datos de una planilla', 'Autos, clientes y reservas desde Excel o Drive') : ''}
-      ${state.user.platform_admin ? tile('#/empresas', 'Empresas', 'Otras agencias en la misma instalación') : ''}
     </div>
     ${
       // Sólo en la demo del navegador (scripts/demo/runtime.js define __demoReset).
@@ -2777,7 +2777,12 @@ on(/^\/usuarios$/, async (view) => {
 /* ---------- Empresas (varias agencias en la misma instalación) ---------- */
 on(/^\/empresas$/, async (view) => {
   const list = await GET('/platform/companies');
-  view.innerHTML = `<div class="page-head"><h1>Empresas</h1><button class="btn primary" data-new>+ Nueva empresa</button></div>
+  if (!state.user.platform_admin) {
+    view.innerHTML = '<div class="card"><p class="muted">Sólo el dueño de Floty maneja las empresas.</p></div>';
+    return;
+  }
+  view.innerHTML = `<div class="page-head"><h1>Panel de Floty</h1><button class="btn primary" data-new>+ Nueva empresa</button></div>
+    <p class="muted"><b>Sólo lo ves vos.</b> Acá se dan de alta las agencias y se cargan sus direcciones. Los administradores de cada agencia no tienen acceso.</p>
     <p class="muted">Cada empresa tiene sus propios datos: reservas, flota, clientes, usuarios, tarifas y configuración. Nadie de una empresa puede ver los datos de otra.</p>
     <div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Dirección</th><th>Alta</th><th></th></tr></thead><tbody>${list
       .map(
