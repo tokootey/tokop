@@ -1022,7 +1022,17 @@ on(/^\/mas$/, async (view) => {
       ${admin ? tile('#/asistente', 'Link de reservas (opcional)', '¿No tenés reservas por internet? Un link para Instagram y WhatsApp') : ''}
       ${admin ? tile('#/importar', 'Pasar datos de una planilla', 'Autos, clientes y reservas desde Excel o Drive') : ''}
       ${state.user.platform_admin ? tile('#/empresas', 'Empresas', 'Otras agencias en la misma instalación') : ''}
-    </div>`;
+    </div>
+    ${
+      // Sólo en la demo del navegador (scripts/demo/runtime.js define __demoReset).
+      window.__demoReset
+        ? `<div class="mas-group">Demo</div><div class="mas"><a href="#/mas" id="demo-reset"><b>Reiniciar datos</b><span>Esta demo guarda los datos solo en este navegador. Vuelve a los datos de ejemplo.</span></a></div>`
+        : ''
+    }`;
+  $('#demo-reset', view)?.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.__demoReset();
+  });
 }, 'mas');
 
 function breakdownHtml(q) {

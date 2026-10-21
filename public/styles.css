@@ -416,7 +416,6 @@ pre.snippet { color: var(--text); background: var(--soft); border: 1px solid var
 /* Páginas públicas: link de reservas (/reservar) y hoja "Cómo funciona" (/como-funciona). */
 .pub { max-width: 640px; margin: 0 auto; padding: 20px 16px 32px; display: flex; flex-direction: column; gap: 18px; }
 .pub .lang-switch { justify-content: center; }
-.public-mode .demo-bar { display: none; }
 .pub-head h1 { margin: 0 0 4px; font-size: 26px; }
 .pub-head p { margin: 0; color: var(--muted); font-size: 15px; }
 .pub .qr { width: 100%; }
