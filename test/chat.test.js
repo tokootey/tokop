@@ -82,7 +82,7 @@ test('el pedido entra como reserva pendiente desde la web', async () => {
   assert.equal(res.source, 'web');
   assert.equal(res.cat, 'B');
   assert.equal(res.full_name, 'Lucía Chat');
-  assert.match(res.notes, /asistente/);
+  assert.match(res.notes, /link de reservas/);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM reservations').get().n, before + 1);
 });
 

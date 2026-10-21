@@ -194,7 +194,7 @@ function operationsRoutes(db) {
     const total = fleet.reduce((a, f) => a + f.n, 0);
     const operational = total - (byStatus.mantenimiento || 0) - (byStatus.fuera_servicio || 0);
     // total y paid: la pantalla Hoy muestra cuánto debe cada cliente.
-    const baseSelect = `SELECT r.id, r.code, r.status, r.pickup_at, r.return_at, r.total, c.full_name AS customer_name, c.phone AS customer_phone,
+    const baseSelect = `SELECT r.id, r.code, r.status, r.source, r.pickup_at, r.return_at, r.total, c.full_name AS customer_name, c.phone AS customer_phone,
         cat.code AS category_code, cat.name AS category_name, v.plate AS vehicle_plate, v.brand AS vehicle_brand, v.model AS vehicle_model,
         pb.name AS pickup_branch_name, rb.name AS return_branch_name,
         (SELECT COALESCE(SUM(CASE WHEN p.kind = 'pago' THEN p.amount WHEN p.kind = 'devolucion' THEN -p.amount ELSE 0 END), 0) FROM payments p WHERE p.reservation_id = r.id) AS paid
@@ -212,6 +212,8 @@ function operationsRoutes(db) {
       overdue: db.prepare(`${baseSelect} WHERE r.status = 'en_curso' AND r.return_at < ? ORDER BY r.return_at`).all(now),
       late_pickups: db.prepare(`${baseSelect} WHERE r.status IN ('pendiente','confirmada') AND substr(r.pickup_at,1,10) < ? ORDER BY r.pickup_at`).all(today),
       pending_confirmation: db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE status = 'pendiente'`).get().n,
+      // Pedidos para confirmar (link de reservas, cotizador o cargados como pendientes): la pantalla Hoy los lista.
+      pending: db.prepare(`${baseSelect} WHERE r.status = 'pendiente' ORDER BY r.pickup_at LIMIT 50`).all(),
       unassigned_next_7d: db
         .prepare(`SELECT COUNT(*) AS n FROM reservations WHERE status IN ('pendiente','confirmada') AND vehicle_id IS NULL AND pickup_at <= ?`)
         .get(fmtLocal(new Date(Date.now() + 7 * 86400000))).n,
