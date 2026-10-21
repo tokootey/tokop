@@ -6,10 +6,10 @@ Aplicación web para el día a día del rent a car (flota, reservas, contratos, 
 
 | Módulo | Para qué sirve |
 | --- | --- |
-| **Panel** | Entregas y devoluciones del día, devoluciones vencidas, ocupación, cobrado del mes, vencimientos de seguro/VTV y solicitudes del cotizador con error. |
-| **Nueva reserva** | Cotiza en el momento: muestra el precio y la disponibilidad de cada categoría según las fechas, el lugar y los adicionales. Busca o crea el cliente y asigna el auto. |
+| **Hoy** | Quién sale y quién vuelve hoy (y los atrasados), con botones para entregar o recibir el auto y para escribirle por WhatsApp; cuánto debe cada uno, autos libres, alquilados y en el taller, y cuántos salen y vuelven mañana. |
+| **Nueva reserva** | En un minuto desde el celular: fechas (1 día, 3 días, 1 semana…), un auto de los libres con su precio, nombre y WhatsApp; se guarda confirmada y abre el voucher para mandarlo. La **reserva con más opciones** (en *Más*) cotiza en el momento: muestra el precio y la disponibilidad de cada categoría según las fechas, el lugar y los adicionales. Busca o crea el cliente y asigna el auto. |
 | **Reservas** | Listado con filtros. En cada reserva: confirmar, asignar auto, **entregar** (abre el contrato con km y combustible), **devolver** (calcula km excedentes, combustible faltante, días de demora y daños), registrar pagos y garantías, imprimir el contrato y ver el historial. |
-| **Planning** | Grilla de vehículos por días (estilo Rently): reservas por estado, autos en taller y reservas sin auto asignado. |
+| **Calendario** | Grilla de vehículos por días (estilo Rently): reservas por estado, autos en taller y reservas sin auto asignado. |
 | **Flota** | Vehículos, estado, km, combustible, sucursal, vencimientos de seguro y VTV, historial de cada auto. |
 | **Clientes** | Datos, documento, licencia (no deja entregar sin licencia o con licencia vencida) e historial. |
 | **Contrato para imprimir** | Botón **Contrato PDF**: genera el contrato en un archivo PDF con los datos del cliente, lo descarga y guarda una copia en la reserva (*Fotos y documentación → Contratos*). También **Imprimir contrato**. Las dos opciones funcionan desde cualquier reserva, también antes de entregar el auto (pre-contrato con km y combustible para completar). Son 2 hojas A4: datos del cliente, conductor adicional, auto, período, entrega y devolución, diagrama para marcar daños, precio, pagos, firmas y condiciones generales (15 cláusulas). Las condiciones, la franquicia y la jurisdicción se editan en *Configuración*. |
@@ -18,6 +18,8 @@ Aplicación web para el día a día del rent a car (flota, reservas, contratos, 
 | **Tarifas y sucursales** | Categorías (tarifa diaria y semanal, garantía, km incluidos), adicionales (por día o por alquiler, con tope), temporadas (+%) y lugares de entrega. |
 | **Cotizador** | Conexión con el formulario web y con la API del cotizador, bandeja de solicitudes recibidas y avisos salientes. |
 | **Usuarios** | Perfil *operador* (mostrador) y perfil *administrador* (también configura tarifas, el cotizador y los usuarios). |
+
+El menú tiene cuatro secciones: **Hoy**, **Calendario**, **Autos** y **Más** (todas las reservas, clientes, taller y ajustes). En el celular queda abajo, como una app, con el botón **Nueva reserva** siempre a mano.
 
 ## Ver la app en tu computadora (sin saber programar)
 

@@ -328,6 +328,8 @@ const routes = [];
 const on = (pattern, handler, navKey) => routes.push({ pattern, handler, navKey });
 
 // Menú corto: "Flota y taller" y "Ajustes" agrupan varias pantallas, que se eligen con pestañas arriba.
+// Sección del menú que queda marcada (Ajustes, Reservas y Clientes están en "Más").
+const NAV_MENU = { ajustes: 'mas', reservas: 'mas', clientes: 'mas', completa: 'mas' };
 const NAV_GROUP = { flota: 'flota', mantenimiento: 'flota', tarifas: 'ajustes', cotizador: 'ajustes', config: 'ajustes', usuarios: 'ajustes', importar: 'ajustes', asistente: 'ajustes', empresas: 'ajustes' };
 const SUBNAV = {
   flota: [
@@ -358,8 +360,11 @@ async function route() {
     const m = hash.match(r.pattern);
     if (m) {
       const group = NAV_GROUP[r.navKey];
-      $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === (group || r.navKey)));
+      const menu = NAV_MENU[group || r.navKey] || group || r.navKey;
+      $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === menu));
+      $('#fab').classList.toggle('hidden', ['nueva', 'completa'].includes(r.navKey));
       renderSubnav(group, r.navKey);
+      closeModal(); // un cartel abierto no queda encima de otra pantalla
       const view = $('#view');
       view.innerHTML = '<p class="muted">Cargando…</p>';
       try {
@@ -387,67 +392,80 @@ function setupCard(setup) {
       .join('')}</ul></div>`;
 }
 
+// Pantalla Hoy: lo que el dueño mira primero. Quién sale y quién vuelve hoy, con un botón para cada cosa.
+const WEEKDAYS = () => L(['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'], ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
+const dayName = (s) => `${WEEKDAYS()[new Date(String(s).slice(0, 10) + 'T12:00').getDay()]} ${fmtD(s).slice(0, 5)}`;
+const WA_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-12.4 7.4L3 20.5l1.6-5.4A8.4 8.4 0 1 1 21 11.5z"/></svg>';
+/** Enlace para escribirle por WhatsApp al cliente (el número con código de país, sin signos). */
+const waLink = (phone) => {
+  const n = String(phone || '').replace(/\D/g, '');
+  return n ? `<a class="btn wa" href="https://wa.me/${n}" target="_blank" rel="noopener" aria-label="Escribirle por WhatsApp">${WA_ICON}</a>` : '';
+};
+
 on(/^\/panel$/, async (view) => {
   const d = await GET('/dashboard');
-  // Lista de reservas del día: hora | cliente | auto, cada fila lleva a la reserva.
-  // Botón directo para entregar o recibir el auto sin entrar antes a la reserva.
-  const quick = (r) =>
-    r.status === 'en_curso'
-      ? `<a class="btn small ok" href="#/reservas/${r.id}?accion=checkin">Recibir</a>`
-      : `<a class="btn small ok" href="#/reservas/${r.id}?accion=checkout">Entregar</a>`;
-  const list = (rows, kind, empty) =>
-    rows.length
-      ? `<div class="daylist">${rows
-          .map((r) => {
-            const at = kind === 'pickup' ? r.pickup_at : r.return_at;
-            const branch = kind === 'pickup' ? r.pickup_branch_name : r.return_branch_name;
-            return `<div class="dayrow click" data-href="#/reservas/${r.id}">
-              <div class="when"><b>${fmtDT(at).slice(11)}</b><small>${fmtD(at).slice(0, 5)}</small></div>
-              <div class="who"><b>${esc(r.customer_name)}</b><small>${esc(r.code)}${r.customer_phone ? ` · ${esc(r.customer_phone)}` : ''}${branch ? ` · ${esc(branch)}` : ''}</small></div>
-              <div class="what">${r.vehicle_plate ? `<span class="plate">${esc(r.vehicle_plate)}</span>` : '<span class="badge b-pendiente">sin auto</span>'}<small>Cat. ${esc(r.category_code)}</small></div>
-              ${quick(r)}
-            </div>`;
-          })
-          .join('')}</div>`
-      : `<p class="empty">${empty}</p>`;
-  const count = (n) => `<span class="count">${n}</span>`;
-  const kpi = (label, value, sub = '', extra = '') => `<div class="kpi"><div class="l">${label}</div><div class="v">${value}</div>${sub ? `<div class="s">${sub}</div>` : ''}${extra}</div>`;
-  view.innerHTML = `
-    <div class="page-head"><h1>Panel</h1><a class="btn primary" href="#/reservas/nueva">+ Nueva reserva</a></div>
-    ${setupCard(d.setup)}
-    <div class="kpis">
-      ${kpi('Disponibles', d.fleet.disponible || 0, `listos para entregar · ${d.fleet.mantenimiento || 0} en taller`)}
-      ${kpi('Alquilados ahora', d.fleet.alquilado || 0, `ocupación ${d.occupancy}% de la flota`, `<div class="meter"><i style="width:${Math.min(100, Number(d.occupancy) || 0)}%"></i></div>`)}
-      ${kpi('A confirmar', d.pending_confirmation, d.unassigned_next_7d ? `${d.unassigned_next_7d} sin auto en los próximos 7 días` : 'reservas pendientes')}
-      ${kpi('Cobrado este mes', money(d.month_revenue), `${d.month_reservations} reserva(s) nuevas este mes`)}
-    </div>
-    ${
-      d.quote_errors
-        ? `<div class="notice warn">Hay <b>${d.quote_errors}</b> solicitud(es) del cotizador o del formulario web con error. <a href="#/cotizador">Revisar bandeja</a></div>`
-        : ''
-    }
-    <div class="dash">
-      <div class="card"><h2>Entregas de hoy ${count(d.pickups_today.length)}</h2>${list(d.pickups_today, 'pickup', 'No hay entregas para hoy.')}</div>
-      <div class="card"><h2>Devoluciones de hoy ${count(d.returns_today.length)}</h2>${list(d.returns_today, 'return', 'No hay devoluciones para hoy.')}</div>
-      ${/* Las alertas sólo aparecen cuando hay algo para atender. */ ''}
-      ${d.overdue.length ? `<div class="card alert"><h2>Devoluciones vencidas ${count(d.overdue.length)}</h2>${list(d.overdue, 'return', '')}</div>` : ''}
-      ${d.late_pickups.length ? `<div class="card alert"><h2>Clientes que no retiraron ${count(d.late_pickups.length)}</h2>${list(d.late_pickups, 'pickup', '')}</div>` : ''}
-      ${
-        d.alerts.documents.length
-          ? `<div class="card wide"><h2>Seguro o VTV por vencer (30 días) ${count(d.alerts.documents.length)}</h2><div class="daylist">${d.alerts.documents
-              .map(
-                (v) =>
-                  `<div class="dayrow docs"><span class="plate">${esc(v.plate)}</span><div><small>Seguro</small><b>${fmtD(v.insurance_expiry) || '—'}</b></div><div><small>VTV</small><b>${fmtD(v.vtv_expiry) || '—'}</b></div></div>`,
-              )
-              .join('')}</div></div>`
-          : ''
-      }
-      ${
-        !d.overdue.length && !d.late_pickups.length && !d.alerts.documents.length
-          ? '<div class="card wide"><p class="calm">✔ Todo en orden: no hay devoluciones vencidas, clientes sin retirar ni seguros o VTV por vencer.</p></div>'
-          : ''
-      }
+  const car = (r) => (r.vehicle_plate ? `${esc([r.vehicle_brand, r.vehicle_model].filter(Boolean).join(' ') || r.category_name)} · ${esc(r.vehicle_plate)}` : `${esc(r.category_name)} · sin auto asignado`);
+  const owes = (r) => {
+    const due = Math.round((Number(r.total) - Number(r.paid)) * 100) / 100;
+    return due > 0 ? `<span class="pill debe">Debe ${money(due)}</span>` : '<span class="pill ok">Pagado</span>';
+  };
+  const trip = (r, kind) => {
+    const out = kind === 'out';
+    const at = out ? r.pickup_at : r.return_at;
+    const where = out ? r.pickup_branch_name : r.return_branch_name;
+    const late = at.slice(0, 10) < d.now.slice(0, 10);
+    // Frases con datos en el medio: se arman en cada idioma (i18n.js no las puede traducir por pedazos).
+    const when = late
+      ? `${out ? L('Tenía que salir el', 'Was due out on') : L('Tenía que volver el', 'Was due back on')} ${dayName(at)}`
+      : `${fmtDT(at).slice(11)}${where ? ` ${L('en', 'at')} ${esc(where)}` : ''}`;
+    const extra = out ? ` · ${L('vuelve el', 'returns on')} ${dayName(r.return_at)}` : '';
+    const action = out
+      ? `<a class="btn primary" href="#/reservas/${r.id}?accion=checkout">Entregar el auto</a>`
+      : `<a class="btn back" href="#/reservas/${r.id}?accion=checkin">Recibir el auto</a>`;
+    return `<div class="trip">
+      <div class="trip-top" data-href="#/reservas/${r.id}">
+        <div><b>${esc(r.customer_name)}</b><small>${car(r)}</small><small>${when}${extra}</small></div>
+        ${owes(r)}
+      </div>
+      <div class="trip-actions">${action}${waLink(r.customer_phone)}</div>
     </div>`;
+  };
+  const column = (title, icon, color, rows, kind, empty) => `<div class="hoy-col">
+      <h2><svg viewBox="0 0 24 24" stroke="${color}" aria-hidden="true"><path d="${icon}"/></svg>${title}</h2>
+      ${rows.length ? rows.map((r) => trip(r, kind)).join('') : `<p class="hoy-empty">${empty}</p>`}
+    </div>`;
+  const now = new Date();
+  const first = String(state.user.name || '').split(' ')[0];
+  const out = [...d.late_pickups, ...d.pickups_today];
+  const back = [...d.overdue, ...d.returns_today];
+  const tomorrow = d.tomorrow || { pickups: 0, returns: 0 };
+  view.innerHTML = `
+    <div class="hoy-head">
+      <div><div class="date">${esc(now.toLocaleDateString(L('es-AR', 'en-US'), { weekday: 'long', day: 'numeric', month: 'long' }))}</div><h1>Hola, ${esc(first)}</h1></div>
+    </div>
+    <div class="hoy-counts">
+      <a href="#/flota"><b>${d.fleet.disponible || 0}</b><span>autos libres</span></a>
+      <a href="#/flota"><b>${d.fleet.alquilado || 0}</b><span>alquilados</span></a>
+      <a href="#/mantenimiento"><b>${d.fleet.mantenimiento || 0}</b><span>en el taller</span></a>
+    </div>
+    ${d.quote_errors ? `<div class="notice warn">Hay <b>${d.quote_errors}</b> solicitud(es) del cotizador o del formulario web con error. <a href="#/cotizador">Revisar bandeja</a></div>` : ''}
+    ${d.pending_confirmation ? `<div class="notice">Hay <b>${d.pending_confirmation}</b> reserva(s) para confirmar. <a href="#/reservas">Ver reservas</a></div>` : ''}
+    <div class="hoy-cols">
+      ${column('Salen hoy', 'M5 12h14M13 6l6 6-6 6', 'var(--primary)', out, 'out', 'Hoy no sale ningún auto.')}
+      ${column('Vuelven hoy', 'M19 12H5M11 6l-6 6 6 6', '#c2410c', back, 'back', 'Hoy no vuelve ningún auto.')}
+    </div>
+    <p class="hoy-next">Mañana: ${tomorrow.pickups} sale(n), ${tomorrow.returns} vuelve(n). <a href="#/planning">Ver calendario</a></p>
+    ${/* Lo del día va primero; los primeros pasos de una empresa nueva, abajo. */ setupCard(d.setup)}
+    ${
+      d.alerts.documents.length
+        ? `<div class="card"><h2>Seguro o VTV por vencer (30 días) <span class="count">${d.alerts.documents.length}</span></h2><div class="daylist">${d.alerts.documents
+            .map(
+              (v) =>
+                `<div class="dayrow docs"><span class="plate">${esc(v.plate)}</span><div><small>Seguro</small><b>${fmtD(v.insurance_expiry) || '—'}</b></div><div><small>VTV</small><b>${fmtD(v.vtv_expiry) || '—'}</b></div></div>`,
+            )
+            .join('')}</div></div>`
+        : ''
+    }`;
 }, 'panel');
 
 // Los menús "Más acciones" se cierran al elegir una opción o al tocar afuera.
@@ -466,7 +484,7 @@ document.addEventListener('click', (e) => {
    ============================================================ */
 on(/^\/reservas$/, async (view) => {
   view.innerHTML = `
-    <div class="page-head"><h1>Reservas</h1><a class="btn primary" href="#/reservas/nueva">+ Nueva reserva</a></div>
+    <div class="page-head"><h1>Reservas</h1></div>
     <form class="toolbar" id="res-filter">
       <label>Buscar<input name="q" placeholder="Código, cliente, DNI, patente…"/></label>
       <label>Estado<select name="status"><option value="">Activas</option><option value="all">Todas</option>
@@ -518,7 +536,7 @@ on(/^\/reservas$/, async (view) => {
    ============================================================ */
 const branchOptions = () => state.branches.filter((b) => b.active).map((b) => [b.id, b.name]);
 
-on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
+on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
   const now = new Date();
   now.setMinutes(0, 0, 0);
   let p0 = addDays(now, 1);
@@ -747,7 +765,189 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   });
 
   await refresh();
+}, 'completa');
+
+/* ============================================================
+   Nueva reserva rápida: fechas, auto libre, nombre y WhatsApp. Se hace en un minuto desde el celular.
+   Lo demás (adicionales, descuento, vuelo, otro lugar de devolución) está en "Reserva con más opciones".
+   ============================================================ */
+on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
+  const pre = new URLSearchParams(query || '');
+  const dayAt10 = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(s || '') ? new Date(`${s}T10:00`) : null);
+  const start = new Date();
+  start.setHours(10, 0, 0, 0);
+  let from = dayAt10(pre.get('desde')) || addDays(start, 1);
+  let to = dayAt10(pre.get('hasta')) || addDays(from, 3);
+  const sel = { vehicle: Number(pre.get('vehiculo')) || null };
+  let cars = [];
+  const branches = state.branches.filter((b) => b.active);
+  const QUICK = [
+    [1, '1 día'],
+    [3, '3 días'],
+    [7, '1 semana'],
+    [14, '2 semanas'],
+  ];
+
+  view.innerHTML = `
+    <form class="qr" id="qr" novalidate>
+      <div class="page-head"><h1>Nueva reserva</h1><a class="btn link" href="#/reservas/completa">Más opciones</a></div>
+      <section>
+        <h2>¿Cuándo?</h2>
+        <div class="qr-dates">
+          <label class="qr-field">Sale<input type="datetime-local" name="from" required></label>
+          <label class="qr-field">Vuelve<input type="datetime-local" name="to" required></label>
+        </div>
+        <div class="chips">${QUICK.map(([n, label]) => `<button type="button" class="chip" data-days="${n}">${label}</button>`).join('')}</div>
+        ${
+          branches.length > 1
+            ? `<label class="qr-field" style="margin-top:8px">Lugar donde lo retira<select name="branch">${branches.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('')}</select></label>`
+            : ''
+        }
+      </section>
+      <section>
+        <h2>¿Qué auto? <span class="muted" style="font-weight:400">(libres en esas fechas)</span></h2>
+        <div class="cars" id="qr-cars"><p class="muted">Cargando…</p></div>
+      </section>
+      <section>
+        <h2>¿Quién lo alquila?</h2>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <label class="qr-field">Nombre y apellido<input name="name" autocomplete="off" required></label>
+          <label class="qr-field">WhatsApp (con código de país)<input name="phone" type="tel" inputmode="tel" placeholder="+54 9 2901 555123"></label>
+        </div>
+      </section>
+      <div class="qr-total">
+        <div class="sum"><span class="muted" id="qr-what">Elegí un auto</span><b id="qr-sum"></b></div>
+        <button class="btn ok big" type="submit" data-send="1">${WA_ICON}Guardar y mandar por WhatsApp</button>
+        <button class="btn link" type="submit">Guardar sin mandar</button>
+      </div>
+    </form>`;
+  const form = $('#qr', view);
+  const set = () => {
+    form.from.value = localISO(from);
+    form.to.value = localISO(to);
+    const days = Math.round((to - from) / 86400000);
+    $$('.chip', form).forEach((c) => c.classList.toggle('on', Number(c.dataset.days) === days));
+  };
+  const days = () => Math.max(1, Math.round((to - from) / 86400000));
+  const summary = () => {
+    const c = cars.find((x) => x.id === sel.vehicle);
+    $('#qr-what', form).textContent = c ? `${days()} ${days() === 1 ? L('día', 'day') : L('días', 'days')} · ${[c.brand, c.model].filter(Boolean).join(' ') || c.plate}` : 'Elegí un auto';
+    $('#qr-sum', form).textContent = c ? money(c.quote.total) : '';
+  };
+  const paint = () => {
+    const box = $('#qr-cars', form);
+    if (!cars.some((c) => c.id === sel.vehicle)) sel.vehicle = null;
+    box.innerHTML = cars.length
+      ? cars
+          .map(
+            (c) => `<button type="button" class="car${c.id === sel.vehicle ? ' on' : ''}" data-car="${c.id}" aria-pressed="${c.id === sel.vehicle}">
+              <span><b>${esc([c.brand, c.model].filter(Boolean).join(' ') || c.plate)}</b><small>${esc(c.category_name)} · ${esc(c.plate)}</small></span>
+              <span class="price">${money(Math.round(c.quote.total / Math.max(1, c.quote.days)))} <small class="muted">/día</small></span>
+            </button>`,
+          )
+          .join('')
+      : '<p class="hoy-empty">No hay autos libres en esas fechas.</p>';
+    summary();
+  };
+  // Autos libres: cada categoría con lugar, y dentro de ella los autos sin otra reserva en esas fechas.
+  const load = async () => {
+    if (!(to > from)) {
+      cars = [];
+      $('#qr-cars', form).innerHTML = '<p class="error">La vuelta tiene que ser después de la salida.</p>';
+      return summary();
+    }
+    const q = `pickup_at=${encodeURIComponent(localISO(from))}&return_at=${encodeURIComponent(localISO(to))}`;
+    const cats = (await GET(`/availability?${q}`)).filter((c) => c.available > 0);
+    const lists = await Promise.all(cats.map((c) => GET(`/available-vehicles?${q}&category_id=${c.id}`)));
+    cars = lists.flatMap((vs, i) => vs.map((v) => ({ ...v, category_name: cats[i].name, quote: cats[i].quote })));
+    paint();
+  };
+  form.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-days]');
+    if (chip) {
+      to = addDays(from, Number(chip.dataset.days));
+      set();
+      load();
+    }
+    const c = e.target.closest('[data-car]');
+    if (c) {
+      sel.vehicle = Number(c.dataset.car);
+      paint();
+    }
+  });
+  form.addEventListener('change', (e) => {
+    if (e.target.name !== 'from' && e.target.name !== 'to') return;
+    const f = new Date(form.from.value);
+    const t = new Date(form.to.value);
+    if (Number.isNaN(f.getTime()) || Number.isNaN(t.getTime())) return;
+    // Si cambia la salida, la vuelta se corre igual: se mantienen los días elegidos.
+    if (e.target.name === 'from') to = addDays(f, days());
+    else to = t;
+    from = f;
+    set();
+    load();
+  });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const send = Boolean(e.submitter && e.submitter.dataset.send);
+    const c = cars.find((x) => x.id === sel.vehicle);
+    const name = form.name.value.trim();
+    const phone = form.phone.value.trim();
+    if (!c) return toast('Elegí un auto', true);
+    if (!name) return toast('Escribí el nombre del cliente', true);
+    // Si ya existe un cliente con ese WhatsApp, se usa ese (así no se duplica).
+    const digits = phone.replace(/\D/g, '');
+    let customer = null;
+    if (digits.length >= 6) {
+      const found = await GET(`/customers?q=${encodeURIComponent(digits.slice(-6))}`).catch(() => []);
+      customer = found.find((x) => String(x.phone || '').replace(/\D/g, '') === digits) || null;
+    }
+    const r = await run(async () => {
+      if (!customer) customer = await POST('/customers', { full_name: name, phone });
+      const branch = form.branch ? Number(form.branch.value) : branches[0] && branches[0].id;
+      return POST('/reservations', {
+        customer_id: customer.id,
+        category_id: c.category_id,
+        vehicle_id: c.id,
+        pickup_branch_id: branch || null,
+        return_branch_id: branch || null,
+        pickup_at: localISO(from),
+        return_at: localISO(to),
+        status: 'confirmada',
+      });
+    }, 'Reserva guardada');
+    location.hash = send ? `#/reservas/${r.id}?accion=voucher` : '#/panel';
+  });
+  set();
+  await load();
 }, 'nueva');
+
+/* ============================================================
+   Más: todo lo que no se usa todos los días
+   ============================================================ */
+on(/^\/mas$/, async (view) => {
+  const tile = (href, title, sub) => `<a href="${href}"><b>${title}</b><span>${sub}</span></a>`;
+  const admin = isAdmin();
+  view.innerHTML = `
+    <div class="page-head"><h1>Más</h1></div>
+    <div class="mas-group">Reservas y clientes</div>
+    <div class="mas">
+      ${tile('#/reservas', 'Todas las reservas', 'Buscar, filtrar y ver las anteriores')}
+      ${tile('#/reservas/completa', 'Reserva con más opciones', 'Adicionales, descuento, vuelo, otro lugar de devolución')}
+      ${tile('#/clientes', 'Clientes', 'Datos, licencia y sus reservas')}
+      ${tile('#/mantenimiento', 'Taller', 'Autos en el taller y services')}
+    </div>
+    <div class="mas-group">Ajustes</div>
+    <div class="mas">
+      ${tile('#/tarifas', 'Precios y lugares', 'Categorías, tarifas, temporadas, adicionales y lugares')}
+      ${admin ? tile('#/config', 'Empresa y contrato', 'Datos de la empresa, contrato, cancelaciones y factura') : ''}
+      ${admin ? tile('#/usuarios', 'Usuarios', 'Quién entra al sistema y qué hizo') : ''}
+      ${admin ? tile('#/cotizador', 'Página web: formulario', 'Que las cotizaciones de tu página entren solas') : ''}
+      ${admin ? tile('#/asistente', 'Página web: chat', 'Un chat de reservas para tu página') : ''}
+      ${admin ? tile('#/importar', 'Pasar datos de una planilla', 'Autos, clientes y reservas desde Excel o Drive') : ''}
+      ${state.user.platform_admin ? tile('#/empresas', 'Empresas', 'Otras agencias en la misma instalación') : ''}
+    </div>`;
+}, 'mas');
 
 function breakdownHtml(q) {
   const row = (l, v, cls = '') => `<tr class="${cls}"><td>${l}</td><td class="right">${v}</td></tr>`;
@@ -1671,7 +1871,7 @@ on(/^\/planning$/, async (view) => {
   }
 
   view.innerHTML = `
-    <div class="page-head"><h1>Planning de flota</h1>
+    <div class="page-head"><h1>Calendario de autos</h1>
       <div class="actions"><button class="btn" data-nav="-7">◀ Semana</button><button class="btn" data-nav="0">Hoy</button><button class="btn" data-nav="7">Semana ▶</button></div></div>
     <div class="legend" style="margin-bottom:10px">
       <span style="--c:#e0a100">Pendiente</span><span style="--c:#1f6feb">Confirmada</span><span style="--c:#1a9b5b">En curso</span>
