@@ -53,8 +53,6 @@ const body = index
   .trim();
 
 const demoCss = `
-.demo-bar { position: fixed; left: 12px; bottom: 12px; z-index: 70; background: #1d2433; color: #fff; font-size: 12px; padding: 8px 12px; border-radius: 8px; display: flex; gap: 10px; align-items: center; max-width: calc(100% - 24px); box-shadow: 0 4px 14px rgba(0,0,0,.2); }
-.demo-bar button { font: inherit; background: none; border: 1px solid #5d6b85; color: #fff; border-radius: 6px; padding: 3px 8px; cursor: pointer; }
 .demo-hint { background: #eef5ff; border: 1px solid #c9dcff; border-radius: 8px; padding: 10px 12px; font-size: 13px; color: #1d2433; }
 .demo-contract { position: fixed; inset: 0; z-index: 80; background: rgba(15,23,42,.55); overflow-y: auto; padding: 24px 12px; }
 .demo-contract .demo-close { display: block; margin: 0 auto 12px; background: #fff; }
@@ -70,14 +68,10 @@ const demoUi = `
     form.password.value = 'admin123';
     var hint = document.createElement('p');
     hint.className = 'demo-hint';
-    hint.innerHTML = '<b>Demo de Floty.</b> Ya están cargados el usuario y la contraseña de ejemplo: tocá <b>Ingresar</b>.';
+    hint.innerHTML = '<b>Demo de Floty.</b> Ya están cargados el usuario y la contraseña de ejemplo: tocá <b>Ingresar</b>. Los datos se guardan solo en este navegador.';
     form.insertBefore(hint, form.querySelector('button'));
   }
-  var bar = document.createElement('div');
-  bar.className = 'demo-bar';
-  bar.innerHTML = '<span>Demo de Floty · los datos se guardan solo en este navegador</span><button type="button">Reiniciar datos</button>';
-  bar.querySelector('button').addEventListener('click', function () { window.__demoReset(); });
-  document.body.appendChild(bar);
+  // "Reiniciar datos" está en la pantalla Más (un cartel flotante tapaba el menú de abajo en el celular).
 })();
 `;
 
