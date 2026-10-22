@@ -73,6 +73,16 @@ const demoUi = `
     hint.className = 'demo-hint';
     hint.innerHTML = '<b>Demo de Floty.</b> Ya están cargados el usuario y la contraseña de ejemplo: tocá <b>Ingresar</b>. Los datos se guardan solo en este navegador.';
     form.insertBefore(hint, form.querySelector('button'));
+    // Con ?entrar (el botón "Probar la demo" de flotyapp.com.ar) entra solo, una vez, y se ve directo la app.
+    if (/[?&]entrar\\b/.test(location.search)) {
+      history.replaceState(null, '', location.pathname + location.hash);
+      var login = document.getElementById('login');
+      new MutationObserver(function (_, obs) {
+        if (login.classList.contains('hidden')) return;
+        obs.disconnect();
+        form.requestSubmit();
+      }).observe(login, { attributes: true, attributeFilter: ['class'] });
+    }
   }
   // "Reiniciar datos" está en la pantalla Más (un cartel flotante tapaba el menú de abajo en el celular).
 })();
