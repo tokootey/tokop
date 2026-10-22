@@ -30,8 +30,12 @@
           <a href="#/mas" data-route="mas"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></svg><span>Más</span></a>
         </nav>
         <div class="user-box">
-          <span id="user-name" class="user-name"></span>
-          <span class="user-actions"><button id="change-pw" class="btn link" type="button">Cambiar contraseña</button><button id="logout" class="btn link" type="button">Salir</button><a id="floty-panel" class="btn link hidden" href="#/empresas">Panel de Floty</a></span>
+          <!-- Botón de cuenta: solo en el Panel de Floty (body.owner); en las agencias el menú queda a la vista. -->
+          <button id="acct-btn" class="acct-btn" type="button" aria-expanded="false" aria-controls="acct-menu" aria-label="Tu cuenta"></button>
+          <div id="acct-menu" class="acct-menu">
+            <span id="user-name" class="user-name"></span>
+            <span class="user-actions"><button id="change-pw" class="btn link" type="button">Cambiar contraseña</button><button id="logout" class="btn link" type="button">Salir</button><a id="floty-panel" class="btn link hidden" href="#/empresas">Panel de Floty</a></span>
+          </div>
         </div>
       </aside>
       <main class="view"><nav id="subnav" class="subnav hidden"></nav><div id="view"></div></main>
