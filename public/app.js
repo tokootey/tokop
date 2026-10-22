@@ -455,6 +455,7 @@ const ICON = {
   money: svgIcon('M3 7h18v10H3zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 10v.01M18 14v.01'),
   send: svgIcon('M21 3L10 14M21 3l-7 18-4-7-7-4z'),
   backup: svgIcon('M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3'),
+  disk: svgIcon('M3 14h18v6H3zM5 14l2.5-9h9L19 14M7 17h.01M11 17h.01'),
   copy: svgIcon('M9 9h11v11H9zM5 15H4V4h11v1'),
   reset: svgIcon('M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5'),
 };
@@ -2870,6 +2871,36 @@ function ago(iso) {
   if (days === 1) return L('ayer', 'yesterday');
   return L(`hace ${days} días`, `${days} days ago`);
 }
+/** Días que faltan para una fecha AAAA-MM-DD (negativo si ya pasó); null sin fecha. */
+function daysTo(s) {
+  if (!s) return null;
+  const t = new Date();
+  return Math.round((new Date(`${s}T12:00:00`) - new Date(t.getFullYear(), t.getMonth(), t.getDate(), 12)) / 86400000);
+}
+/** "vence hoy", "en 12 días", "venció hace 3 días". */
+function dueText(s) {
+  const n = daysTo(s);
+  if (n === null) return L('sin fecha', 'no date');
+  if (n === 0) return L('vence hoy', 'due today');
+  if (n > 0) return n === 1 ? L('vence mañana', 'due tomorrow') : L(`en ${n} días`, `in ${n} days`);
+  return L(`venció hace ${-n} día(s)`, `${-n} day(s) overdue`);
+}
+/** Tono de un vencimiento: rojo vencido, ámbar a 7 días, celeste a 30, gris lejos o sin fecha. */
+const dueTone = (s, soon = 30) => {
+  const n = daysTo(s);
+  return n === null ? 'wait' : n < 0 ? 'bad' : n <= 7 ? 'warn' : n <= soon ? 'info' : 'ok';
+};
+/** Estado del abono de una agencia: [tono, texto]. */
+function charge(c) {
+  const t = daysTo(c.trial_ends);
+  if (t !== null && t >= 0) return ['info', L(`En prueba hasta el ${fmtD(c.trial_ends)}`, `On trial until ${fmtD(c.trial_ends)}`)];
+  if (!c.next_charge) return c.plan_price ? ['warn', L('Falta la fecha de cobro', 'Billing date missing')] : ['wait', L('Sin abono cargado', 'No plan set')];
+  const n = daysTo(c.next_charge);
+  if (n < 0) return ['bad', L('Atrasada', 'Overdue')];
+  if (n <= 5) return ['warn', L('Por vencer', 'Due soon')];
+  return ['ok', L('Al día', 'Up to date')];
+}
+const REPEAT_LABEL = { anual: 'Todos los años', mensual: 'Todos los meses', una_vez: 'Una sola vez' };
 
 on(/^\/empresas$/, async (view) => {
   if (!state.user.platform_admin) {
@@ -2891,7 +2922,27 @@ on(/^\/empresas$/, async (view) => {
     if (!c.last_login && hoursSince(c.created_at) > 72) warnings.push(['warn', L(`${c.name} todavía no entró nunca. ¿Le llegaron el usuario y la contraseña?`, `${c.name} has never signed in. Did they get their user and password?`)]);
     else if (c.last_login && hoursSince(c.last_login) > 24 * 14) warnings.push(['warn', L(`${c.name} no entra desde ${ago(c.last_login)}.`, `${c.name} hasn't signed in since ${ago(c.last_login)}.`)]);
     if (c.last_login && !c.vehicles) warnings.push(['info', L(`${c.name} entró pero todavía no cargó autos.`, `${c.name} signed in but hasn't added cars yet.`)]);
+    const [tone] = charge(c);
+    if (tone === 'bad') warnings.push(['bad', L(`${c.name} debe el abono desde el ${fmtD(c.next_charge)}.`, `${c.name} owes the subscription since ${fmtD(c.next_charge)}.`)]);
+    else if (tone === 'warn' && c.next_charge) warnings.push(['warn', L(`Cobrarle el abono a ${c.name}: ${dueText(c.next_charge)} (${fmtD(c.next_charge)}).`, `Charge ${c.name}: ${dueText(c.next_charge)} (${fmtD(c.next_charge)}).`)]);
+    const t = daysTo(c.trial_ends);
+    if (t !== null && t >= 0 && t <= 7) warnings.push(['warn', L(`A ${c.name} se le termina la prueba gratis ${dueText(c.trial_ends)}.`, `${c.name}'s free trial ends ${dueText(c.trial_ends)}.`)]);
+    else if (t !== null && t < 0 && !c.next_charge) warnings.push(['warn', L(`A ${c.name} se le terminó la prueba gratis. ¿Arranca a pagar?`, `${c.name}'s free trial is over. Will they start paying?`)]);
+    for (const [k, what] of [['domain_expires', L('el dominio propio', 'their own domain')], ['cert_expires', L('el certificado de factura', 'the invoice certificate')]]) {
+      const tone2 = dueTone(c[k]);
+      if (['bad', 'warn', 'info'].includes(tone2)) warnings.push([tone2 === 'info' ? 'warn' : tone2, L(`Avisale a ${c.name}: ${what} ${daysTo(c[k]) < 0 ? 'venció' : 'vence'} el ${fmtD(c[k])} (${dueText(c[k])}).`, `Tell ${c.name}: ${what} expires on ${fmtD(c[k])} (${dueText(c[k])}).`)]);
+    }
   }
+  for (const r of d.reminders) {
+    const tone = dueTone(r.due_date);
+    if (['bad', 'warn', 'info'].includes(tone)) warnings.push([tone, L(`${r.title}: ${daysTo(r.due_date) < 0 ? 'venció' : 'vence'} el ${fmtD(r.due_date)} (${dueText(r.due_date)}).`, `${r.title}: due ${fmtD(r.due_date)} (${dueText(r.due_date)}).`)]);
+  }
+  const diskPct = d.disk && d.disk.total ? Math.round((d.disk.used / d.disk.total) * 100) : null;
+  if (diskPct >= 80) warnings.push([diskPct >= 95 ? 'bad' : 'warn', L(`El disco está al ${diskPct} %. Conviene agrandarlo en Render antes de que se llene.`, `The disk is ${diskPct}% full. Grow it in Render before it fills up.`)]);
+  const ORDER = { bad: 0, warn: 1, info: 2 };
+  warnings.sort((a, b) => ORDER[a[0]] - ORDER[b[0]]);
+  const overdue = agencies.filter((c) => charge(c)[0] === 'bad').length;
+  const gb = (n) => `${(n / 1024 ** 3).toFixed(n < 10 * 1024 ** 3 ? 1 : 0)} GB`;
 
   const host = (a) => esc(String(a || '').replace(/^https:\/\//, ''));
   const card = (c) => `<article class="agency" data-id="${c.id}">
@@ -2910,12 +2961,45 @@ on(/^\/empresas$/, async (view) => {
         <div><dt>${L('Último ingreso', 'Last sign-in')}</dt><dd>${ago(c.last_login)}</dd></div>
         <div><dt>${L('Autos', 'Cars')}</dt><dd>${c.vehicles}</dd></div>
         <div><dt>${L('Reservas (30 días)', 'Bookings (30 days)')}</dt><dd>${c.reservations_30d}</dd></div>
+        ${
+          c.contact_name || c.contact_phone
+            ? `<div class="wide"><dt>${L('Contacto', 'Contact')}</dt><dd>${esc(c.contact_name || '')}${
+                c.contact_phone ? ` <a href="https://wa.me/${esc(String(c.contact_phone).replace(/\D/g, ''))}" target="_blank" rel="noopener" data-notr>${esc(c.contact_phone)}</a>` : ''
+              }</dd></div>`
+            : ''
+        }
       </dl>
+      ${c.notes ? `<p class="agency-notes">${esc(c.notes)}</p>` : ''}
+      <div class="agency-charge">
+        <span class="st ${charge(c)[0]}">${charge(c)[1]}</span>
+        <span class="muted">${c.next_charge ? `${L('Próximo cobro', 'Next charge')} ${fmtD(c.next_charge)}${c.plan_price ? ` · ${money(c.plan_price)}` : ''}` : c.plan_price ? money(c.plan_price) : ''}</span>
+        ${c.next_charge || c.plan_price ? `<button class="btn pill small" type="button" data-charge>${ICON.check}Marcar pagado</button>` : ''}
+      </div>
       <div class="agency-actions">
+        <button class="btn pill" type="button" data-account>${ICON.user}Ficha y abono</button>
         <button class="btn pill" type="button" data-check>${ICON.reset}Probar dirección</button>
         <button class="btn pill" type="button" data-domain>${ICON.globe}Dominio propio</button>
       </div>
     </article>`;
+  // Vencimientos del dueño y, de solo lectura, los dominios propios y certificados de las agencias.
+  const dueRow = (r) => `<li class="due" data-rem="${r.id}">
+      <span class="st ${dueTone(r.due_date)}">${r.due_date ? fmtD(r.due_date) : L('Sin fecha', 'No date')}</span>
+      <div class="due-what"><b>${esc(r.title)}</b><small>${esc(REPEAT_LABEL[r.repeat] || r.repeat)}${r.amount ? ` · ${money(r.amount)}` : ''}${r.due_date ? ` · ${dueText(r.due_date)}` : ''}${r.note ? ` · ${esc(r.note)}` : ''}</small></div>
+      <div class="due-actions">${r.due_date || r.repeat === 'una_vez' ? `<button class="btn pill small" type="button" data-rem-paid>${ICON.check}Pagado</button>` : ''}<button class="btn pill small" type="button" data-rem-edit>Editar</button></div>
+    </li>`;
+  const agencyDues = agencies.flatMap((c) =>
+    [
+      ['domain_expires', L('Dominio propio', 'Own domain')],
+      ['cert_expires', L('Certificado de factura', 'Invoice certificate')],
+    ]
+      .filter(([k]) => c[k])
+      .map(([k, what]) => ({ c, date: c[k], what })),
+  );
+  const agencyDueRow = ({ c, date: dd, what }) => `<li class="due">
+      <span class="st ${dueTone(dd)}">${fmtD(dd)}</span>
+      <div class="due-what"><b>${esc(what)} · ${esc(c.name)}</b><small>${L('Lo paga la agencia: avisale antes', 'The agency pays it: remind them')} · ${dueText(dd)}</small></div>
+      <div class="due-actions"><button class="btn pill small" type="button" data-account-of="${c.id}">Ficha</button></div>
+    </li>`;
 
   view.innerHTML = `
     <div class="own-head">
@@ -2927,12 +3011,24 @@ on(/^\/empresas$/, async (view) => {
       <div class="own-tile"><span class="ic free" aria-hidden="true">${ICON.user}</span><b>${activeWeek}</b><span>${L('entraron esta semana', 'signed in this week')}</span></div>
       <div class="own-tile ${backupOk ? 'good' : d.backups.enabled ? 'warn' : 'bad'}"><span class="ic" aria-hidden="true">${ICON.backup}</span><b>${backupOk ? L('Al día', 'Up to date') : d.backups.enabled ? L('Atrasadas', 'Behind') : L('Apagadas', 'Off')}</b><span>${L('copias de seguridad', 'backups')}${d.backups.last ? ` · ${L('última', 'last')} ${ago(d.backups.last)}` : ''}</span></div>
       <div class="own-tile" data-up-tile><span class="ic out" aria-hidden="true">${ICON.globe}</span><b data-up>—</b><span>${L('direcciones funcionando', 'addresses working')}</span></div>
+      <div class="own-tile ${overdue ? 'bad' : agencies.some((c) => c.next_charge) ? 'good' : ''}"><span class="ic" aria-hidden="true">${ICON.money}</span><b>${overdue}</b><span>${L('cobros atrasados', 'overdue charges')}</span></div>
+      ${
+        diskPct === null
+          ? ''
+          : `<div class="own-tile ${diskPct >= 95 ? 'bad' : diskPct >= 80 ? 'warn' : 'good'}"><span class="ic" aria-hidden="true">${ICON.disk}</span><b>${diskPct} %</b><span>${L('del disco', 'of the disk')} · ${gb(d.disk.used)} ${L('de', 'of')} ${gb(d.disk.total)}</span></div>`
+      }
     </div>
     ${
       warnings.length
         ? `<section class="own-warn"><h2>Para mirar</h2><ul>${warnings.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join('')}</ul></section>`
         : `<section class="own-warn calm-ok"><p>${ICON.check} ${L('Todo en orden: no hay nada para revisar.', 'All good: nothing to check.')}</p></section>`
     }
+    <section class="own-dues">
+      <div class="own-sec-head"><h2>Mis vencimientos</h2><button class="btn pill small" type="button" data-rem-new>${ICON.plus}Agregar</button></div>
+      <p class="muted">Lo que tenés que pagar o renovar. Te avisamos en "Para mirar" 30 días antes, más fuerte a 7 días y en rojo si ya venció. Al marcarlo pagado, la fecha pasa sola al mes o al año siguiente.</p>
+      <ul class="dues">${d.reminders.map(dueRow).join('') + agencyDues.map(agencyDueRow).join('') || `<li class="muted">${L('No hay vencimientos cargados.', 'No due dates yet.')}</li>`}</ul>
+    </section>
+    <h2 class="own-sec-title">Agencias</h2>
     ${
       agencies.length
         ? `<div class="agencies">${agencies.map(card).join('')}</div>`
@@ -2973,8 +3069,88 @@ on(/^\/empresas$/, async (view) => {
     }),
   );
 
+  const history = (list) =>
+    list.length
+      ? `<h3>Pagos anotados</h3><ul class="pay-history">${list.map((p) => `<li><b>${fmtD(p.paid_at)}</b> ${p.amount ? money(p.amount) : ''}${p.period ? ` <span class="muted">(${L('vencía', 'was due')} ${fmtD(p.period)})</span>` : ''}${p.note ? ` · ${esc(p.note)}` : ''}</li>`).join('')}</ul>`
+      : '';
+  // "Pagado": confirma el monto (se puede cambiar) y lo anota en el historial.
+  const payDialog = (title, value, url, okMsg) =>
+    openModal(
+      title,
+      formHtml(
+        [
+          { name: 'amount', label: 'Monto (opcional)', type: 'number' },
+          { name: 'note', label: 'Nota (opcional)', attrs: 'placeholder="Transferencia, efectivo…"' },
+        ],
+        { amount: value ?? '' },
+        'Marcar pagado',
+      ),
+      async (f) => {
+        await run(() => POST(url, f), okMsg);
+        route();
+      },
+    );
+  const ACCOUNT_FIELDS = [
+    { name: 'contact_name', label: 'Responsable' },
+    { name: 'contact_phone', label: 'WhatsApp o teléfono', attrs: 'placeholder="+54 9 2901 …"' },
+    { name: 'notes', label: 'Notas', type: 'textarea', full: true, rows: 3, attrs: 'placeholder="Le prometí cargarle la flota…"' },
+    { name: 'plan_price', label: 'Precio del plan (por mes)', type: 'number' },
+    { name: 'billing_day', label: 'Día de cobro (1 a 31)', type: 'number', step: '1' },
+    { name: 'next_charge', label: 'Próximo cobro', type: 'date' },
+    { name: 'trial_ends', label: 'Fin de la prueba gratis', type: 'date' },
+    { name: 'domain_expires', label: 'Su dominio propio vence el', type: 'date' },
+    { name: 'cert_expires', label: 'Su certificado de factura (ARCA o SII) vence el', type: 'date' },
+  ];
+  const openAccount = (c) =>
+    openModal(
+      `Ficha y abono · ${c.name}`,
+      formHtml(ACCOUNT_FIELDS, c, 'Guardar') +
+        '<p class="muted">Floty no cobra nada solo: esto es para que lleves la cuenta. El certificado de factura se carga a mano (vence una vez por año o cada dos, según cómo lo haya sacado la agencia).</p>' +
+        history(c.payments),
+      async (f) => {
+        await run(() => PUT(`/platform/companies/${c.id}/account`, f), 'Ficha guardada');
+        route();
+      },
+    );
+  const openReminder = (r) => {
+    openModal(
+      r ? `Editar · ${r.title}` : 'Nuevo vencimiento',
+      formHtml(
+        [
+          { name: 'title', label: 'Qué hay que pagar o renovar', required: true, full: true, attrs: 'placeholder="Dominio, servidor, contador…"' },
+          { name: 'due_date', label: 'Vence el', type: 'date' },
+          { name: 'repeat', label: 'Se repite', type: 'select', required: true, options: Object.entries(REPEAT_LABEL) },
+          { name: 'amount', label: 'Monto (opcional)', type: 'number' },
+          { name: 'note', label: 'Nota (opcional)', full: true },
+        ],
+        r || { repeat: 'anual' },
+        'Guardar',
+      ) +
+        (r ? `<div class="actions" style="margin-top:12px"><button class="btn danger small" type="button" data-rem-del>Borrar este vencimiento</button></div>${history(r.payments)}` : ''),
+      async (f) => {
+        await run(() => (r ? PUT(`/platform/reminders/${r.id}`, f) : POST('/platform/reminders', f)), 'Vencimiento guardado');
+        route();
+      },
+    );
+    $('#modal [data-rem-del]')?.addEventListener('click', async () => {
+      if (!confirm(`¿Borrar "${r.title}"?`)) return;
+      await run(() => DEL(`/platform/reminders/${r.id}`), 'Vencimiento borrado');
+      closeModal();
+      route();
+    });
+  };
+  $('[data-rem-new]', view).addEventListener('click', () => openReminder(null));
+  $$('[data-rem]', view).forEach((li) => {
+    const r = d.reminders.find((x) => x.id === Number(li.dataset.rem));
+    $('[data-rem-edit]', li).addEventListener('click', () => openReminder(r));
+    $('[data-rem-paid]', li)?.addEventListener('click', () => payDialog(`Pagado · ${r.title}`, r.amount, `/platform/reminders/${r.id}/paid`, 'Anotado como pagado'));
+  });
+  $$('[data-account-of]', view).forEach((b) => b.addEventListener('click', () => openAccount(agencies.find((x) => x.id === Number(b.dataset.accountOf)))));
+
   $$('.agency', view).forEach((box) => {
     const c = agencies.find((x) => x.id === Number(box.dataset.id));
+    $('[data-account]', box).addEventListener('click', () => openAccount(c));
+    $('[data-charge]', box)?.addEventListener('click', () => payDialog(`Abono pagado · ${c.name}`, c.plan_price, `/platform/companies/${c.id}/paid`, 'Cobro anotado'));
     $('[data-check]', box).addEventListener('click', () => (c.address ? check(c) : toast(L('Esta agencia todavía no tiene dirección.', 'This agency has no address yet.'), true)));
     $('[data-copy]', box)?.addEventListener('click', (e) =>
       (navigator.clipboard ? navigator.clipboard.writeText(e.currentTarget.dataset.copy) : Promise.reject()).then(() => toast('Copiado'), () => toast('Seleccioná el texto y copialo', true)),

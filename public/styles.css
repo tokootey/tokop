@@ -740,3 +740,32 @@ body.owner .acct-menu .lang-switch .btn.link.active { color: var(--text); }
 
 .agency-facts dt { color: #5b6678; }
 .agency-actions { margin-top: 2px; padding-top: 14px; border-top: 1px solid #eef1f6; }
+
+/* Panel de Floty: vencimientos, abonos y ficha de cada agencia. */
+.own-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1000px) { .own-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.st.warn { background: #fff3df; color: #a66a00; }
+.st.info { background: #eaf2ff; color: #1450b5; }
+.btn.pill.small { min-height: 34px; padding: 0 14px; font-size: 13px; }
+.own-dues { background: #fff; border: 1px solid #e4e8ef; border-radius: 18px; padding: 18px 20px; margin-bottom: 22px; box-shadow: 0 1px 2px rgba(11, 22, 38, 0.05), 0 8px 24px rgba(11, 22, 38, 0.06); }
+.own-sec-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.own-sec-head h2, .own-sec-title { font-size: 18px; font-weight: 800; margin: 0; }
+.own-sec-title { margin: 4px 0 12px; }
+.own-dues > p { margin: 6px 0 12px; font-size: 13.5px; }
+.dues { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.due { display: grid; grid-template-columns: 120px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid #eef1f6; }
+.due:first-child { border-top: none; }
+.due .st { justify-content: center; }
+.due-what { min-width: 0; display: flex; flex-direction: column; }
+.due-what small { color: #5b6678; font-size: 12.5px; overflow-wrap: anywhere; }
+.due-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.agency-facts .wide { grid-column: 1 / -1; }
+.agency-notes { margin: 0; padding: 10px 12px; border-radius: 12px; background: #fffaf0; border: 1px solid #f6e7c4; color: #5c4510; font-size: 13.5px; white-space: pre-line; }
+.agency-charge { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
+.agency-charge .muted { font-size: 13px; flex: 1; min-width: 120px; }
+.pay-history { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; }
+@media (max-width: 640px) {
+  .due { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .due .st { justify-self: start; }
+  .due-actions { justify-content: flex-start; }
+}

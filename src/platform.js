@@ -7,6 +7,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { openDb, getSetting, setSetting, COUNTRY_PRESETS } = require('./db');
 const { hashPassword, passwordProblem } = require('./auth');
 const { fail } = require('./util');
+const { ownerBook } = require('./owner-book');
 
 /**
  * Varias empresas en una sola instalación.
@@ -74,6 +75,7 @@ function openPlatform(principalDb, principalFile) {
 
   const platform = {
     dir,
+    book: ownerBook(reg),
     principal: () => withDb(reg.prepare('SELECT * FROM companies WHERE id = ?').get(PRINCIPAL_ID)),
     get: (id) => withDb(reg.prepare('SELECT * FROM companies WHERE id = ? AND active = 1').get(Number(id))),
     bySlug: (slug) => withDb(reg.prepare('SELECT * FROM companies WHERE slug = ? AND active = 1').get(String(slug))),

@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
 const { DEFAULT_PASSWORD, login, logout, requireUser, requirePasswordChanged, changePassword, hashPassword, verifyPassword } = require('./auth');
@@ -14,6 +15,7 @@ const { fileRoutes } = require('./routes/files');
 const { importRoutes } = require('./routes/importer');
 const { HttpError, fail } = require('./util');
 const { backupStatus } = require('./backup');
+const { COMPANY_FIELDS } = require('./owner-book');
 
 /** Crea el usuario administrador inicial si no hay ninguno. */
 function ensureAdmin(db) {
@@ -124,6 +126,19 @@ function isFlotyOwner(user, company) {
   return owners.length === 0 || owners.includes(String(user.email).toLowerCase());
 }
 
+const pick = (o, keys) => Object.fromEntries(keys.map((k) => [k, o[k] ?? null]));
+
+/** Espacio del disco donde están los datos (en Render, el disco de 5 GB). */
+function diskStatus(dir) {
+  try {
+    const s = fs.statfsSync(dir);
+    const total = s.blocks * s.bsize;
+    return { total, used: total - s.bfree * s.bsize };
+  } catch {
+    return null; // sistema sin statfs: el panel no muestra el disco
+  }
+}
+
 /** Panel de Floty: alta de empresas y sus dominios. Sólo el dueño de Floty. */
 function platformRoutes(platform, company) {
   const router = express.Router();
@@ -131,14 +146,28 @@ function platformRoutes(platform, company) {
   router.get('/companies', (_req, res) =>
     res.json(platform.list().map(({ id, slug, name, created_at, principal, domain, address }) => ({ id, slug, name, created_at, principal, domain, address }))),
   );
-  // Todo lo del panel en un pedido: cada agencia con su uso, y el estado de las copias de seguridad.
+  // Todo lo del panel en un pedido: cada agencia con su uso, ficha y abono, los vencimientos del dueño,
+  // las copias de seguridad y el disco.
+  const { book } = platform;
   router.get('/overview', (_req, res) =>
     res.json({
       floty_domain: process.env.FLOTY_DOMAIN || null,
       backups: backupStatus(),
-      companies: platform.list().map(({ id, slug, name, created_at, principal, domain, address }) => ({ id, slug, name, created_at, principal, domain, address, ...platform.stats(id) })),
+      disk: diskStatus(platform.dir),
+      reminders: book.reminders().map((r) => ({ ...r, payments: book.payments('reminder', r.id, 3) })),
+      companies: platform.list().map((c) => ({
+        ...pick(c, ['id', 'slug', 'name', 'created_at', 'principal', 'domain', 'address', ...COMPANY_FIELDS]),
+        ...platform.stats(c.id),
+        payments: book.payments('company', c.id, 6),
+      })),
     }),
   );
+  router.post('/reminders', (req, res) => res.status(201).json(book.addReminder(req.body)));
+  router.put('/reminders/:id', (req, res) => res.json(book.updateReminder(req.params.id, req.body)));
+  router.delete('/reminders/:id', (req, res) => res.json(book.removeReminder(req.params.id)));
+  router.post('/reminders/:id/paid', (req, res) => res.json(book.payReminder(req.params.id, req.body)));
+  router.put('/companies/:id/account', (req, res) => res.json(book.updateCompany(req.params.id, req.body)));
+  router.post('/companies/:id/paid', (req, res) => res.json(book.payCompany(req.params.id, req.body)));
   // ¿La dirección de la agencia responde? Se prueba desde el servidor, como entraría un cliente.
   router.post('/companies/:id/check', async (req, res) => {
     const c = platform.list().find((x) => x.id === Number(req.params.id));
