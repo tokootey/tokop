@@ -230,6 +230,13 @@ async function startSession() {
   // Panel de Floty: sólo el dueño de Floty (empresas y dominios), nunca las agencias.
   $('#floty-panel').classList.toggle('hidden', !state.user.platform_admin);
   await loadCatalogs();
+  // El dueño de Floty no alquila autos: ve solo su panel administrativo.
+  document.body.classList.toggle('owner', !!state.user.owner_mode);
+  if (state.user.owner_mode) {
+    $('#brand').textContent = 'Panel de Floty';
+    $('.brand small').classList.add('hidden');
+    document.title = 'Panel de Floty';
+  }
   checkStale();
   route();
 }
@@ -358,6 +365,10 @@ function renderSubnav(group, current) {
 async function route() {
   if (!state.user) return;
   const hash = location.hash.replace(/^#/, '') || '/panel';
+  if (state.user.owner_mode && hash !== '/empresas') {
+    location.hash = '#/empresas'; // vuelve a entrar acá por hashchange
+    return;
+  }
   for (const r of routes) {
     const m = hash.match(r.pattern);
     if (m) {
@@ -427,6 +438,7 @@ const ICON = {
   panel: svgIcon('M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z'),
   money: svgIcon('M3 7h18v10H3zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 10v.01M18 14v.01'),
   send: svgIcon('M21 3L10 14M21 3l-7 18-4-7-7-4z'),
+  copy: svgIcon('M9 9h11v11H9zM5 15H4V4h11v1'),
   reset: svgIcon('M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5'),
 };
 /** Enlace para escribirle por WhatsApp al cliente (el número con código de país, sin signos). */
@@ -2832,61 +2844,154 @@ on(/^\/usuarios$/, async (view) => {
   );
 }, 'usuarios');
 
-/* ---------- Empresas (varias agencias en la misma instalación) ---------- */
+/* ---------- Panel de Floty: las agencias, sus direcciones y si todo funciona (sólo el dueño de Floty) ---------- */
+/** "hace 3 días", "hoy", "nunca": para leer de un vistazo cuándo pasó algo. */
+function ago(iso) {
+  if (!iso) return L('nunca', 'never');
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (days <= 0) return L('hoy', 'today');
+  if (days === 1) return L('ayer', 'yesterday');
+  return L(`hace ${days} días`, `${days} days ago`);
+}
+
 on(/^\/empresas$/, async (view) => {
-  const list = await GET('/platform/companies');
   if (!state.user.platform_admin) {
-    view.innerHTML = '<div class="card"><p class="muted">Sólo el dueño de Floty maneja las empresas.</p></div>';
+    view.innerHTML = '<div class="card"><p class="muted">Sólo el dueño de Floty maneja las agencias.</p></div>';
     return;
   }
-  view.innerHTML = `<div class="page-head"><h1>Panel de Floty</h1><button class="btn primary" data-new>+ Nueva empresa</button></div>
-    <p class="muted"><b>Sólo lo ves vos.</b> Acá se dan de alta las agencias y se cargan sus direcciones. Los administradores de cada agencia no tienen acceso.</p>
-    <p class="muted">Cada empresa tiene sus propios datos: reservas, flota, clientes, usuarios, tarifas y configuración. Nadie de una empresa puede ver los datos de otra.</p>
-    <div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Dirección</th><th>Alta</th><th></th></tr></thead><tbody>${list
-      .map(
-        (c) => `<tr><td><b>${esc(c.name)}</b>${c.principal ? ' <span class="badge">principal</span>' : ''}<br><small class="muted">Código: <code>${esc(c.slug)}</code></small></td>
-          <td>${c.address ? `<a href="${esc(c.address)}" target="_blank" rel="noopener" data-notr>${esc(c.address.replace(/^https:\/\//, ''))}</a>${c.domain ? ' <span class="badge">dominio propio</span>' : ''}` : '<span class="muted">La de esta página</span>'}</td>
-          <td>${fmtD(c.created_at)}</td>
-          <td class="right"><button class="btn small" type="button" data-domain="${c.id}">Dominio propio</button></td></tr>`,
-      )
-      .join('')}</tbody></table></div>
-    <p class="muted">Cada empresa entra por su propia dirección: su subdominio de Floty (por ejemplo <code>andes.floty.app</code>) o un dominio suyo. Para que funcione su dominio, quien lo maneja tiene que agregar un registro <b>CNAME</b> que apunte a Floty.</p>`;
-  $$('[data-domain]', view).forEach((b) =>
-    b.addEventListener('click', () => {
-      const c = list.find((x) => x.id === Number(b.dataset.domain));
+  const d = await GET('/platform/overview');
+  const own = d.companies.find((c) => c.principal);
+  const agencies = d.companies.filter((c) => !c.principal);
+  const hoursSince = (iso) => (iso ? (Date.now() - new Date(iso).getTime()) / 3600000 : Infinity);
+  const backupOk = d.backups.enabled && hoursSince(d.backups.last) < 30;
+  const activeWeek = agencies.filter((c) => hoursSince(c.last_login) < 24 * 7).length;
+
+  // Avisos en palabras simples: lo que conviene mirar hoy.
+  const warnings = [];
+  if (!d.backups.enabled) warnings.push(['bad', L('Las copias de seguridad están apagadas. Si se rompe algo, no hay cómo volver atrás.', 'Backups are turned off. If something breaks, there is no way back.')]);
+  else if (!backupOk) warnings.push(['warn', d.backups.last ? L(`La última copia de seguridad es de ${ago(d.backups.last)}. Debería hacerse una por día.`, `The last backup was ${ago(d.backups.last)}. There should be one a day.`) : L('Todavía no se hizo ninguna copia de seguridad. La primera se hace un minuto después de arrancar.', 'No backup yet. The first one runs a minute after starting.')]);
+  for (const c of agencies) {
+    if (!c.last_login && hoursSince(c.created_at) > 72) warnings.push(['warn', L(`${c.name} todavía no entró nunca. ¿Le llegaron el usuario y la contraseña?`, `${c.name} has never signed in. Did they get their user and password?`)]);
+    else if (c.last_login && hoursSince(c.last_login) > 24 * 14) warnings.push(['warn', L(`${c.name} no entra desde ${ago(c.last_login)}.`, `${c.name} hasn't signed in since ${ago(c.last_login)}.`)]);
+    if (c.last_login && !c.vehicles) warnings.push(['info', L(`${c.name} entró pero todavía no cargó autos.`, `${c.name} signed in but hasn't added cars yet.`)]);
+  }
+
+  const host = (a) => esc(String(a || '').replace(/^https:\/\//, ''));
+  const card = (c) => `<article class="agency" data-id="${c.id}">
+      <div class="agency-top">
+        <span class="agency-ic" aria-hidden="true">${ICON.building}</span>
+        <div class="agency-name"><b>${esc(c.name)}</b><small>${L('Alta', 'Created')} ${fmtD(c.created_at)}</small></div>
+        <span class="st wait" data-status>${c.address ? L('Revisando…', 'Checking…') : L('Sin dirección', 'No address')}</span>
+      </div>
+      <div class="agency-addr">${
+        c.address
+          ? `<a href="${esc(c.address)}" target="_blank" rel="noopener" data-notr>${host(c.address)}</a>${c.domain ? ` <span class="tag">${L('dominio propio', 'own domain')}</span>` : ''}<button class="btn icon" type="button" data-copy="${esc(c.address)}" aria-label="Copiar dirección" title="Copiar dirección">${ICON.copy}</button>`
+          : `<span class="muted">${L('Falta conectar el dominio de Floty (FLOTY_DOMAIN).', 'Floty domain not connected yet (FLOTY_DOMAIN).')}</span>`
+      }</div>
+      <dl class="agency-facts">
+        <div><dt>${L('Administrador', 'Admin')}</dt><dd data-notr>${esc(c.admin_email || '—')}</dd></div>
+        <div><dt>${L('Último ingreso', 'Last sign-in')}</dt><dd>${ago(c.last_login)}</dd></div>
+        <div><dt>${L('Autos', 'Cars')}</dt><dd>${c.vehicles}</dd></div>
+        <div><dt>${L('Reservas (30 días)', 'Bookings (30 days)')}</dt><dd>${c.reservations_30d}</dd></div>
+      </dl>
+      <div class="agency-actions">
+        <button class="btn pill" type="button" data-check>${ICON.reset}Probar dirección</button>
+        <button class="btn pill" type="button" data-domain>${ICON.globe}Dominio propio</button>
+      </div>
+    </article>`;
+
+  view.innerHTML = `
+    <div class="own-head">
+      <div><h1>Tus agencias</h1><p class="muted">Solo lo ves vos. Desde acá das de alta agencias, les conectás su dirección y revisás que todo ande.</p></div>
+      <button class="btn primary pill big" type="button" data-new>${ICON.plus}Nueva agencia</button>
+    </div>
+    <div class="own-tiles">
+      <div class="own-tile"><span class="ic out" aria-hidden="true">${ICON.building}</span><b>${agencies.length}</b><span>${L('agencias', 'agencies')}</span></div>
+      <div class="own-tile"><span class="ic free" aria-hidden="true">${ICON.user}</span><b>${activeWeek}</b><span>${L('entraron esta semana', 'signed in this week')}</span></div>
+      <div class="own-tile"><span class="ic ${backupOk ? 'free' : 'shop'}" aria-hidden="true">${ICON.lock}</span><b>${backupOk ? L('Al día', 'Up to date') : d.backups.enabled ? L('Atrasadas', 'Behind') : L('Apagadas', 'Off')}</b><span>${L('copias de seguridad', 'backups')}${d.backups.last ? ` · ${L('última', 'last')} ${ago(d.backups.last)}` : ''}</span></div>
+      <div class="own-tile"><span class="ic out" aria-hidden="true">${ICON.globe}</span><b data-up>—</b><span>${L('direcciones funcionando', 'addresses working')}</span></div>
+    </div>
+    ${
+      warnings.length
+        ? `<section class="own-warn"><h2>Para mirar</h2><ul>${warnings.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join('')}</ul></section>`
+        : `<section class="own-warn calm-ok"><p>${ICON.check} ${L('Todo en orden: no hay nada para revisar.', 'All good: nothing to check.')}</p></section>`
+    }
+    ${
+      agencies.length
+        ? `<div class="agencies">${agencies.map(card).join('')}</div>`
+        : `<div class="card own-empty"><span class="agency-ic" aria-hidden="true">${ICON.building}</span><h2>Todavía no hay agencias</h2>
+             <p class="muted">Cuando un cliente te compre Floty, tocá <b>Nueva agencia</b>: en un minuto tiene su dirección, su usuario y su contraseña.</p></div>`
+    }
+    <details class="own-help"><summary>¿Cómo funcionan las direcciones?</summary>
+      <p>Cada agencia entra por su dirección de Floty${d.floty_domain ? `, por ejemplo <b data-notr>su-agencia.${esc(d.floty_domain)}</b>` : ''}. Se crea sola al dar de alta la agencia.</p>
+      <p>Si la agencia quiere usar un dominio suyo (por ejemplo <b data-notr>reservas.suagencia.com.ar</b>): quien maneja ese dominio agrega un registro <b>CNAME</b> que apunte a Floty, vos lo cargás en <b>Dominio propio</b> y también en Render (Settings → Custom Domains). Puede tardar hasta 24 horas.</p>
+      <p>Tu entrada a este panel es <b data-notr>${own && own.address ? host(own.address) : esc(location.host)}</b>.</p>
+    </details>`;
+
+  // Probar todas las direcciones al abrir: el estado aparece en cada tarjeta.
+  let up = 0;
+  const withAddress = agencies.filter((c) => c.address);
+  const upEl = $('[data-up]', view);
+  if (!withAddress.length) upEl.textContent = '—';
+  const check = async (c) => {
+    const box = $(`.agency[data-id="${c.id}"]`, view);
+    const st = $('[data-status]', box);
+    st.className = 'st wait';
+    st.textContent = L('Revisando…', 'Checking…');
+    const r = await POST(`/platform/companies/${c.id}/check`).catch((e) => ({ ok: false, reason: e.message }));
+    st.className = `st ${r.ok ? 'ok' : 'bad'}`;
+    st.textContent = r.ok ? L('Funciona', 'Working') : L('No responde', 'Not responding');
+    st.title = r.ok ? `${r.ms} ms` : r.reason || `HTTP ${r.status}`;
+    return r.ok;
+  };
+  withAddress.forEach((c) =>
+    check(c).then((ok) => {
+      if (ok) up++;
+      upEl.textContent = `${up} / ${withAddress.length}`;
+    }),
+  );
+
+  $$('.agency', view).forEach((box) => {
+    const c = agencies.find((x) => x.id === Number(box.dataset.id));
+    $('[data-check]', box).addEventListener('click', () => (c.address ? check(c) : toast(L('Esta agencia todavía no tiene dirección.', 'This agency has no address yet.'), true)));
+    $('[data-copy]', box)?.addEventListener('click', (e) =>
+      (navigator.clipboard ? navigator.clipboard.writeText(e.currentTarget.dataset.copy) : Promise.reject()).then(() => toast('Copiado'), () => toast('Seleccioná el texto y copialo', true)),
+    );
+    $('[data-domain]', box).addEventListener('click', () =>
       openModal(
         `Dominio propio · ${c.name}`,
         formHtml([{ name: 'domain', label: 'Dominio (vacío = sin dominio propio)', full: true, attrs: 'placeholder="reservas.suagencia.com.ar"' }], { domain: c.domain || '' }) +
           '<p class="muted">Primero, quien maneja el dominio (en NIC.ar si es .com.ar, o donde lo haya comprado) agrega un registro <b>CNAME</b> que apunte a la dirección de Floty. Después se carga acá y en Render (Settings → Custom Domains). Puede tardar hasta 24 horas en funcionar.</p>',
-        async (d) => {
-          await run(() => PUT(`/platform/companies/${c.id}/domain`, { domain: d.domain }), 'Dominio guardado');
+        async (f) => {
+          await run(() => PUT(`/platform/companies/${c.id}/domain`, { domain: f.domain }), 'Dominio guardado');
           route();
         },
-      );
-    }),
-  );
+      ),
+    );
+  });
+
   $('[data-new]', view).addEventListener('click', () =>
     openModal(
-      'Nueva empresa',
+      'Nueva agencia',
       formHtml(
         [
-          { name: 'name', label: 'Nombre de la empresa', required: true, full: true },
+          { name: 'name', label: 'Nombre de la agencia', required: true, full: true },
           { name: 'country', label: 'País', type: 'select', options: Object.entries(state.settings.country_presets || { AR: { name: 'Argentina' } }).map(([k, p]) => [k, p.name]), required: true },
           { name: 'admin_name', label: 'Nombre del administrador', required: true },
           { name: 'admin_email', label: 'Email del administrador', type: 'email', required: true, full: true },
         ],
         { country: 'AR' },
-        'Crear empresa',
-      ) + '<p class="muted">Se crea vacía, con los datos del país elegido. Te mostramos una contraseña inicial para pasarle al administrador: la cambia en su primer ingreso.</p>',
-      async (d) => {
-        const r = await POST('/platform/companies', d);
+        'Crear agencia',
+      ) + '<p class="muted">Se crea vacía, con los datos del país elegido, y con su dirección propia. Te mostramos una contraseña inicial para pasarle al administrador: la cambia en su primer ingreso.</p>',
+      async (f) => {
+        const r = await POST('/platform/companies', f);
         // La contraseña se muestra una sola vez: no queda guardada en ningún lado.
         setTimeout(() =>
           openModal(
-            'Empresa creada',
-            `<p><b>${esc(r.company.name)}</b> ya está lista. Pasale estos datos al administrador por un medio seguro (en persona o por teléfono):</p>
+            'Agencia creada',
+            `<p><b>${esc(r.company.name)}</b> ya está lista. Pasale estos datos al administrador. La contraseña mandala aparte (en persona, por llamada o en otro mensaje).</p>
              <dl class="info"><dt>Dirección</dt><dd data-notr>${esc(r.company.address || location.origin)}</dd><dt>Usuario</dt><dd><b>${esc(r.admin.email)}</b></dd><dt>Contraseña inicial</dt><dd><code style="font-size:16px">${esc(r.admin.password)}</code></dd></dl>
-             <p class="muted">Esta contraseña no se vuelve a mostrar. Al entrar, la app le pide elegir una propia y le muestra los primeros pasos para cargar su empresa.</p>
+             <p class="muted">Esta contraseña no se vuelve a mostrar. Al entrar, la app le pide elegir una propia y le muestra los primeros pasos para cargar su agencia.</p>
              <div class="actions"><button class="btn primary" data-close>Listo</button></div>`,
           ),
         );

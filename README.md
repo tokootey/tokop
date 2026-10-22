@@ -143,7 +143,9 @@ La dirección de la página tiene que estar en *Cotizador web → sitios autoriz
 
 Una sola instalación puede atender a varias agencias. Cada una tiene sus propios datos (reservas, flota, clientes, usuarios, tarifas y configuración del país) en su propia base, y nadie de una empresa puede ver los datos de otra.
 
-1. Entrá como dueño de Floty y tocá **Panel de Floty** (abajo, junto a *Salir*) → *+ Nueva empresa*. El panel sólo lo ven los emails de la variable `FLOTY_OWNERS`; si está vacía, cualquier administrador de la empresa principal. Los administradores de las agencias nunca lo ven.
+1. Entrá como dueño de Floty. Con tu email en la variable `FLOTY_OWNERS`, al entrar ves directamente el **Panel de Floty** ("Tus agencias"), sin las pantallas del rent a car: tocá *+ Nueva agencia*. Si `FLOTY_OWNERS` está vacía, cualquier administrador de la empresa principal lo abre desde *Panel de Floty* (abajo, junto a *Salir*) y sigue viendo su rent a car. Los administradores de las agencias nunca lo ven.
+   - El panel muestra cada agencia con su dirección, si responde (se prueba sola al abrir), su administrador, el último ingreso, cuántos autos cargó y sus reservas de los últimos 30 días.
+   - Arriba, el estado de las copias de seguridad, y avisos en palabras simples: copias atrasadas, agencias que nunca entraron o que dejaron de entrar.
 2. Poné el nombre, el país y el nombre y email de quien la va a administrar. La app muestra una **contraseña inicial** una sola vez: pasásela a esa persona en persona o por teléfono.
 3. Esa persona entra en la misma dirección con su email. La app le pide cambiar la contraseña y le muestra los primeros pasos.
 

@@ -317,6 +317,40 @@ test('Panel de Floty: con FLOTY_OWNERS sólo el dueño maneja empresas y dominio
   assert.equal((await call(cookieB, 'GET', '/api/platform/companies')).status, 403);
 });
 
+test('Panel de Floty administrativo: uso de cada agencia, prueba de su dirección y modo dueño', async () => {
+  // Sin FLOTY_OWNERS no hay modo dueño: una instalación de una sola agencia sigue viendo su rent a car.
+  assert.equal((await call(cookieA, 'GET', '/api/auth/me')).data.owner_mode, false);
+  process.env.FLOTY_OWNERS = A.email;
+  process.env.FLOTY_DOMAIN = 'floty.invalid'; // .invalid nunca existe: la prueba de la dirección tiene que fallar
+  try {
+    assert.equal((await call(cookieA, 'GET', '/api/auth/me')).data.owner_mode, true);
+    assert.equal((await call(cookieB, 'GET', '/api/auth/me')).data.owner_mode, false);
+
+    const ov = await call(cookieA, 'GET', '/api/platform/overview');
+    assert.equal(ov.status, 200);
+    assert.equal(typeof ov.data.backups.enabled, 'boolean');
+    const b = ov.data.companies.find((c) => c.id === companyB.id);
+    assert.equal(b.admin_email, B.email);
+    assert.equal(b.address, `https://${companyB.slug}.floty.invalid`);
+    assert.ok(b.last_login, 'ya entró al cambiar la contraseña');
+    assert.ok(b.vehicles >= 1 && b.reservations_30d >= 0);
+
+    const check = await call(cookieA, 'POST', `/api/platform/companies/${companyB.id}/check`);
+    assert.equal(check.status, 200);
+    assert.equal(check.data.ok, false);
+    assert.ok(check.data.reason);
+
+    for (const url of ['/api/platform/overview', `/api/platform/companies/${companyB.id}/check`]) {
+      assert.equal((await call(cookieB, url.endsWith('check') ? 'POST' : 'GET', url)).status, 403);
+    }
+  } finally {
+    delete process.env.FLOTY_OWNERS;
+    delete process.env.FLOTY_DOMAIN;
+  }
+  // Sin dominio de Floty la agencia no tiene dirección para probar.
+  assert.equal((await call(cookieA, 'POST', `/api/platform/companies/${companyB.id}/check`)).data.ok, null);
+});
+
 test('cada empresa guarda su base en su propio archivo, y el registro sobrevive a un reinicio', () => {
   assert.ok(fs.existsSync(path.join(dir, 'empresas.db')));
   assert.ok(fs.existsSync(path.join(dir, 'empresas', `${companyB.slug}.db`)));
