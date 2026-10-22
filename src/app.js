@@ -168,6 +168,7 @@ function platformRoutes(platform, company) {
   router.post('/reminders/:id/paid', (req, res) => res.json(book.payReminder(req.params.id, req.body)));
   router.put('/companies/:id/account', (req, res) => res.json(book.updateCompany(req.params.id, req.body)));
   router.post('/companies/:id/paid', (req, res) => res.json(book.payCompany(req.params.id, req.body)));
+  router.post('/payments/:id/undo', (req, res) => res.json(book.undoPayment(req.params.id)));
   // ¿La dirección de la agencia responde? Se prueba desde el servidor, como entraría un cliente.
   router.post('/companies/:id/check', async (req, res) => {
     const c = platform.list().find((x) => x.id === Number(req.params.id));

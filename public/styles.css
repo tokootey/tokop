@@ -769,3 +769,11 @@ body.owner .acct-menu .lang-switch .btn.link.active { color: var(--text); }
   .due .st { justify-self: start; }
   .due-actions { justify-content: flex-start; }
 }
+
+/* Tarjeta de agencia: "Ficha y abono" como botón principal; las otras dos en una fila. Aviso con "Deshacer". */
+.agency-actions { display: grid; gap: 8px; }
+.agency-actions-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.agency-actions-2 .btn { padding: 0 10px; }
+.toast { display: flex; align-items: center; gap: 14px; }
+.toast-undo { font: inherit; font-weight: 800; color: #9fd3ff; background: none; border: 0; padding: 4px 2px; cursor: pointer; text-decoration: underline; }
+.toast-undo:focus-visible { outline: 3px solid #9fd3ff; outline-offset: 2px; border-radius: 4px; }
