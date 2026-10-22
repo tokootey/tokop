@@ -88,6 +88,18 @@ function toast(msg, isError = false) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.add('hidden'), isError ? 6000 : 3000);
 }
+/** Aviso con "Deshacer" (6 segundos): para lo que se toca sin querer, como "Pagado". */
+function toastUndo(msg, onUndo) {
+  const t = $('#toast');
+  t.innerHTML = `<span>${esc(msg)}</span> <button type="button" class="toast-undo">Deshacer</button>`;
+  t.classList.remove('err', 'hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add('hidden'), 6000);
+  $('.toast-undo', t).addEventListener('click', () => {
+    t.classList.add('hidden');
+    onUndo();
+  });
+}
 
 /** Ejecuta una acción mostrando el error como toast. */
 async function run(fn, okMsg) {
@@ -2976,9 +2988,11 @@ on(/^\/empresas$/, async (view) => {
         ${c.next_charge || c.plan_price ? `<button class="btn pill small" type="button" data-charge>${ICON.check}Marcar pagado</button>` : ''}
       </div>
       <div class="agency-actions">
-        <button class="btn pill" type="button" data-account>${ICON.user}Ficha y abono</button>
-        <button class="btn pill" type="button" data-check>${ICON.reset}Probar dirección</button>
-        <button class="btn pill" type="button" data-domain>${ICON.globe}Dominio propio</button>
+        <button class="btn primary pill" type="button" data-account>${ICON.user}Ficha y abono</button>
+        <div class="agency-actions-2">
+          <button class="btn pill" type="button" data-check>${ICON.reset}Probar dirección</button>
+          <button class="btn pill" type="button" data-domain>${ICON.globe}Dominio propio</button>
+        </div>
       </div>
     </article>`;
   // Vencimientos del dueño y, de solo lectura, los dominios propios y certificados de las agencias.
@@ -3086,8 +3100,12 @@ on(/^\/empresas$/, async (view) => {
         'Marcar pagado',
       ),
       async (f) => {
-        await run(() => POST(url, f), okMsg);
+        const r = await POST(url, f);
         route();
+        toastUndo(okMsg, async () => {
+          await run(() => POST(`/platform/payments/${r.payment_id}/undo`), 'Listo: quedó como estaba');
+          route();
+        });
       },
     );
   const ACCOUNT_FIELDS = [

@@ -65,3 +65,28 @@ test('ficha y abono de una agencia: se guarda, se cobra y el próximo cobro pasa
   assert.equal(p.period, '2026-10-10');
   assert.equal(platform.list().find((c) => c.id === company.id).next_charge, '2026-11-10');
 });
+
+test('deshacer un "Pagado" tocado sin querer: vuelve la fecha y se borra del historial', () => {
+  const r = book.addReminder({ title: 'Servidor', due_date: '2026-11-05', repeat: 'mensual' });
+  const paid = book.payReminder(r.id);
+  assert.equal(paid.due_date, '2026-12-05');
+  book.undoPayment(paid.payment_id);
+  assert.equal(book.reminders().find((x) => x.id === r.id).due_date, '2026-11-05');
+  assert.equal(book.payments('reminder', r.id).length, 0);
+
+  // Una sola vez: al deshacer vuelve a la lista.
+  const once = book.addReminder({ title: 'Registro de marca', due_date: '2027-01-10', repeat: 'una_vez' });
+  book.undoPayment(book.payReminder(once.id).payment_id);
+  assert.ok(book.reminders().some((x) => x.id === once.id));
+
+  // Abono: el próximo cobro vuelve; solo se deshace el último pago.
+  const { company } = platform.create({ name: 'Sur Autos', country: 'AR', admin_name: 'S', admin_email: 's@sur.test' });
+  book.updateCompany(company.id, { next_charge: '2026-10-15', plan_price: 20000 });
+  const first = book.payCompany(company.id);
+  const second = book.payCompany(company.id);
+  assert.equal(second.next_charge, '2026-12-15');
+  assert.throws(() => book.undoPayment(first.payment_id), /último pago/);
+  book.undoPayment(second.payment_id);
+  assert.equal(platform.list().find((c) => c.id === company.id).next_charge, '2026-11-15');
+  assert.throws(() => book.undoPayment(second.payment_id), /inexistente/);
+});

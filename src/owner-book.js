@@ -96,10 +96,10 @@ function ownerBook(reg) {
     /** Pagado: queda en el historial y la fecha pasa al año o al mes siguiente (o se archiva si era una sola vez). */
     payReminder(id, b = {}) {
       const r = getReminder(id);
-      log.run('reminder', r.id, now(), r.due_date, amount(b.amount, 'Monto') ?? r.amount, text(b.note, 200));
+      const p = log.run('reminder', r.id, now(), r.due_date, amount(b.amount, 'Monto') ?? r.amount, text(b.note, 200));
       if (r.repeat === 'una_vez') reg.prepare('UPDATE reminders SET done_at = ? WHERE id = ?').run(now(), r.id);
       else if (r.due_date) reg.prepare('UPDATE reminders SET due_date = ? WHERE id = ?').run(addMonths(r.due_date, r.repeat === 'anual' ? 12 : 1), r.id);
-      return getReminder(id);
+      return { ...getReminder(id), payment_id: Number(p.lastInsertRowid) };
     },
 
     /** Ficha y abono de una agencia: solo los campos que vienen en el pedido. */
@@ -127,10 +127,23 @@ function ownerBook(reg) {
     /** Cobro del abono: queda en el historial y el próximo cobro pasa al mes siguiente. */
     payCompany(id, b = {}) {
       const c = reg.prepare('SELECT * FROM companies WHERE id = ? AND active = 1').get(Number(id)) || fail(404, 'Empresa inexistente');
-      log.run('company', c.id, now(), c.next_charge, amount(b.amount, 'Monto') ?? c.plan_price, text(b.note, 200));
+      const p = log.run('company', c.id, now(), c.next_charge, amount(b.amount, 'Monto') ?? c.plan_price, text(b.note, 200));
       const base = c.next_charge || new Date().toISOString().slice(0, 10);
       reg.prepare('UPDATE companies SET next_charge = ? WHERE id = ?').run(addMonths(base, 1), c.id);
-      return { id: c.id, next_charge: addMonths(base, 1) };
+      return { id: c.id, next_charge: addMonths(base, 1), payment_id: Number(p.lastInsertRowid) };
+    },
+    /**
+     * Deshacer un "Pagado" tocado sin querer: vuelve la fecha que tenía y borra el pago del historial.
+     * Solo el último pago de ese vencimiento o agencia (si hubo otro después, ya no es "sin querer").
+     */
+    undoPayment(id) {
+      const p = reg.prepare('SELECT * FROM payments WHERE id = ?').get(Number(id)) || fail(404, 'Pago inexistente');
+      const last = reg.prepare('SELECT MAX(id) id FROM payments WHERE kind = ? AND ref_id = ?').get(p.kind, p.ref_id).id;
+      if (last !== p.id) fail(409, 'Solo se puede deshacer el último pago');
+      if (p.kind === 'reminder') reg.prepare('UPDATE reminders SET due_date = ?, done_at = NULL WHERE id = ?').run(p.period, p.ref_id);
+      else reg.prepare('UPDATE companies SET next_charge = ? WHERE id = ?').run(p.period, p.ref_id);
+      reg.prepare('DELETE FROM payments WHERE id = ?').run(p.id);
+      return { ok: true };
     },
     payments: (kind, refId, limit = 12) => reg.prepare('SELECT * FROM payments WHERE kind = ? AND ref_id = ? ORDER BY id DESC LIMIT ?').all(kind, Number(refId), limit),
   };
