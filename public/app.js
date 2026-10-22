@@ -211,6 +211,7 @@ async function loadCatalogs() {
   const [settings, branches, categories, extras] = await Promise.all([GET('/settings'), GET('/branches'), GET('/categories'), GET('/extras')]);
   Object.assign(state, { settings, branches, categories, extras });
   $('#brand').textContent = settings.company_name || 'Floty';
+  $('.brand small').classList.toggle('hidden', !settings.company_name); // "Floty con Floty" no
   document.title = settings.company_name ? `${settings.company_name} · Floty` : 'Floty · Gestión para rent a car';
 }
 
@@ -370,6 +371,9 @@ async function route() {
       view.innerHTML = '<p class="muted">Cargando…</p>';
       try {
         await r.handler(view, ...m.slice(1));
+        view.classList.remove('enter');
+        void view.offsetWidth; // reinicia la animación de entrada
+        view.classList.add('enter');
       } catch (e) {
         view.innerHTML = `<div class="card"><p class="error">${esc(e.message)}</p></div>`;
       }
@@ -397,6 +401,34 @@ function setupCard(setup) {
 const WEEKDAYS = () => L(['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'], ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
 const dayName = (s) => `${WEEKDAYS()[new Date(String(s).slice(0, 10) + 'T12:00').getDay()]} ${fmtD(s).slice(0, 5)}`;
 const WA_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-12.4 7.4L3 20.5l1.6-5.4A8.4 8.4 0 1 1 21 11.5z"/></svg>';
+// Íconos de línea (se pintan con el color del texto).
+const svgIcon = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
+const ICON = {
+  check: svgIcon('M5 12.5l4.5 4.5L19 7.5'),
+  key: svgIcon('M14.5 9.5a4 4 0 1 0-3.9 4.9L9 16H7v2H5v2H3v-2.6l6.1-6.1M15 8h.01'),
+  in: svgIcon('M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10'),
+  car: svgIcon('M5 16l1.5-5h11L19 16M5 16h14v3H5zM7.5 19v1.5M16.5 19v1.5'),
+  road: svgIcon('M4 12h12M12 6l6 6-6 6M20 5v14'),
+  wrench: svgIcon('M14.7 6.3a4 4 0 0 0 5 5l-8.4 8.4a2.1 2.1 0 0 1-3-3zM14.7 6.3L17 4'),
+  calm: svgIcon('M12 3v2M12 19v2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M3 12h2M19 12h2M5.6 18.4L7 17M17 7l1.4-1.4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z'),
+  list: svgIcon('M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01'),
+  plus: svgIcon('M12 5v14M5 12h14'),
+  user: svgIcon('M20 21a8 8 0 0 0-16 0M12 13a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'),
+  help: svgIcon('M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4.5M12 17.5h.01M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z'),
+  doc: svgIcon('M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5'),
+  tag: svgIcon('M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01'),
+  building: svgIcon('M4 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16M16 9h2a2 2 0 0 1 2 2v10M3 21h18M8 7h4M8 11h4M8 15h4'),
+  users: svgIcon('M17 21a6 6 0 0 0-12 0M11 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM21 21a5 5 0 0 0-4-4.9M16 3.1a4 4 0 0 1 0 7.8'),
+  globe: svgIcon('M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18'),
+  link: svgIcon('M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1'),
+  sheet: svgIcon('M4 4h16v16H4zM4 10h16M4 15h16M10 4v16'),
+  lock: svgIcon('M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4'),
+  out: svgIcon('M9 20H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h3M16 16l4-4-4-4M20 12H10'),
+  panel: svgIcon('M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z'),
+  money: svgIcon('M3 7h18v10H3zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 10v.01M18 14v.01'),
+  send: svgIcon('M21 3L10 14M21 3l-7 18-4-7-7-4z'),
+  reset: svgIcon('M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5'),
+};
 /** Enlace para escribirle por WhatsApp al cliente (el número con código de país, sin signos). */
 const waLink = (phone) => {
   const n = String(phone || '').replace(/\D/g, '');
@@ -410,6 +442,14 @@ on(/^\/panel$/, async (view) => {
     const due = Math.round((Number(r.total) - Number(r.paid)) * 100) / 100;
     return due > 0 ? `<span class="pill debe">Debe ${money(due)}</span>` : '<span class="pill ok">Pagado</span>';
   };
+  // Iniciales con un color fijo por nombre: cada cliente se reconoce de un vistazo.
+  const avatar = (name) => {
+    const n = String(name || '?').trim();
+    const ini = n.split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+    const h = [...n].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
+    return `<span class="avatar" style="--h:${h}" aria-hidden="true">${esc(ini)}</span>`;
+  };
+  const who = (r, lines) => `<div class="trip-who">${avatar(r.customer_name)}<div><b>${esc(r.customer_name)}</b>${lines}</div></div>`;
   const trip = (r, kind) => {
     const out = kind === 'out';
     const at = out ? r.pickup_at : r.return_at;
@@ -421,41 +461,45 @@ on(/^\/panel$/, async (view) => {
       : `${fmtDT(at).slice(11)}${where ? ` ${L('en', 'at')} ${esc(where)}` : ''}`;
     const extra = out ? ` · ${L('vuelve el', 'returns on')} ${dayName(r.return_at)}` : '';
     const action = out
-      ? `<a class="btn primary" href="#/reservas/${r.id}?accion=checkout">Entregar el auto</a>`
-      : `<a class="btn back" href="#/reservas/${r.id}?accion=checkin">Recibir el auto</a>`;
-    return `<div class="trip">
+      ? `<a class="btn primary" href="#/reservas/${r.id}?accion=checkout">${ICON.key}Entregar el auto</a>`
+      : `<a class="btn back" href="#/reservas/${r.id}?accion=checkin">${ICON.in}Recibir el auto</a>`;
+    return `<div class="trip ${kind}">
       <div class="trip-top" data-href="#/reservas/${r.id}">
-        <div><b>${esc(r.customer_name)}</b><small>${car(r)}</small><small>${when}${extra}</small></div>
+        ${who(r, `<small>${car(r)}</small><small>${when}${extra}</small>`)}
         ${owes(r)}
       </div>
       <div class="trip-actions">${action}${waLink(r.customer_phone)}</div>
     </div>`;
   };
   // Pedidos sin confirmar (del link de reservas, del cotizador o cargados como pendientes).
-  const pend = (r) => `<div class="trip">
+  const pend = (r) => `<div class="trip pend">
       <div class="trip-top" data-href="#/reservas/${r.id}">
-        <div><b>${esc(r.customer_name)}</b><small>${esc(r.category_name)} · ${esc(STATUS_LABEL[r.source] || r.source)}</small><small>${dayName(r.pickup_at)} ${fmtDT(r.pickup_at).slice(11)} → ${dayName(r.return_at)}</small></div>
+        ${who(r, `<small>${esc(r.category_name)} · ${esc(STATUS_LABEL[r.source] || r.source)}</small><small>${dayName(r.pickup_at)} ${fmtDT(r.pickup_at).slice(11)} → ${dayName(r.return_at)}</small>`)}
         <span class="pill">${money(r.total)}</span>
       </div>
-      <div class="trip-actions"><button class="btn primary" type="button" data-confirm="${r.id}">Confirmar</button>${waLink(r.customer_phone)}</div>
+      <div class="trip-actions"><button class="btn primary" type="button" data-confirm="${r.id}">${ICON.check}Confirmar</button>${waLink(r.customer_phone)}</div>
     </div>`;
   const column = (title, icon, color, rows, kind, empty) => `<div class="hoy-col">
-      <h2><svg viewBox="0 0 24 24" stroke="${color}" aria-hidden="true"><path d="${icon}"/></svg>${title}</h2>
-      ${rows.length ? rows.map((r) => trip(r, kind)).join('') : `<p class="hoy-empty">${empty}</p>`}
+      <h2><svg viewBox="0 0 24 24" stroke="${color}" aria-hidden="true"><path d="${icon}"/></svg>${title}${rows.length ? ` <span class="count">${rows.length}</span>` : ''}</h2>
+      ${rows.length ? rows.map((r) => trip(r, kind)).join('') : `<p class="hoy-empty">${ICON.calm}${empty}</p>`}
     </div>`;
   const now = new Date();
   const first = String(state.user.name || '').split(' ')[0];
+  const hour = now.getHours();
+  const hello = hour < 13 ? L('Buen día', 'Good morning') : hour < 20 ? L('Buenas tardes', 'Good afternoon') : L('Buenas noches', 'Good evening');
   const out = [...d.late_pickups, ...d.pickups_today];
   const back = [...d.overdue, ...d.returns_today];
   const tomorrow = d.tomorrow || { pickups: 0, returns: 0 };
   view.innerHTML = `
     <div class="hoy-head">
-      <div><div class="date">${esc(now.toLocaleDateString(L('es-AR', 'en-US'), { weekday: 'long', day: 'numeric', month: 'long' }))}</div><h1>Hola, ${esc(first)}</h1></div>
+      <div><div class="date">${esc(now.toLocaleDateString(L('es-AR', 'en-US'), { weekday: 'long', day: 'numeric', month: 'long' }))}</div><h1>${hello}, ${esc(first)}</h1>
+        <p class="hello">${out.length + back.length ? L(`Hoy hay ${out.length + back.length} movimiento(s) de autos.`, `${out.length + back.length} car movement(s) today.`) : L('Día tranquilo: hoy no se mueve ningún auto.', 'Quiet day: no cars moving today.')}</p></div>
+      <svg class="hoy-art" viewBox="0 0 260 120" preserveAspectRatio="xMaxYMax meet" aria-hidden="true"><path d="M10 110 C 80 110, 90 60, 150 60 S 220 20, 250 14"/><circle class="pin" cx="250" cy="14" r="6"/><g transform="translate(132 40)"><path class="car-ic" d="M0 12a4 4 0 0 1 4-4h2l5-7h12l6 7h1a4 4 0 0 1 4 4v6H0z" style="stroke:none"/><circle cx="8" cy="18" r="4" fill="#0f1a2e" style="stroke:none"/><circle cx="26" cy="18" r="4" fill="#0f1a2e" style="stroke:none"/></g></svg>
     </div>
     <div class="hoy-counts">
-      <a href="#/flota"><b>${d.fleet.disponible || 0}</b><span>autos libres</span></a>
-      <a href="#/flota"><b>${d.fleet.alquilado || 0}</b><span>alquilados</span></a>
-      <a href="#/mantenimiento"><b>${d.fleet.mantenimiento || 0}</b><span>en el taller</span></a>
+      <a href="#/flota"><i class="ic free" aria-hidden="true">${ICON.car}</i><b>${d.fleet.disponible || 0}</b><span>autos libres</span></a>
+      <a href="#/flota"><i class="ic out" aria-hidden="true">${ICON.road}</i><b>${d.fleet.alquilado || 0}</b><span>alquilados</span></a>
+      <a href="#/mantenimiento"><i class="ic shop" aria-hidden="true">${ICON.wrench}</i><b>${d.fleet.mantenimiento || 0}</b><span>en el taller</span></a>
     </div>
     ${d.quote_errors ? `<div class="notice warn">Hay <b>${d.quote_errors}</b> solicitud(es) del cotizador o del formulario web con error. <a href="#/cotizador">Revisar bandeja</a></div>` : ''}
     ${d.pending.length ? `<div class="hoy-col"><h2>Para confirmar <span class="count">${d.pending_confirmation}</span></h2><div class="hoy-pending">${d.pending.map(pend).join('')}</div></div>` : ''}
@@ -998,41 +1042,55 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
    Más: todo lo que no se usa todos los días
    ============================================================ */
 on(/^\/mas$/, async (view) => {
-  const tile = (href, title, sub) => `<a href="${href}"><b>${title}</b><span>${sub}</span></a>`;
+  const tile = (href, title, sub, icon, tone = '', attrs = '') =>
+    `<a href="${href}"${attrs}><i class="ic ${tone}" aria-hidden="true">${icon}</i><div><b>${title}</b><span>${sub}</span></div></a>`;
   const admin = isAdmin();
   view.innerHTML = `
     <div class="page-head"><h1>Más</h1></div>
     <div class="mas-group">Reservas y clientes</div>
     <div class="mas">
-      ${tile('#/reservas', 'Todas las reservas', 'Buscar, filtrar y ver las anteriores')}
-      ${tile('#/reservas/completa', 'Reserva con más opciones', 'Adicionales, descuento, vuelo, otro lugar de devolución')}
-      ${tile('#/clientes', 'Clientes', 'Datos, licencia y sus reservas')}
-      ${tile('#/mantenimiento', 'Taller', 'Autos en el taller y services')}
+      ${tile('#/reservas', 'Todas las reservas', 'Buscar, filtrar y ver las anteriores', ICON.list)}
+      ${tile('#/reservas/completa', 'Reserva con más opciones', 'Adicionales, descuento, vuelo, otro lugar de devolución', ICON.plus)}
+      ${tile('#/clientes', 'Clientes', 'Datos, licencia y sus reservas', ICON.user)}
+      ${tile('#/mantenimiento', 'Taller', 'Autos en el taller y services', ICON.wrench, 'warm')}
     </div>
     <div class="mas-group">Para explicar Floty</div>
     <div class="mas">
-      ${tile('#/guia', 'Cómo funciona Floty', 'El recorrido de cinco pasos, otra vez')}
-      ${tile('/como-funciona', 'Hoja para mostrar Floty', 'Una página para imprimir o mandar')}
+      ${tile('#/guia', 'Cómo funciona Floty', 'El recorrido de cinco pasos, otra vez', ICON.help, 'green')}
+      ${tile('/como-funciona', 'Hoja para mostrar Floty', 'Una página para imprimir o mandar', ICON.doc, 'green')}
     </div>
     <div class="mas-group">Ajustes</div>
     <div class="mas">
-      ${tile('#/tarifas', 'Precios y lugares', 'Categorías, tarifas, temporadas, adicionales y lugares')}
-      ${admin ? tile('#/config', 'Empresa y contrato', 'Datos de la empresa, contrato, cancelaciones y factura') : ''}
-      ${admin ? tile('#/usuarios', 'Usuarios', 'Quién entra al sistema y qué hizo') : ''}
-      ${admin ? tile('#/cotizador', 'Página web: formulario', 'Que las cotizaciones de tu página entren solas') : ''}
-      ${admin ? tile('#/asistente', 'Link de reservas (opcional)', '¿No tenés reservas por internet? Un link para Instagram y WhatsApp') : ''}
-      ${admin ? tile('#/importar', 'Pasar datos de una planilla', 'Autos, clientes y reservas desde Excel o Drive') : ''}
+      ${tile('#/tarifas', 'Precios y lugares', 'Categorías, tarifas, temporadas, adicionales y lugares', ICON.tag)}
+      ${admin ? tile('#/config', 'Empresa y contrato', 'Datos de la empresa, contrato, cancelaciones y factura', ICON.building) : ''}
+      ${admin ? tile('#/usuarios', 'Usuarios', 'Quién entra al sistema y qué hizo', ICON.users) : ''}
+      ${admin ? tile('#/cotizador', 'Página web: formulario', 'Que las cotizaciones de tu página entren solas', ICON.globe) : ''}
+      ${admin ? tile('#/asistente', 'Link de reservas (opcional)', '¿No tenés reservas por internet? Un link para Instagram y WhatsApp', ICON.link) : ''}
+      ${admin ? tile('#/importar', 'Pasar datos de una planilla', 'Autos, clientes y reservas desde Excel o Drive', ICON.sheet) : ''}
+    </div>
+    <div class="mas-group">Tu cuenta</div>
+    <div class="mas">
+      ${state.user.platform_admin ? tile('#/empresas', 'Panel de Floty', 'Agencias y sus direcciones (solo vos lo ves)', ICON.panel, 'gray') : ''}
+      ${tile('#/mas', 'Cambiar contraseña', esc(state.user.email || ''), ICON.lock, 'gray', ' data-act="pw"')}
+      ${tile('#/mas', 'Salir', 'Cerrar la sesión en este dispositivo', ICON.out, 'gray', ' data-act="logout" class="out"')}
     </div>
     ${
       // Sólo en la demo del navegador (scripts/demo/runtime.js define __demoReset).
       window.__demoReset
-        ? `<div class="mas-group">Demo</div><div class="mas"><a href="#/mas" id="demo-reset"><b>Reiniciar datos</b><span>Esta demo guarda los datos solo en este navegador. Vuelve a los datos de ejemplo.</span></a></div>`
+        ? `<div class="mas-group">Demo</div><div class="mas">${tile('#/mas', 'Reiniciar datos', 'Esta demo guarda los datos solo en este navegador. Vuelve a los datos de ejemplo.', ICON.reset, 'warm', ' id="demo-reset"')}</div>`
         : ''
     }`;
   $('#demo-reset', view)?.addEventListener('click', (e) => {
     e.preventDefault();
     window.__demoReset();
   });
+  // Los mismos botones de la barra de la compu (en el celular esa barra no los muestra).
+  $$('[data-act]', view).forEach((a) =>
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      $(a.dataset.act === 'pw' ? '#change-pw' : '#logout').click();
+    }),
+  );
 }, 'mas');
 
 function breakdownHtml(q) {
@@ -1060,20 +1118,20 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   // Arriba sólo el próximo paso; lo que se usa poco va en "Más acciones".
   const actions = [];
   const more = [];
-  if (r.status === 'pendiente') actions.push('<button class="btn primary" data-act="confirm">Confirmar</button>');
+  if (r.status === 'pendiente') actions.push(`<button class="btn primary" data-act="confirm">${ICON.check}Confirmar</button>`);
   if (canEdit) {
-    actions.push(`<button class="btn ${r.status === 'confirmada' ? 'ok' : ''}" data-act="checkout">Entregar vehículo</button>`);
+    actions.push(`<button class="btn ${r.status === 'confirmada' ? 'ok' : ''}" data-act="checkout">${ICON.key}Entregar vehículo</button>`);
     more.push('<button data-act="assign">Asignar vehículo</button>');
     more.push('<button data-act="edit">Modificar fechas o datos</button>');
   }
-  if (r.status === 'en_curso') actions.push('<button class="btn ok" data-act="checkin">Registrar devolución</button>');
+  if (r.status === 'en_curso') actions.push(`<button class="btn ok" data-act="checkin">${ICON.in}Registrar devolución</button>`);
   // Saldo a cobrar a la vista, con el importe: un toque abre el cobro ya completado.
   if (['confirmada', 'en_curso', 'finalizada'].includes(r.status) && r.balance.pending > 0)
-    actions.push(`<button class="btn ${r.status === 'finalizada' ? 'primary' : ''}" data-act="pay">Cobrar ${money(r.balance.pending)}</button>`);
+    actions.push(`<button class="btn ${r.status === 'finalizada' ? 'primary' : ''}" data-act="pay">${ICON.money}Cobrar ${money(r.balance.pending)}</button>`);
   if (['cancelada', 'no_show'].includes(r.status)) actions.push('<button class="btn" data-act="reopen">Reabrir</button>');
   if (!['cancelada', 'no_show'].includes(r.status)) {
-    if (r.status !== 'finalizada') actions.push('<button class="btn" data-act="voucher">Enviar voucher</button>');
-    actions.push('<button class="btn" data-act="pdf">Contrato PDF</button>');
+    if (r.status !== 'finalizada') actions.push(`<button class="btn" data-act="voucher">${ICON.send}Enviar voucher</button>`);
+    actions.push(`<button class="btn" data-act="pdf">${ICON.doc}Contrato PDF</button>`);
     more.push('<button data-act="print">Imprimir contrato</button>');
   }
   const invoiced = (r.invoices || []).some((i) => i.status === 'emitida');

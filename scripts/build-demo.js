@@ -52,6 +52,9 @@ const body = index
   .split('/floty.svg').join(logo)
   .trim();
 
+// La letra va dentro del archivo: la demo es un solo HTML.
+const font = `data:font/woff2;base64,${fs.readFileSync(path.join(root, 'public/fonts/jakarta.woff2')).toString('base64')}`;
+
 const demoCss = `
 .demo-hint { background: #eef5ff; border: 1px solid #c9dcff; border-radius: 8px; padding: 10px 12px; font-size: 13px; color: #1d2433; }
 .demo-contract { position: fixed; inset: 0; z-index: 80; background: rgba(15,23,42,.55); overflow-y: auto; padding: 24px 12px; }
@@ -79,7 +82,7 @@ const html = `<title>Floty · Demo del sistema para rent a car</title>
 <link rel="icon" href="${logo}" type="image/svg+xml">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-${read('public/styles.css')}
+${read('public/styles.css').split('/fonts/jakarta.woff2').join(font)}
 ${demoCss}
 </style>
 ${body}
