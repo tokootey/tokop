@@ -1,27 +1,37 @@
 /* Diseño: contenido centrado con ancho máximo, recuadros blancos con bordes suaves,
-   grillas de columnas parejas y tipografía del sistema. */
+   grillas de columnas parejas. Letra Plus Jakarta Sans (licencia libre OFL), servida por la app. */
+@font-face {
+  font-family: 'Jakarta';
+  src: url('/fonts/jakarta.woff2') format('woff2');
+  font-weight: 200 800;
+  font-display: swap;
+}
 :root {
-  --bg: #f3f5f8;
+  --bg: #f4f6fb;
   --card: #ffffff;
-  --text: #182131;
-  --muted: #667085;
-  --soft: #f7f9fc;
-  --border: #e3e7ee;
-  --border-strong: #cfd6e2;
+  --text: #0f1a2e;
+  --muted: #5f6b80;
+  --soft: #f6f8fc;
+  --border: #e4e8f0;
+  --border-strong: #cdd5e2;
   --primary: #1f6feb;
-  --primary-dark: #1658c4;
+  --primary-dark: #1450b5;
   --primary-soft: #eaf2ff;
+  --accent: #ff7a3d;
+  --accent-soft: #fff0e7;
   --danger: #d1373a;
   --danger-soft: #fdecec;
-  --ok: #17915a;
+  --ok: #12965c;
+  --ok-soft: #e3f7ec;
   --warn: #b57c00;
   --warn-soft: #fff6e0;
-  --sidebar: #0f1b2d;
-  --sidebar-text: #b9c5d8;
-  --radius: 12px;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.04);
+  --sidebar: #0c1830;
+  --sidebar-text: #aebbd2;
+  --radius: 14px;
+  --shadow: 0 1px 2px rgba(15, 26, 46, 0.04), 0 2px 8px rgba(15, 26, 46, 0.04);
+  --shadow-lift: 0 2px 4px rgba(15, 26, 46, 0.05), 0 10px 24px rgba(15, 26, 46, 0.08);
   --content: 1320px;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Jakarta', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   font-size: 14px;
   line-height: 1.45;
   color: var(--text);
@@ -455,3 +465,163 @@ pre.snippet { color: var(--text); background: var(--soft); border: 1px solid var
 .hoy-pending { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; margin-bottom: 18px; }
 .hoy-pending .trip { margin-bottom: 0; }
 @media (max-width: 800px) { .hoy-pending { grid-template-columns: minmax(0, 1fr); } }
+
+/* ============================================================
+   Personalidad: marca en el menú, botones con relieve e íconos,
+   tarjetas que se levantan al pasar, colores por tipo de movimiento.
+   ============================================================ */
+h1 { font-weight: 800; letter-spacing: -0.025em; }
+h2 { font-weight: 700; }
+::selection { background: #cfe0ff; }
+
+/* Menú: degradé nocturno con una línea de ruta que baja por el costado. */
+.sidebar { background: radial-gradient(420px 300px at 0 0, rgba(47, 124, 246, 0.22), transparent 70%), linear-gradient(180deg, #0f1f3d, var(--sidebar)); }
+.sidebar::after { content: ''; position: absolute; left: 22px; bottom: 0; width: 2px; height: 120px; background: repeating-linear-gradient(to bottom, rgba(255, 255, 255, 0.12) 0 10px, transparent 10px 20px); pointer-events: none; }
+.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; padding: 20px 18px 18px; min-width: 0; }
+.brand img { flex-shrink: 0; border-radius: 10px; box-shadow: 0 4px 12px rgba(31, 111, 235, 0.45); }
+.brand span { display: flex; flex-direction: column; min-width: 0; }
+.brand b { color: #fff; font-size: 16px; font-weight: 800; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brand small { color: #7f93b5; font-size: 11.5px; font-weight: 600; }
+.sidebar nav a { position: relative; padding: 10px 12px; border-radius: 10px; transition: background 0.15s, color 0.15s; }
+.sidebar nav a.active { background: linear-gradient(90deg, rgba(47, 124, 246, 0.95), rgba(31, 111, 235, 0.75)); box-shadow: 0 6px 16px rgba(31, 111, 235, 0.35); }
+.user-box { position: relative; z-index: 1; }
+
+/* Botones: relieve suave, se hunden al tocarlos. */
+.btn { border-radius: 10px; transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.08s; }
+.btn:active:not(:disabled) { transform: translateY(1px) scale(0.99); }
+.btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+.btn.primary { background: linear-gradient(180deg, #3381f8, var(--primary)); border-color: #1a64d8; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 2px 6px rgba(31, 111, 235, 0.28); }
+.btn.primary:hover { background: linear-gradient(180deg, #2a76ef, var(--primary-dark)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 4px 12px rgba(31, 111, 235, 0.32); }
+.btn.ok { background: linear-gradient(180deg, #19a866, var(--ok)); box-shadow: 0 2px 6px rgba(18, 150, 92, 0.25); }
+.btn:not(.primary):not(.ok):not(.link):hover { box-shadow: 0 2px 6px rgba(15, 26, 46, 0.06); }
+.btn.link { border-radius: 4px; }
+input, select, textarea { border-radius: 10px; transition: border-color 0.15s, box-shadow 0.15s; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 4px rgba(31, 111, 235, 0.14); }
+input:hover:not(:focus), select:hover:not(:focus), textarea:hover:not(:focus) { border-color: #b8c3d4; }
+
+/* Estados con un puntito de color. */
+.badge { gap: 6px; padding: 3px 10px 3px 8px; }
+.badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.8; }
+th { background: transparent; color: #7a869b; font-size: 11px; }
+.table-wrap { border-radius: var(--radius); }
+tr.click td { transition: background 0.12s; }
+.plate { border-radius: 6px; background: linear-gradient(180deg, #fff, #f3f5f9); box-shadow: 0 1px 0 rgba(15, 26, 46, 0.08); }
+
+/* Tarjetas */
+.kpi, .mas a, .hoy-counts a, .cat-card, .car { transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s; }
+@media (hover: hover) {
+  .mas a:hover, .hoy-counts a:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); border-color: #c9d8f3; }
+  .car:hover:not(.on) { border-color: #9cbcf5; }
+}
+
+/* Hoy: saludo con la fecha y una ruta dibujada de fondo. */
+.hoy-head { position: relative; overflow: hidden; background: linear-gradient(120deg, #ffffff 30%, #eaf2ff); border: 1px solid #dfe8f7; border-radius: 18px; padding: 20px 22px; box-shadow: var(--shadow); }
+.hoy-head > div { position: relative; z-index: 1; }
+.hoy-head .date::first-letter { text-transform: uppercase; }
+.hoy-head .date { font-weight: 600; color: var(--primary-dark); font-size: 13px; letter-spacing: 0.01em; }
+.hoy-head h1 { font-size: 28px; }
+.hoy-head .hello { color: var(--muted); margin: 4px 0 0; font-size: 14px; }
+.hoy-art { position: absolute; right: 0; bottom: 0; width: 260px; height: 100%; pointer-events: none; }
+.hoy-art path { fill: none; stroke: #c6d8f7; stroke-width: 3; stroke-dasharray: 10 10; stroke-linecap: round; }
+.hoy-art .car-ic { fill: var(--primary); }
+.hoy-art .pin { fill: var(--accent); }
+@media (max-width: 640px) { .hoy-art { width: 150px; opacity: 0.6; } .hoy-head h1 { font-size: 24px; } }
+
+.hoy-counts a { position: relative; gap: 2px; padding: 14px 16px; border-radius: 16px; box-shadow: var(--shadow); }
+.hoy-counts b { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; }
+.hoy-counts .ic { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }
+.hoy-counts .ic svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.ic.free { background: var(--ok-soft); color: var(--ok); }
+.ic.out { background: var(--primary-soft); color: var(--primary); }
+.ic.shop { background: var(--accent-soft); color: #d4581c; }
+@media (max-width: 480px) { .hoy-counts .ic { display: none; } .hoy-counts a { padding: 12px; } .hoy-counts b { font-size: 24px; } }
+
+.trip { position: relative; border-radius: 18px; padding: 14px 14px 14px 18px; box-shadow: var(--shadow); overflow: hidden; }
+.trip::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--k, var(--border-strong)); }
+.trip.out { --k: var(--primary); }
+.trip.back { --k: #ea6a2a; }
+.trip.pend { --k: #f2b01e; }
+.trip-who { display: flex; gap: 12px; align-items: flex-start; min-width: 0; }
+.avatar { flex-shrink: 0; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; color: #fff; background: linear-gradient(135deg, hsl(var(--h, 215) 75% 60%), hsl(var(--h, 215) 65% 44%)); }
+.trip-top:hover b { color: var(--primary-dark); }
+.trip-actions .btn { border-radius: 12px; }
+.trip-actions .btn.back { background: #fff7f2; }
+.trip-actions .btn.back:hover { background: #ffeadd; }
+.trip-actions .btn.wa { background: #effaf3; border-color: #bfe8cf; }
+.trip-actions .btn.wa:hover { background: #def5e7; }
+.pill { font-variant-numeric: tabular-nums; background: #eef1f6; color: #3c4658; }
+.hoy-empty { display: flex; align-items: center; gap: 12px; background: rgba(255, 255, 255, 0.6); }
+.hoy-empty svg { flex-shrink: 0; width: 34px; height: 34px; padding: 7px; border-radius: 50%; background: var(--soft); fill: none; stroke: #9aa6ba; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Botón flotante: oscuro, con el más en azul. */
+.fab { background: linear-gradient(135deg, #1b2b4b, #0f1a2e); box-shadow: 0 10px 24px rgba(15, 26, 46, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.12); transition: transform 0.15s, box-shadow 0.15s; }
+.fab svg { width: 24px; height: 24px; padding: 3px; border-radius: 50%; background: var(--primary); }
+.fab:hover { background: linear-gradient(135deg, #22365e, #15223c); transform: translateY(-2px); box-shadow: 0 14px 28px rgba(15, 26, 46, 0.34); }
+@media (min-width: 801px) { .view { padding-bottom: 110px; } }
+
+/* Más: cada opción con su ícono. */
+.mas-group { font-weight: 700; font-size: 11.5px; color: #7a869b; letter-spacing: 0.08em; }
+.mas { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.mas a { flex-direction: row; align-items: center; gap: 14px; border-radius: 16px; box-shadow: var(--shadow); }
+.mas a > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mas .ic { flex-shrink: 0; width: 40px; height: 40px; border-radius: 12px; display: flex; align-items: center; justify-content: center; background: var(--primary-soft); color: var(--primary); }
+.mas .ic svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mas .ic.warm { background: var(--accent-soft); color: #d4581c; }
+.mas .ic.green { background: var(--ok-soft); color: var(--ok); }
+.mas .ic.gray { background: #eef1f6; color: #4a5468; }
+.mas a.out b { color: var(--danger); }
+
+/* Reserva rápida */
+.chip { transition: border-color 0.15s, background 0.15s; }
+.chip:hover:not(.on) { border-color: #9cbcf5; }
+.car { border-radius: 16px; }
+.car.on { box-shadow: 0 0 0 4px rgba(31, 111, 235, 0.12); }
+.qr-field { transition: border-color 0.15s, box-shadow 0.15s; }
+.qr-field:focus-within { box-shadow: 0 0 0 4px rgba(31, 111, 235, 0.12); }
+.qr-field input:focus, .qr-field select:focus { box-shadow: none; }
+.qr-total { border-radius: 18px; box-shadow: 0 -6px 24px rgba(15, 26, 46, 0.08); }
+
+/* Pestañas de arriba como botones redondeados. */
+.subnav { border-bottom: none; padding: 4px; background: #e9edf5; border-radius: 12px; width: fit-content; max-width: 100%; gap: 2px; margin-left: 0; }
+.subnav a { border-radius: 9px; padding: 7px 14px; }
+.subnav a.active { background: #fff; color: var(--text); box-shadow: 0 1px 3px rgba(15, 26, 46, 0.1); }
+
+/* Calendario */
+.pl-bar { border-radius: 8px; box-shadow: 0 2px 6px rgba(15, 26, 46, 0.18); }
+.pl-bar.pendiente { background: linear-gradient(180deg, #f0b11a, #d99a00); }
+.pl-bar.confirmada { background: linear-gradient(180deg, #3381f8, #1f6feb); }
+.pl-bar.en_curso { background: linear-gradient(180deg, #19a866, #12965c); }
+.pl-bar:hover { filter: brightness(1.06); }
+
+/* Ingreso: fondo con la marca. */
+.login { background: radial-gradient(700px 420px at 15% 0%, rgba(47, 124, 246, 0.25), transparent 70%), radial-gradient(600px 400px at 100% 100%, rgba(255, 122, 61, 0.16), transparent 70%), #f4f6fb; }
+.login-card { border-radius: 20px; box-shadow: 0 20px 50px rgba(15, 26, 46, 0.12); }
+.login-brand img { border-radius: 12px; box-shadow: 0 6px 16px rgba(31, 111, 235, 0.4); }
+.modal { backdrop-filter: blur(3px); }
+.modal-box { border-radius: 20px; }
+.toast { border-radius: 14px; }
+
+/* Cada pantalla entra con un movimiento corto. */
+/* Solo movimiento, sin transparencia: si el navegador pausa la animación, la pantalla igual se ve. */
+@keyframes rise { from { transform: translateY(6px); } to { transform: none; } }
+#view.enter { animation: rise 0.22s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  #view.enter { animation: none; }
+  .btn, .fab, .mas a, .hoy-counts a { transition: none; }
+}
+
+/* Celular: arriba solo la marca y el idioma; la cuenta pasa a "Más". */
+@media (max-width: 800px) {
+  .sidebar::after { display: none; }
+  .brand { padding: 10px 16px; }
+  .brand img { width: 30px; height: 30px; }
+  .brand small { display: none; }
+  .user-actions { display: none; }
+  .user-box { padding: 8px 14px; }
+  .sidebar nav { box-shadow: 0 -4px 20px rgba(15, 26, 46, 0.06); }
+  .sidebar nav a.active { background: none; box-shadow: none; }
+  .sidebar nav a.active svg { background: var(--primary-soft); border-radius: 999px; padding: 3px 14px; margin: -3px 0; box-sizing: content-box; }
+  .subnav { width: auto; }
+  .hoy-head { padding: 16px; }
+}
+@media print { .hoy-art, .fab { display: none; } }

@@ -1000,6 +1000,10 @@ const EN = {
 
   // --- Textos de pantalla con datos adentro ---
   'Hola, {}': 'Hello, {}',
+  'con Floty': 'with Floty',
+  'Tu cuenta': 'Your account',
+  'Agencias y sus direcciones (solo vos lo ves)': 'Agencies and their addresses (only you see this)',
+  'Cerrar la sesión en este dispositivo': 'Sign out on this device',
   'Debe {}': 'Owes {}',
   'Mañana: {} sale(n), {} vuelve(n).': 'Tomorrow: {} going out, {} coming back.',
   'Subiendo {} de {}…': 'Uploading {} of {}…',
