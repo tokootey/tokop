@@ -226,6 +226,7 @@ async function startSession() {
   $('#login').classList.add('hidden');
   $('#shell').classList.remove('hidden');
   $('#user-name').textContent = state.user.name;
+  $('#acct-btn').textContent = String(state.user.name || '?').trim().slice(0, 1).toUpperCase();
   $$('.admin-only').forEach((el) => el.classList.toggle('hidden', state.user.role !== 'admin'));
   // Panel de Floty: sólo el dueño de Floty (empresas y dominios), nunca las agencias.
   $('#floty-panel').classList.toggle('hidden', !state.user.platform_admin);
@@ -281,6 +282,21 @@ $('#login-form').addEventListener('submit', async (e) => {
   }
 });
 $('#logout').addEventListener('click', () => logout());
+// Menú de cuenta del Panel de Floty: se abre con el botón redondo y se cierra al tocar afuera o con Escape.
+const acctMenu = (open) => {
+  $('.user-box').classList.toggle('open', open);
+  $('#acct-btn').setAttribute('aria-expanded', String(open));
+};
+$('#acct-btn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  acctMenu(!$('.user-box').classList.contains('open'));
+});
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#acct-menu')) acctMenu(false);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') acctMenu(false);
+});
 $('#change-pw').addEventListener('click', () =>
   openModal('Cambiar mi contraseña', passwordFormHtml(), async (d) => {
     await submitPasswordChange(d);
@@ -438,6 +454,7 @@ const ICON = {
   panel: svgIcon('M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z'),
   money: svgIcon('M3 7h18v10H3zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 10v.01M18 14v.01'),
   send: svgIcon('M21 3L10 14M21 3l-7 18-4-7-7-4z'),
+  backup: svgIcon('M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3'),
   copy: svgIcon('M9 9h11v11H9zM5 15H4V4h11v1'),
   reset: svgIcon('M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5'),
 };
@@ -2908,8 +2925,8 @@ on(/^\/empresas$/, async (view) => {
     <div class="own-tiles">
       <div class="own-tile"><span class="ic out" aria-hidden="true">${ICON.building}</span><b>${agencies.length}</b><span>${L('agencias', 'agencies')}</span></div>
       <div class="own-tile"><span class="ic free" aria-hidden="true">${ICON.user}</span><b>${activeWeek}</b><span>${L('entraron esta semana', 'signed in this week')}</span></div>
-      <div class="own-tile"><span class="ic ${backupOk ? 'free' : 'shop'}" aria-hidden="true">${ICON.lock}</span><b>${backupOk ? L('Al día', 'Up to date') : d.backups.enabled ? L('Atrasadas', 'Behind') : L('Apagadas', 'Off')}</b><span>${L('copias de seguridad', 'backups')}${d.backups.last ? ` · ${L('última', 'last')} ${ago(d.backups.last)}` : ''}</span></div>
-      <div class="own-tile"><span class="ic out" aria-hidden="true">${ICON.globe}</span><b data-up>—</b><span>${L('direcciones funcionando', 'addresses working')}</span></div>
+      <div class="own-tile ${backupOk ? 'good' : d.backups.enabled ? 'warn' : 'bad'}"><span class="ic" aria-hidden="true">${ICON.backup}</span><b>${backupOk ? L('Al día', 'Up to date') : d.backups.enabled ? L('Atrasadas', 'Behind') : L('Apagadas', 'Off')}</b><span>${L('copias de seguridad', 'backups')}${d.backups.last ? ` · ${L('última', 'last')} ${ago(d.backups.last)}` : ''}</span></div>
+      <div class="own-tile" data-up-tile><span class="ic out" aria-hidden="true">${ICON.globe}</span><b data-up>—</b><span>${L('direcciones funcionando', 'addresses working')}</span></div>
     </div>
     ${
       warnings.length
@@ -2944,10 +2961,15 @@ on(/^\/empresas$/, async (view) => {
     st.title = r.ok ? `${r.ms} ms` : r.reason || `HTTP ${r.status}`;
     return r.ok;
   };
+  // El número se pinta: rojo apenas una falla, verde cuando respondieron todas.
+  let done = 0;
   withAddress.forEach((c) =>
     check(c).then((ok) => {
+      done++;
       if (ok) up++;
       upEl.textContent = `${up} / ${withAddress.length}`;
+      $('[data-up-tile]', view).classList.toggle('bad', up < done);
+      $('[data-up-tile]', view).classList.toggle('good', done === withAddress.length && up === done);
     }),
   );
 

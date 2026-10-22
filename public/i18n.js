@@ -1316,7 +1316,7 @@ function languageSwitch() {
 if (typeof document !== 'undefined') {
   document.documentElement.lang = LANG;
   const start = () => {
-    for (const el of [document.getElementById('login-form'), document.querySelector('.user-box')]) if (el) el.appendChild(languageSwitch());
+    for (const el of [document.getElementById('login-form'), document.querySelector('.user-box .acct-menu') || document.querySelector('.user-box')]) if (el) el.appendChild(languageSwitch());
     if (LANG !== 'en') return;
     document.title = tr(document.title);
     translateTree(document.body);
