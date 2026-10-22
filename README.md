@@ -146,6 +146,9 @@ Una sola instalación puede atender a varias agencias. Cada una tiene sus propio
 1. Entrá como dueño de Floty. Con tu email en la variable `FLOTY_OWNERS`, al entrar ves directamente el **Panel de Floty** ("Tus agencias"), sin las pantallas del rent a car: tocá *+ Nueva agencia*. Si `FLOTY_OWNERS` está vacía, cualquier administrador de la empresa principal lo abre desde *Panel de Floty* (abajo, junto a *Salir*) y sigue viendo su rent a car. Los administradores de las agencias nunca lo ven.
    - El panel muestra cada agencia con su dirección, si responde (se prueba sola al abrir), su administrador, el último ingreso, cuántos autos cargó y sus reservas de los últimos 30 días.
    - Arriba, el estado de las copias de seguridad, y avisos en palabras simples: copias atrasadas, agencias que nunca entraron o que dejaron de entrar.
+   - **Mis vencimientos:** lo que paga el dueño (dominio, servidor, página web…), con monto y nota. Avisa 30 días antes, más fuerte a 7 y en rojo si venció; al marcarlo pagado la fecha pasa sola al mes o al año siguiente y queda en el historial. Arranca con el dominio flotyapp.com.ar (20/10/2027), Render y Netlify.
+   - **Ficha y abono de cada agencia:** responsable, WhatsApp, notas, precio del plan, próximo cobro, fin de la prueba gratis y los vencimientos de su dominio propio y su certificado de factura (se cargan a mano). *Marcar pagado* anota el cobro y pasa el próximo al mes siguiente. Floty no cobra nada solo: es para llevar la cuenta.
+   - **Disco:** cuánto se usa del disco de datos, con aviso al 80 %.
 2. Poné el nombre, el país y el nombre y email de quien la va a administrar. La app muestra una **contraseña inicial** una sola vez: pasásela a esa persona en persona o por teléfono.
 3. Esa persona entra en la misma dirección con su email. La app le pide cambiar la contraseña y le muestra los primeros pasos.
 
