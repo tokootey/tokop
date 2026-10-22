@@ -110,10 +110,22 @@ function scheduleDaily({ dataDir, backupDir, keep, log = console }) {
   setInterval(tick, 60 * 60 * 1000).unref();
 }
 
+/** Estado de las copias para el Panel de Floty: si están prendidas, cuántas hay y la última (hora local del servidor). */
+function backupStatus(env = process.env) {
+  const { backupDir } = backupConfig(env);
+  const list = listBackups(backupDir);
+  const last = list[list.length - 1];
+  return {
+    enabled: env.BACKUP_DISABLED !== '1',
+    count: list.length,
+    last: last ? `${last.slice(0, 10)}T${last.slice(11, 13)}:${last.slice(13, 15)}:${last.slice(15, 17)}` : null,
+  };
+}
+
 /** Carpetas según las variables de entorno: DB_FILE, BACKUP_DIR (copias) y BACKUP_KEEP (cuántas guardar). */
 function backupConfig(env = process.env) {
   const dataDir = path.dirname(path.resolve(env.DB_FILE || path.join(__dirname, '..', 'data', 'rentacar.db')));
   return { dataDir, backupDir: path.resolve(env.BACKUP_DIR || path.join(dataDir, 'respaldos')), keep: Math.max(1, Number(env.BACKUP_KEEP) || 14) };
 }
 
-module.exports = { backupConfig, backupNow, restore, restoreOnBoot, listBackups, scheduleDaily, databases };
+module.exports = { backupConfig, backupStatus, backupNow, restore, restoreOnBoot, listBackups, scheduleDaily, databases };

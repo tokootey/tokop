@@ -13,6 +13,7 @@ const { chatRoutes } = require('./routes/chat');
 const { fileRoutes } = require('./routes/files');
 const { importRoutes } = require('./routes/importer');
 const { HttpError, fail } = require('./util');
+const { backupStatus } = require('./backup');
 
 /** Crea el usuario administrador inicial si no hay ninguno. */
 function ensureAdmin(db) {
@@ -73,7 +74,14 @@ function companyApi(db, { uploadsDir, company, platform }) {
   const auth = requireUser(db);
   // La empresa va con el usuario: la pantalla la usa para armar los códigos del sitio web y la pestaña "Empresas".
   const companyInfo = (req) =>
-    company ? { company: { slug: company.slug, name: company.name, principal: company.principal }, platform_admin: isFlotyOwner(req.user, company) } : {};
+    company
+      ? {
+          company: { slug: company.slug, name: company.name, principal: company.principal },
+          platform_admin: isFlotyOwner(req.user, company),
+          // Dueño declarado en FLOTY_OWNERS: ve solo el panel administrativo, sin las pantallas del rent a car.
+          owner_mode: isFlotyOwner(req.user, company) && flotyOwners().length > 0,
+        }
+      : {};
   app.get('/api/auth/me', auth, (req, res) => res.json({ ...req.user, ...companyInfo(req) }));
   app.post('/api/auth/logout', sameOrigin, auth, (req, res) => {
     logout(db, req, res);
@@ -104,12 +112,15 @@ function companyApi(db, { uploadsDir, company, platform }) {
  * Con FLOTY_OWNERS (emails separados por coma) sólo esos usuarios; sin ella, cualquier administrador
  * de la empresa principal, como hasta ahora. Los administradores de las agencias nunca.
  */
-function isFlotyOwner(user, company) {
-  if (!user || !company || !company.principal || user.role !== 'admin') return false;
-  const owners = String(process.env.FLOTY_OWNERS || '')
+const flotyOwners = () =>
+  String(process.env.FLOTY_OWNERS || '')
     .split(',')
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
+
+function isFlotyOwner(user, company) {
+  if (!user || !company || !company.principal || user.role !== 'admin') return false;
+  const owners = flotyOwners();
   return owners.length === 0 || owners.includes(String(user.email).toLowerCase());
 }
 
@@ -120,6 +131,27 @@ function platformRoutes(platform, company) {
   router.get('/companies', (_req, res) =>
     res.json(platform.list().map(({ id, slug, name, created_at, principal, domain, address }) => ({ id, slug, name, created_at, principal, domain, address }))),
   );
+  // Todo lo del panel en un pedido: cada agencia con su uso, y el estado de las copias de seguridad.
+  router.get('/overview', (_req, res) =>
+    res.json({
+      floty_domain: process.env.FLOTY_DOMAIN || null,
+      backups: backupStatus(),
+      companies: platform.list().map(({ id, slug, name, created_at, principal, domain, address }) => ({ id, slug, name, created_at, principal, domain, address, ...platform.stats(id) })),
+    }),
+  );
+  // ¿La dirección de la agencia responde? Se prueba desde el servidor, como entraría un cliente.
+  router.post('/companies/:id/check', async (req, res) => {
+    const c = platform.list().find((x) => x.id === Number(req.params.id));
+    if (!c) fail(404, 'Empresa inexistente');
+    if (!c.address) return res.json({ ok: null, reason: 'Sin dirección propia todavía' });
+    const started = Date.now();
+    try {
+      const r = await fetch(`${c.address}/api/health`, { signal: AbortSignal.timeout(8000), redirect: 'manual' });
+      res.json({ ok: r.ok, status: r.status, ms: Date.now() - started });
+    } catch (err) {
+      res.json({ ok: false, reason: err.name === 'TimeoutError' ? 'No contestó en 8 segundos' : 'No se pudo conectar' });
+    }
+  });
   router.post('/companies', (req, res) => res.status(201).json(platform.create(req.body || {})));
   router.put('/companies/:id/domain', (req, res) => res.json(platform.setDomain(req.params.id, (req.body || {}).domain)));
   return router;

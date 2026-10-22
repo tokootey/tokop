@@ -107,6 +107,21 @@ function openPlatform(principalDb, principalFile) {
       reg.prepare('UPDATE companies SET domain = ? WHERE id = ?').run(d || null, c.id);
       return { id: c.id, domain: d || null, address: addressOf({ ...c, domain: d || null }) };
     },
+    /** Uso de una empresa para el Panel de Floty: su administrador, cuánto cargó y cuándo entró por última vez. */
+    stats(id) {
+      const c = reg.prepare('SELECT * FROM companies WHERE id = ? AND active = 1').get(Number(id));
+      if (!c) return null;
+      const db = dbOf(c);
+      const one = (sql) => db.prepare(sql).get();
+      return {
+        admin_email: (one("SELECT email FROM users WHERE role = 'admin' AND active = 1 ORDER BY id LIMIT 1") || {}).email || null,
+        users: one('SELECT COUNT(*) n FROM users WHERE active = 1').n,
+        vehicles: one('SELECT COUNT(*) n FROM vehicles').n,
+        reservations: one('SELECT COUNT(*) n FROM reservations').n,
+        reservations_30d: one("SELECT COUNT(*) n FROM reservations WHERE created_at >= datetime('now', '-30 days')").n,
+        last_login: one("SELECT MAX(at) at FROM audit_log WHERE action = 'login'").at || null,
+      };
+    },
     /** Todas las bases abiertas, con su archivo (para las copias de seguridad). */
     databases: () => all().map((c) => ({ company: c, db: dbOf(c), file: fileOf(c) })),
 
