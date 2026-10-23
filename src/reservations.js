@@ -8,6 +8,8 @@ const { refundFor } = require('./refunds');
 const { fail, normDateTime, nowLocal, round2, tx } = require('./util');
 
 const STATUSES = ['pendiente', 'confirmada', 'en_curso', 'finalizada', 'cancelada', 'no_show'];
+// Para los mensajes de error: "Una reserva cancelada no puede pasar a confirmada".
+const STATUS_TEXT = { pendiente: 'pendiente', confirmada: 'confirmada', en_curso: 'en curso', finalizada: 'finalizada', cancelada: 'cancelada', no_show: 'marcada como no show' };
 
 function log(db, reservationId, userId, action, detail) {
   db.prepare('INSERT INTO reservation_log (reservation_id, user_id, action, detail) VALUES (?, ?, ?, ?)').run(
@@ -236,7 +238,9 @@ function changeStatus(db, id, status, userId, detail) {
     no_show: ['pendiente', 'confirmada'],
     pendiente: ['cancelada', 'no_show'],
   };
-  if (!allowed[status] || !allowed[status].includes(r.status)) fail(409, `No se puede pasar de "${r.status}" a "${status}"`);
+  if (!allowed[status] || !allowed[status].includes(r.status)) fail(409, `Una reserva ${STATUS_TEXT[r.status] || r.status} no puede pasar a ${STATUS_TEXT[status] || status}`);
+  // "No se presentó" recién tiene sentido cuando pasó la hora de retiro; antes, es una cancelación.
+  if (status === 'no_show' && r.pickup_at > nowLocal()) fail(409, 'Todavía no llegó la hora de retiro: si el cliente avisó que no viene, cancelá la reserva');
   if (status === 'pendiente') assertAvailability(db, r, r.id);
   db.prepare('UPDATE reservations SET status = ?, updated_at = ? WHERE id = ?').run(status, nowLocal(), r.id);
   log(db, r.id, userId, status, detail);

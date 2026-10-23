@@ -104,8 +104,13 @@ test('cancelar: muestra antes cuánto se devuelve y después queda registrado en
   // Con 48 h de anticipación, la mitad.
   const r2 = await paidReservation(48);
   assert.equal((await call('POST', `/api/reservations/${r2.id}/status`, { status: 'cancelada' })).data.refund.amount, 500);
-  // Si no se presenta, nada (y también queda registrado).
+  // "No se presentó" recién cuando pasó la hora de retiro; antes, se cancela.
   const r3 = await paidReservation(24 * 5);
+  const early = await call('POST', `/api/reservations/${r3.id}/status`, { status: 'no_show' });
+  assert.equal(early.status, 409);
+  assert.match(early.data.error, /hora de retiro/);
+  db.prepare('UPDATE reservations SET pickup_at = ? WHERE id = ?').run(fmtLocal(new Date(Date.now() - 3600000)), r3.id);
+  // Si no se presenta, nada (y también queda registrado).
   const ns = await call('POST', `/api/reservations/${r3.id}/status`, { status: 'no_show' });
   assert.equal(ns.data.refund.amount, 0);
   assert.ok(ns.data.log.some((l) => l.action === 'devolucion_calculada'));

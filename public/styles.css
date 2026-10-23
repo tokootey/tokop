@@ -777,3 +777,52 @@ body.owner .acct-menu .lang-switch .btn.link.active { color: var(--text); }
 .toast { display: flex; align-items: center; gap: 14px; }
 .toast-undo { font: inherit; font-weight: 800; color: #9fd3ff; background: none; border: 0; padding: 4px 2px; cursor: pointer; text-decoration: underline; }
 .toast-undo:focus-visible { outline: 3px solid #9fd3ff; outline-offset: 2px; border-radius: 4px; }
+
+/* Confirmación antes de una acción (reemplaza el cartelito del navegador). Va encima de cualquier ventana. */
+.confirm-modal { z-index: 70; align-items: center; padding: 16px; }
+.confirm-box { max-width: 440px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 26px 24px 22px; }
+.confirm-box h2 { margin: 6px 0 0; font-size: 19px; }
+.confirm-box p { margin: 0; color: var(--muted); }
+.confirm-ic { width: 52px; height: 52px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: #eaf2ff; color: var(--primary); }
+.confirm-ic svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.confirm-box.danger .confirm-ic { background: #fdecec; color: #c2453f; }
+.confirm-warn { font-weight: 700; color: #c2453f !important; font-size: 13.5px; }
+.confirm-box .actions { margin-top: 14px; width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.confirm-box .actions .btn { min-height: 44px; border-radius: 999px; }
+.btn.danger-solid { background: linear-gradient(180deg, #d4524c, #c2453f); border-color: #b23c36; color: #fff; box-shadow: 0 2px 6px rgba(194, 69, 63, 0.3); }
+.btn.danger-solid:hover { background: #a93a35; }
+
+/* Filtros por estado con pastillas (Reservas y Autos). */
+.status-chips { flex: 0 0 100%; margin-top: 2px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.chip.on { background: #e6efff; border-color: #c5d8fb; color: #1450b5; }
+.chip-n { font-size: 12px; font-weight: 700; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: #eef1f6; color: #5b6678; text-align: center; }
+.chip.on .chip-n { background: #fff; color: #1450b5; }
+
+/* Autos: tarjetas con jerarquía (qué auto es → patente y estado → datos → acciones). */
+.fleet-bar { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.fleet-bar input { max-width: 420px; }
+.fleet { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.vcard { background: #fff; border: 1px solid var(--border); border-radius: 18px; padding: 16px; display: flex; flex-direction: column; gap: 12px; box-shadow: var(--shadow); position: relative; overflow: hidden; min-width: 0; }
+.vcard::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--k, var(--border-strong)); }
+.vcard.st-disponible { --k: #16a35f; }
+.vcard.st-alquilado { --k: var(--primary); }
+.vcard.st-mantenimiento { --k: #e0a100; }
+.vcard.st-fuera_servicio { --k: #c2453f; }
+.vcard-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.vcard-name { display: flex; flex-direction: column; min-width: 0; }
+.vcard-name b { font-size: 17px; font-weight: 800; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vcard-name small { color: var(--muted); font-size: 12.5px; }
+.vcard-id { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.vcard-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 10px 0 0; border-top: 1px solid #eef1f6; }
+.vcard-facts dt { color: #5b6678; font-size: 11.5px; font-weight: 600; }
+.vcard-facts dd { margin: 2px 0 0; font-weight: 700; font-size: 13.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.doc-bad { color: #c2453f; }
+.doc-warn, .doc-info { color: #a66a00; }
+.vcard-actions { display: flex; gap: 8px; align-items: center; }
+.vcard-actions .btn.icon { margin-left: auto; }
+.btn.icon.danger { color: #c2453f; border-color: #f0c4c5; }
+.btn.icon.danger:hover { background: #fdecec; }
+.btn.icon svg { width: 17px; height: 17px; }
+.btn.pill.small.warm { background: #fff3df; border-color: #f1dcb0; color: #7a4e00; }
+.vcard-actions { flex-wrap: wrap; }
