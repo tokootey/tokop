@@ -824,3 +824,5 @@ body.owner .acct-menu .lang-switch .btn.link.active { color: var(--text); }
 .btn.icon.danger { color: #c2453f; border-color: #f0c4c5; }
 .btn.icon.danger:hover { background: #fdecec; }
 .btn.icon svg { width: 17px; height: 17px; }
+.btn.pill.small.warm { background: #fff3df; border-color: #f1dcb0; color: #7a4e00; }
+.vcard-actions { flex-wrap: wrap; }

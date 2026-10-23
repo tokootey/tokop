@@ -403,15 +403,11 @@ function showForcedPasswordChange() {
 const routes = [];
 const on = (pattern, handler, navKey) => routes.push({ pattern, handler, navKey });
 
-// Menú corto: "Flota y taller" y "Ajustes" agrupan varias pantallas, que se eligen con pestañas arriba.
+// Menú corto: "Ajustes" agrupa varias pantallas, que se eligen con pestañas arriba. El taller se maneja desde cada auto.
 // Sección del menú que queda marcada (Ajustes, Reservas y Clientes están en "Más").
 const NAV_MENU = { ajustes: 'mas', reservas: 'mas', clientes: 'mas', completa: 'mas' };
-const NAV_GROUP = { flota: 'flota', mantenimiento: 'flota', tarifas: 'ajustes', cotizador: 'ajustes', config: 'ajustes', usuarios: 'ajustes', importar: 'ajustes', asistente: 'ajustes' };
+const NAV_GROUP = { tarifas: 'ajustes', cotizador: 'ajustes', config: 'ajustes', usuarios: 'ajustes', importar: 'ajustes', asistente: 'ajustes' };
 const SUBNAV = {
-  flota: [
-    ['flota', '#/flota', 'Autos'],
-    ['mantenimiento', '#/mantenimiento', 'Taller y mantenimiento'],
-  ],
   ajustes: [
     ['tarifas', '#/tarifas', 'Tarifas y sucursales'],
     ['config', '#/config', 'Empresa y contrato', true],
@@ -581,7 +577,7 @@ on(/^\/panel$/, async (view) => {
     <div class="hoy-counts">
       <a href="#/flota"><i class="ic free" aria-hidden="true">${ICON.car}</i><b>${d.fleet.disponible || 0}</b><span>autos libres</span></a>
       <a href="#/flota"><i class="ic out" aria-hidden="true">${ICON.road}</i><b>${d.fleet.alquilado || 0}</b><span>alquilados</span></a>
-      <a href="#/mantenimiento"><i class="ic shop" aria-hidden="true">${ICON.wrench}</i><b>${d.fleet.mantenimiento || 0}</b><span>en el taller</span></a>
+      <a href="#/flota?estado=mantenimiento"><i class="ic shop" aria-hidden="true">${ICON.wrench}</i><b>${d.fleet.mantenimiento || 0}</b><span>en el taller</span></a>
     </div>
     ${d.quote_errors ? `<div class="notice warn">Hay <b>${d.quote_errors}</b> solicitud(es) del cotizador o del formulario web con error. <a href="#/cotizador">Revisar bandeja</a></div>` : ''}
     ${d.pending.length ? `<div class="hoy-col"><h2>Para confirmar <span class="count">${d.pending_confirmation}</span></h2><div class="hoy-pending">${d.pending.map(pend).join('')}</div></div>` : ''}
@@ -1155,7 +1151,7 @@ on(/^\/mas$/, async (view) => {
       ${tile('#/reservas', 'Todas las reservas', 'Buscar, filtrar y ver las anteriores', ICON.list)}
       ${tile('#/reservas/completa', 'Reserva con más opciones', 'Adicionales, descuento, vuelo, otro lugar de devolución', ICON.plus)}
       ${tile('#/clientes', 'Clientes', 'Datos, licencia y sus reservas', ICON.user)}
-      ${tile('#/mantenimiento', 'Taller', 'Autos en el taller y services', ICON.wrench, 'warm')}
+      ${tile('#/flota?estado=mantenimiento', 'Taller', 'Autos en el taller: mandar, sacar y su historial', ICON.wrench, 'warm')}
     </div>
     <div class="mas-group">Para explicar Floty</div>
     <div class="mas">
@@ -2323,10 +2319,21 @@ const vehicleFields = (v) =>
         : { ...f, options: f.options.filter((o) => o !== 'alquilado') },
   );
 
+// Taller: tipos de trabajo, con nombre para leer.
+const MAINT_KINDS = [
+  ['service', 'Service'],
+  ['reparacion', 'Reparación'],
+  ['neumaticos', 'Neumáticos'],
+  ['chapa_pintura', 'Chapa y pintura'],
+  ['limpieza', 'Limpieza'],
+  ['otro', 'Otro'],
+];
+const maintKind = (k) => (MAINT_KINDS.find(([v]) => v === k) || [k, k])[1];
+
 on(
-  /^\/flota$/,
-  async (view) => {
-    let filter = '';
+  /^\/flota(?:\?estado=(\w+))?$/,
+  async (view, estado) => {
+    let filter = FLEET_FILTERS.some(([k]) => k === estado) ? estado : '';
     view.innerHTML = `<div class="page-head"><h1>Autos</h1><button class="btn primary" data-new>${ICON.plus}Agregar auto</button></div>
       <div class="fleet-bar"><input id="fleet-q" type="search" placeholder="Buscar por patente, marca o modelo" aria-label="Buscar auto"/>
         <div class="chips" id="fleet-chips" role="group" aria-label="Estado"></div></div>
@@ -2347,6 +2354,7 @@ on(
         <div class="vcard-actions">
           <button class="btn pill small" type="button" data-hist>${ICON.list}Historial</button>
           <button class="btn pill small" type="button" data-edit>Editar</button>
+          ${v.status === 'alquilado' ? '' : `<button class="btn pill small${v.status === 'mantenimiento' ? ' warm' : ''}" type="button" data-shop>${ICON.wrench}${v.status === 'mantenimiento' ? 'Sacar del taller' : 'Taller'}</button>`}
           ${isAdmin() ? `<button class="btn icon danger" type="button" data-del aria-label="Borrar ${esc(v.plate)}" title="Borrar">${ICON.trash}</button>` : ''}
         </div>
       </article>`;
@@ -2381,9 +2389,70 @@ on(
       const box = e.target.closest('.vcard');
       if (!box) return;
       const v = rows.find((x) => x.id === Number(box.dataset.id));
+      const shopJobs = async () => (await GET(`/maintenance?q=${encodeURIComponent(v.plate)}`)).filter((m) => m.vehicle_id === v.id);
       if (e.target.closest('[data-hist]')) {
-        const hist = await GET(`/reservations?vehicle_id=${v.id}&limit=50`);
-        openModal(`Historial · ${v.plate}`, historyTable(hist));
+        const [hist, jobs] = await Promise.all([GET(`/reservations?vehicle_id=${v.id}&limit=50`), shopJobs()]);
+        openModal(
+          `Historial · ${v.plate}`,
+          `<h3>Reservas</h3>${historyTable(hist)}<h3>Taller</h3>${
+            jobs.length
+              ? `<table class="mini"><thead><tr><th>Fechas</th><th>Trabajo</th><th>Costo</th><th>Estado</th></tr></thead><tbody>${jobs
+                  .map(
+                    (m) =>
+                      `<tr><td class="nowrap">${fmtD(m.start_date)} → ${fmtD(m.end_date) || '…'}</td><td><b>${esc(maintKind(m.kind))}</b>${m.description ? `<br><small class="muted">${esc(m.description)}</small>` : ''}</td><td class="nowrap">${m.cost ? money(m.cost) : '—'}</td><td>${m.status === 'abierto' ? '<span class="badge b-mantenimiento">En el taller</span>' : '<span class="badge b-finalizada">Terminado</span>'}</td></tr>`,
+                  )
+                  .join('')}</tbody></table>`
+              : '<p class="muted">Nunca fue al taller.</p>'
+          }`,
+          null,
+          { wide: true },
+        );
+      } else if (e.target.closest('[data-shop]')) {
+        const today = new Date().toISOString().slice(0, 10);
+        if (v.status === 'mantenimiento') {
+          // Sacar del taller: se cierran sus trabajos abiertos (con la fecha y el costo final) y vuelve a disponible.
+          const open = (await shopJobs()).filter((m) => m.status === 'abierto');
+          openModal(
+            `Sacar del taller · ${v.plate}`,
+            `${open.map((m) => `<p><b>${esc(maintKind(m.kind))}</b> desde el ${fmtD(m.start_date)}${m.description ? ` · ${esc(m.description)}` : ''}</p>`).join('')}` +
+              formHtml(
+                [
+                  { name: 'end_date', label: 'Salió el', type: 'date', required: true },
+                  { name: 'cost', label: 'Costo total (opcional)', type: 'number' },
+                ],
+                { end_date: today, cost: open.length === 1 ? open[0].cost || '' : '' },
+                'Sacar del taller',
+              ) +
+              '<p class="muted">El auto vuelve a <b>Disponible</b> y el trabajo queda en su historial.</p>',
+            async (d) => {
+              for (const m of open) await PUT(`/maintenance/${m.id}`, { ...m, status: 'cerrado', end_date: d.end_date, cost: open.length === 1 && d.cost !== '' ? d.cost : m.cost });
+              // Sin trabajos abiertos (quedó en taller a mano): se pasa a disponible desde la ficha.
+              if (!open.length) await PUT(`/vehicles/${v.id}`, { ...v, status: 'disponible' });
+              toast(`${v.plate} volvió a la flota`);
+              load();
+            },
+          );
+        } else {
+          openModal(
+            `Mandar al taller · ${v.plate}`,
+            formHtml(
+              [
+                { name: 'kind', label: 'Qué se le hace', type: 'select', required: true, options: MAINT_KINDS },
+                { name: 'start_date', label: 'Entra el', type: 'date', required: true },
+                { name: 'km', label: 'Km', type: 'number' },
+                { name: 'cost', label: 'Costo (opcional)', type: 'number' },
+                { name: 'description', label: 'Detalle', type: 'textarea', full: true, rows: 2 },
+              ],
+              { kind: 'service', start_date: today, km: v.km },
+              'Mandar al taller',
+            ) + '<p class="muted">Mientras esté en el taller no se puede reservar ni entregar. Cuando vuelva, tocá <b>Sacar del taller</b>.</p>',
+            async (d) => {
+              await POST('/maintenance', { ...d, vehicle_id: v.id, status: 'abierto' });
+              toast(`${v.plate} quedó en el taller`);
+              load();
+            },
+          );
+        }
       } else if (e.target.closest('[data-edit]')) {
         openModal(`Editar · ${v.plate}`, formHtml(vehicleFields(v), v), async (d) => {
           await PUT(`/vehicles/${v.id}`, d);
@@ -2468,36 +2537,13 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('#modal [data-href]')) closeModal();
 });
 
+// El taller se maneja desde cada auto (botón "Taller"): la pantalla vieja lleva a Autos filtrado.
 on(
   /^\/mantenimiento$/,
-  crudPage({
-    title: 'Mantenimiento y taller',
-    endpoint: 'maintenance',
-    canDelete: () => isAdmin(),
-    before: async () => {
-      state.vehiclesCache = await GET('/vehicles');
-    },
-    searchable: true,
-    fields: [
-      { name: 'vehicle_id', label: 'Vehículo', type: 'select', required: true, options: () => (state.vehiclesCache || []).map((v) => [v.id, `${v.plate} · ${v.brand} ${v.model}`]) },
-      { name: 'kind', label: 'Tipo', type: 'select', options: ['service', 'reparacion', 'neumaticos', 'chapa_pintura', 'limpieza', 'otro'].map((x) => [x, x]), default: 'service' },
-      { name: 'status', label: 'Estado', type: 'select', options: [['abierto', 'Abierto (vehículo en taller)'], ['cerrado', 'Cerrado (vuelve a la flota)']], required: true, default: 'abierto' },
-      { name: 'start_date', label: 'Desde', type: 'date' },
-      { name: 'end_date', label: 'Hasta', type: 'date' },
-      { name: 'km', label: 'Km', type: 'number' },
-      { name: 'cost', label: 'Costo', type: 'number', default: 0 },
-      { name: 'description', label: 'Descripción', type: 'textarea', full: true },
-    ],
-    columns: [
-      { label: 'Vehículo', render: (r) => `<b>${esc(r.plate)}</b> <small>${esc(r.brand)} ${esc(r.model)}</small>` },
-      { label: 'Tipo', key: 'kind' },
-      { label: 'Descripción', key: 'description' },
-      { label: 'Fechas', render: (r) => `${fmtD(r.start_date)} → ${fmtD(r.end_date) || '…'}` },
-      { label: 'Costo', render: (r) => money(r.cost) },
-      { label: 'Estado', render: (r) => badge(r.status) },
-    ],
-  }),
-  'mantenimiento',
+  () => {
+    location.hash = '#/flota?estado=mantenimiento';
+  },
+  'flota',
 );
 /* ---------- Tarifas y sucursales (pestañas) ---------- */
 on(/^\/tarifas$/, async (view) => {
