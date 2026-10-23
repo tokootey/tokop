@@ -67,12 +67,34 @@ const demoUi = `
 (function () {
   var form = document.getElementById('login-form');
   if (form) {
-    form.email.value = 'admin@rentacar.local';
-    form.password.value = 'admin123';
+    // La demo entra con un botón y sin tocar el campo de contraseña: si se llena y se manda el formulario,
+    // Chrome ofrece guardarla y avisa que "admin123" apareció en una filtración.
+    // api() y startSession() son de app.js, que carga después; se usan recién al tocar el botón.
+    var enter = function () {
+      return api('POST', '/auth/login', { email: 'admin@rentacar.local', password: 'admin123' }).then(function () {
+        startSession();
+      });
+    };
+    Array.prototype.forEach.call(form.querySelectorAll('label, button[type=submit], .login-brand + p'), function (el) {
+      el.style.display = 'none';
+    });
     var hint = document.createElement('p');
     hint.className = 'demo-hint';
-    hint.innerHTML = '<b>Demo de Floty.</b> Ya están cargados el usuario y la contraseña de ejemplo: tocá <b>Ingresar</b>. Los datos se guardan solo en este navegador.';
-    form.insertBefore(hint, form.querySelector('button'));
+    hint.innerHTML = '<b>Demo de Floty.</b> No hace falta usuario ni contraseña. Los datos se guardan solo en este navegador.';
+    var go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'btn primary big';
+    go.textContent = 'Entrar a la demo';
+    go.addEventListener('click', function () {
+      go.disabled = true;
+      enter().catch(function (err) {
+        go.disabled = false;
+        document.getElementById('login-error').textContent = err.message;
+      });
+    });
+    var err = document.getElementById('login-error');
+    form.insertBefore(hint, err);
+    form.insertBefore(go, err);
     // Con ?entrar (el botón "Probar la demo" de flotyapp.com.ar) entra solo, una vez, y se ve directo la app.
     if (/[?&]entrar\\b/.test(location.search)) {
       history.replaceState(null, '', location.pathname + location.hash);
@@ -80,7 +102,7 @@ const demoUi = `
       new MutationObserver(function (_, obs) {
         if (login.classList.contains('hidden')) return;
         obs.disconnect();
-        form.requestSubmit();
+        enter();
       }).observe(login, { attributes: true, attributeFilter: ['class'] });
     }
   }
