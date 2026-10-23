@@ -154,6 +154,44 @@ function closeModal() {
   $('#modal').classList.add('hidden');
   $('#modal-body').innerHTML = '';
 }
+/**
+ * Pregunta antes de hacer algo (en lugar del cartelito del navegador). Se abre encima de cualquier ventana.
+ * `danger`: la acción no tiene vuelta atrás, va en rojo y con aviso. El botón seguro ("Volver") queda elegido.
+ * Devuelve una promesa con true (sí) o false (volver, Escape o tocar afuera).
+ */
+function confirmModal({ title, text, ok = 'Confirmar', danger = false }) {
+  return new Promise((resolve) => {
+    const box = document.createElement('div');
+    box.className = 'modal confirm-modal';
+    box.setAttribute('role', 'alertdialog');
+    box.setAttribute('aria-modal', 'true');
+    box.setAttribute('aria-labelledby', 'confirm-title');
+    box.innerHTML = `<div class="modal-box card confirm-box${danger ? ' danger' : ''}">
+        <span class="confirm-ic" aria-hidden="true">${danger ? ICON.alert : ICON.help}</span>
+        <h2 id="confirm-title">${esc(title)}</h2>
+        <p>${esc(text)}</p>
+        ${danger ? '<p class="confirm-warn">Esta acción no se puede deshacer.</p>' : ''}
+        <div class="actions"><button class="btn" type="button" data-no>Volver</button><button class="btn ${danger ? 'danger-solid' : 'primary'}" type="button" data-yes>${esc(ok)}</button></div>
+      </div>`;
+    const done = (v) => {
+      document.removeEventListener('keydown', onKey, true);
+      box.remove();
+      resolve(v);
+    };
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.stopImmediatePropagation(); // que Escape no cierre también la ventana de abajo
+      done(false);
+    };
+    document.addEventListener('keydown', onKey, true);
+    box.addEventListener('click', (e) => {
+      if (e.target === box || e.target.closest('[data-no]')) done(false);
+      else if (e.target.closest('[data-yes]')) done(true);
+    });
+    document.body.appendChild(box);
+    $('[data-no]', box).focus();
+  });
+}
 document.addEventListener('click', (e) => {
   if (e.target.matches('[data-close]') || e.target.id === 'modal') closeModal();
 });
@@ -468,6 +506,8 @@ const ICON = {
   send: svgIcon('M21 3L10 14M21 3l-7 18-4-7-7-4z'),
   backup: svgIcon('M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3'),
   disk: svgIcon('M3 14h18v6H3zM5 14l2.5-9h9L19 14M7 17h.01M11 17h.01'),
+  alert: svgIcon('M12 3.5l9.5 16.5h-19zM12 10v4.5M12 17.5h.01'),
+  trash: svgIcon('M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3'),
   copy: svgIcon('M9 9h11v11H9zM5 15H4V4h11v1'),
   reset: svgIcon('M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5'),
 };
@@ -640,14 +680,24 @@ document.addEventListener('click', (e) => {
 /* ============================================================
    Reservas: listado
    ============================================================ */
+// Filtros por estado, en el orden en que avanza una reserva. "" = activas (lo que hay que atender).
+const RES_FILTERS = [
+  ['', 'Activas'],
+  ['pendiente', 'Para confirmar'],
+  ['confirmada', 'Confirmadas'],
+  ['en_curso', 'En la calle'],
+  ['finalizada', 'Terminadas'],
+  ['cancelada,no_show', 'Canceladas y no show'],
+  ['all', 'Todas'],
+];
 on(/^\/reservas$/, async (view) => {
   view.innerHTML = `
     <div class="page-head"><h1>Reservas</h1></div>
     <form class="toolbar" id="res-filter">
       <label>Buscar<input name="q" placeholder="Código, cliente, DNI, patente…"/></label>
-      <label>Estado<select name="status"><option value="">Activas</option><option value="all">Todas</option>
-        ${['pendiente', 'confirmada', 'en_curso', 'finalizada', 'cancelada', 'no_show'].map((s) => `<option value="${s}">${STATUS_LABEL[s]}</option>`).join('')}</select></label>
+      <input type="hidden" name="status" value=""/>
       <button class="btn">Buscar</button>
+      <div class="chips status-chips" role="group" aria-label="Estado">${RES_FILTERS.map(([v, l], i) => `<button type="button" class="chip${i ? '' : ' on'}" data-st="${v}" aria-pressed="${!i}">${l}</button>`).join('')}</div>
       <details class="more-opts filters"><summary>Más filtros</summary><div class="toolbar">
       <label>Origen<select name="source"><option value="">Todos</option><option value="manual">Mostrador</option><option value="cotizador">Cotizador</option><option value="web">Por internet</option><option value="importado">Importadas</option></select></label>
       <label>Desde<input type="date" name="from"/></label>
@@ -686,6 +736,17 @@ on(/^\/reservas$/, async (view) => {
     e.preventDefault();
     run(load);
   });
+  // Un toque en una pastilla filtra al instante.
+  $$('[data-st]', view).forEach((b) =>
+    b.addEventListener('click', () => {
+      $$('[data-st]', view).forEach((x) => {
+        x.classList.toggle('on', x === b);
+        x.setAttribute('aria-pressed', String(x === b));
+      });
+      $('#res-filter [name=status]').value = b.dataset.st;
+      run(load);
+    }),
+  );
   await load();
 }, 'reservas');
 
@@ -902,7 +963,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
     if (!sel.customer_id) return toast('Elegí o cargá un cliente', true);
     const f = params();
     const c = quotes.find((x) => x.id === sel.category_id);
-    if (c && !c.available && !confirm('No hay disponibilidad en esa categoría. ¿Guardar igual (sobreventa)?')) return;
+    if (c && !c.available && !(await confirmModal({ title: 'No hay autos libres en esa categoría', text: 'Si la guardás igual queda una sobreventa: vas a tener que conseguir un auto para esas fechas.', ok: 'Guardar igual' }))) return;
     const body = {
       customer_id: sel.customer_id,
       category_id: sel.category_id,
@@ -1179,7 +1240,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   const invoiced = (r.invoices || []).some((i) => i.status === 'emitida');
   if (state.settings.invoice_provider && ['confirmada', 'en_curso', 'finalizada'].includes(r.status) && !invoiced) more.unshift('<button data-act="invoice">Facturar (prueba)</button>');
   if (canEdit) {
-    more.push('<button class="danger" data-act="noshow">El cliente no se presentó</button>');
+    // Recién cuando pasó la hora de retiro (antes de eso, es una cancelación).
+    if (new Date(String(r.pickup_at).replace(' ', 'T')) <= new Date()) more.push('<button class="danger" data-act="noshow">El cliente no se presentó</button>');
     more.push('<button class="danger" data-act="cancel">Cancelar reserva</button>');
   }
   if (more.length) actions.push(`<details class="menu"><summary class="btn">Más acciones</summary><div class="menu-list">${more.join('')}</div></details>`);
@@ -1288,10 +1350,12 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         },
       );
     },
-    noshow: () => confirm('¿Marcar como no show?') && run(() => POST(`/reservations/${r.id}/status`, { status: 'no_show' }), 'Marcada como no show').then(reload),
+    noshow: async () =>
+      (await confirmModal({ title: 'El cliente no se presentó', text: `La reserva ${r.code} queda como "no show" y se libera el auto. Según tu política, no corresponde devolver dinero.`, ok: 'Marcar no show', danger: true })) &&
+      run(() => POST(`/reservations/${r.id}/status`, { status: 'no_show' }), 'Marcada como no show').then(reload),
     reopen: () => run(() => POST(`/reservations/${r.id}/status`, { status: 'pendiente' }), 'Reserva reabierta').then(reload),
-    invoice: () =>
-      confirm(`¿Emitir la factura de prueba por ${money(r.balance.due)}? No tiene validez fiscal.`) &&
+    invoice: async () =>
+      (await confirmModal({ title: 'Emitir factura de prueba', text: `Se emite por ${money(r.balance.due)}. Es de prueba: no tiene validez fiscal.`, ok: 'Emitir', danger: true })) &&
       run(() => POST(`/reservations/${r.id}/invoice`), 'Factura de prueba emitida').then(reload),
     assign: async () => {
       const list = await GET(`/reservations/${r.id}/available-vehicles`);
@@ -1776,7 +1840,7 @@ function wireFiles(view, r, reload) {
          <button class="btn danger" type="button" id="file-del">Borrar</button></div>`,
       );
       $('#file-del').addEventListener('click', async () => {
-        if (!confirm('¿Borrar este archivo?')) return;
+        if (!(await confirmModal({ title: 'Borrar archivo', text: 'La foto o el documento se borra de la reserva.', ok: 'Borrar', danger: true }))) return;
         await run(() => DEL(`/files/${f.id}`), 'Archivo borrado');
         closeModal();
         reload();
@@ -2210,7 +2274,7 @@ function crudPage({ title, endpoint, fields, columns, searchable, after, before,
       );
       $$('[data-del]', view).forEach((b) =>
         b.addEventListener('click', async () => {
-          if (!confirm('¿Borrar este registro?')) return;
+          if (!(await confirmModal({ title: `Borrar · ${title}`, text: 'Se borra para siempre de la lista.', ok: 'Borrar', danger: true }))) return;
           await run(() => DEL(`/${endpoint}/${b.closest('tr').dataset.id}`), 'Borrado');
           if (after) await after();
           load();
@@ -2241,35 +2305,106 @@ function crudPage({ title, endpoint, fields, columns, searchable, after, before,
 
 const isAdmin = () => state.user && state.user.role === 'admin';
 
+/* ---------- Autos: una tarjeta por auto. Primero qué auto es y si está libre; después los datos. ---------- */
+const FLEET_FILTERS = [
+  ['', 'Todos'],
+  ['disponible', 'Disponibles'],
+  ['alquilado', 'Alquilados'],
+  ['mantenimiento', 'En el taller'],
+  ['fuera_servicio', 'Fuera de servicio'],
+];
+// "Alquilado" no se elige a mano: lo ponen la entrega y la devolución (el servidor también lo controla).
+const vehicleFields = (v) =>
+  VEHICLE_FIELDS.map((f) =>
+    f.name !== 'status'
+      ? f
+      : v && v.status === 'alquilado'
+        ? { ...f, options: [['alquilado', 'Alquilado (vuelve a libre al registrar la devolución)']] }
+        : { ...f, options: f.options.filter((o) => o !== 'alquilado') },
+  );
+
 on(
   /^\/flota$/,
-  crudPage({
-    title: 'Flota',
-    endpoint: 'vehicles',
-    canDelete: () => isAdmin(),
-    fields: VEHICLE_FIELDS,
-    searchable: true,
-    columns: [
-      { label: 'Patente', render: (r) => `<b>${esc(r.plate)}</b>` },
-      { label: 'Vehículo', render: (r) => `${esc(r.brand || '')} ${esc(r.model || '')} ${r.year ? `<small class="muted">${esc(r.year)}</small>` : ''}` },
-      { label: 'Categoría', render: (r) => esc(r.category_code) },
-      { label: 'Sucursal', key: 'branch_name' },
-      { label: 'Km', render: (r) => num(r.km) },
-      { label: 'Comb.', render: (r) => fuel(r.fuel) },
-      { label: 'Estado', render: (r) => badge(r.status) },
-      { label: 'Seguro / VTV', render: (r) => `<small>${fmtD(r.insurance_expiry)} / ${fmtD(r.vtv_expiry)}</small>` },
-    ],
-    extraActions: (r) => `<a class="btn small" href="#/reservas?vehiculo=${r.id}" data-hist="${r.id}">Historial</a> `,
-    nav: (tr, r) => {
-      const a = tr.querySelector('[data-hist]');
-      if (a)
-        a.addEventListener('click', async (e) => {
-          e.preventDefault();
-          const rows = await GET(`/reservations?vehicle_id=${r.id}&limit=50`);
-          openModal(`Historial · ${r.plate}`, historyTable(rows));
+  async (view) => {
+    let filter = '';
+    view.innerHTML = `<div class="page-head"><h1>Autos</h1><button class="btn primary" data-new>${ICON.plus}Agregar auto</button></div>
+      <div class="fleet-bar"><input id="fleet-q" type="search" placeholder="Buscar por patente, marca o modelo" aria-label="Buscar auto"/>
+        <div class="chips" id="fleet-chips" role="group" aria-label="Estado"></div></div>
+      <div id="fleet"></div>`;
+    // Seguro y VTV: rojo si venció, ámbar si vence en 30 días.
+    const doc = (label, d) => `<div><dt>${label}</dt><dd class="doc-${d ? dueTone(d) : 'wait'}">${d ? fmtD(d) : '—'}</dd></div>`;
+    const card = (v) => `<article class="vcard st-${v.status}" data-id="${v.id}">
+        <div class="vcard-top">
+          <div class="vcard-name"><b>${esc([v.brand, v.model].filter(Boolean).join(' ') || v.category_name)}</b><small>${[v.year, `Cat. ${esc(v.category_code)}`, esc(v.color || '')].filter(Boolean).join(' · ')}</small></div>
+          ${badge(v.status)}
+        </div>
+        <div class="vcard-id"><span class="plate">${esc(v.plate)}</span><span class="muted">${esc(v.branch_name || '')}</span></div>
+        <dl class="vcard-facts">
+          <div><dt>Km</dt><dd>${num(v.km || 0)}</dd></div>
+          <div><dt>Combustible</dt><dd>${fuel(v.fuel) || '—'}</dd></div>
+          ${doc('Seguro', v.insurance_expiry)}${doc('VTV', v.vtv_expiry)}
+        </dl>
+        <div class="vcard-actions">
+          <button class="btn pill small" type="button" data-hist>${ICON.list}Historial</button>
+          <button class="btn pill small" type="button" data-edit>Editar</button>
+          ${isAdmin() ? `<button class="btn icon danger" type="button" data-del aria-label="Borrar ${esc(v.plate)}" title="Borrar">${ICON.trash}</button>` : ''}
+        </div>
+      </article>`;
+    let rows = [];
+    const paint = () => {
+      const counts = Object.fromEntries(FLEET_FILTERS.map(([k]) => [k, k ? rows.filter((v) => v.status === k).length : rows.length]));
+      $('#fleet-chips').innerHTML = FLEET_FILTERS.filter(([k]) => !k || counts[k] || k === filter)
+        .map(([k, l]) => `<button type="button" class="chip${k === filter ? ' on' : ''}" data-f="${k}" aria-pressed="${k === filter}">${l} <span class="chip-n">${counts[k]}</span></button>`)
+        .join('');
+      const list = filter ? rows.filter((v) => v.status === filter) : rows;
+      $('#fleet').innerHTML = list.length
+        ? `<div class="fleet">${list.map(card).join('')}</div>`
+        : `<div class="card muted">${rows.length ? 'No hay autos en este estado.' : 'Todavía no cargaste autos. Tocá "Agregar auto" o pasalos desde una planilla en Más → Pasar datos de una planilla.'}</div>`;
+    };
+    const load = async () => {
+      const q = $('#fleet-q').value.trim();
+      rows = await GET(`/vehicles${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+      paint();
+    };
+    $('#fleet-chips').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-f]');
+      if (!b) return;
+      filter = b.dataset.f;
+      paint();
+    });
+    let t;
+    $('#fleet-q').addEventListener('input', () => {
+      clearTimeout(t);
+      t = setTimeout(() => run(load), 250);
+    });
+    $('#fleet').addEventListener('click', async (e) => {
+      const box = e.target.closest('.vcard');
+      if (!box) return;
+      const v = rows.find((x) => x.id === Number(box.dataset.id));
+      if (e.target.closest('[data-hist]')) {
+        const hist = await GET(`/reservations?vehicle_id=${v.id}&limit=50`);
+        openModal(`Historial · ${v.plate}`, historyTable(hist));
+      } else if (e.target.closest('[data-edit]')) {
+        openModal(`Editar · ${v.plate}`, formHtml(vehicleFields(v), v), async (d) => {
+          await PUT(`/vehicles/${v.id}`, d);
+          toast('Guardado');
+          load();
         });
-    },
-  }),
+      } else if (e.target.closest('[data-del]')) {
+        if (!(await confirmModal({ title: `Borrar ${v.plate}`, text: 'El auto se borra de la flota. Si tiene reservas, no se puede borrar: ponelo "Fuera de servicio".', ok: 'Borrar auto', danger: true }))) return;
+        await run(() => DEL(`/vehicles/${v.id}`), 'Auto borrado');
+        load();
+      }
+    });
+    $('[data-new]', view).addEventListener('click', () =>
+      openModal('Agregar auto', formHtml(vehicleFields(null)), async (d) => {
+        await POST('/vehicles', d);
+        toast('Auto agregado');
+        load();
+      }),
+    );
+    await load();
+  },
   'flota',
 );
 
@@ -2593,7 +2728,7 @@ on(/^\/cotizador$/, async (view) => {
        "pickup_branch":"USH","return_branch":"USH","extras":["GPS","CAD"],"total":420000}'</pre>
       <p class="muted">Si se envía dos veces el mismo <code>id</code> no se duplica la reserva.</p></div>`;
     $('#regen').addEventListener('click', async () => {
-      if (!confirm('El cotizador dejará de funcionar hasta que cargues la nueva clave. ¿Continuar?')) return;
+      if (!(await confirmModal({ title: 'Generar una clave nueva', text: 'La clave actual deja de andar enseguida: el cotizador de tu página no va a funcionar hasta que cargues la nueva.', ok: 'Generar clave nueva', danger: true }))) return;
       await run(() => POST('/integration/regenerate-key'), 'Nueva API key generada');
       route();
     });
@@ -2779,8 +2914,8 @@ on(/^\/config$/, async (view) => {
   refNote.className = 'full';
   refNote.innerHTML = `<h2 style="margin:12px 0 4px">Cancelaciones y devolución de dinero</h2><p class="muted" style="margin:0">Con menos horas que la devolución parcial, o si el cliente no se presenta, no hay devolución. Al cancelar una reserva, el sistema calcula cuánto corresponde devolver y lo deja registrado (no mueve dinero). Esta política sale en el voucher y en el contrato. <b>Los valores y el texto son un ejemplo: cada agencia los tiene que revisar según las leyes de su país</b> (por ejemplo, las de defensa del consumidor).</p>`;
   $('[name=refund_full_hours]', view).closest('label').before(refNote);
-  $('#terms-reset', view).addEventListener('click', () => {
-    if (!confirm('¿Reemplazar el texto actual por las condiciones sugeridas? (se aplica al guardar)')) return;
+  $('#terms-reset', view).addEventListener('click', async () => {
+    if (!(await confirmModal({ title: 'Usar las condiciones sugeridas', text: 'Se reemplaza el texto actual. El cambio queda recién cuando tocás Guardar.', ok: 'Reemplazar' }))) return;
     terms.value = s.contract_terms_default || '';
   });
   const enNote = document.createElement('div');
@@ -2792,8 +2927,8 @@ on(/^\/config$/, async (view) => {
   resetEn.className = 'full';
   resetEn.innerHTML = '<button type="button" class="btn small">Restaurar condiciones sugeridas en inglés</button>';
   termsEn.closest('label').after(resetEn);
-  $('button', resetEn).addEventListener('click', () => {
-    if (!confirm('¿Reemplazar el texto actual por las condiciones sugeridas? (se aplica al guardar)')) return;
+  $('button', resetEn).addEventListener('click', async () => {
+    if (!(await confirmModal({ title: 'Usar las condiciones sugeridas', text: 'Se reemplaza el texto actual. El cambio queda recién cuando tocás Guardar.', ok: 'Reemplazar' }))) return;
     termsEn.value = s.contract_terms_en_default || '';
   });
 }, 'config');
@@ -3151,7 +3286,7 @@ on(/^\/empresas$/, async (view) => {
       },
     );
     $('#modal [data-rem-del]')?.addEventListener('click', async () => {
-      if (!confirm(`¿Borrar "${r.title}"?`)) return;
+      if (!(await confirmModal({ title: `Borrar "${r.title}"`, text: 'Se borra de tus vencimientos junto con su historial de pagos.', ok: 'Borrar', danger: true }))) return;
       await run(() => DEL(`/platform/reminders/${r.id}`), 'Vencimiento borrado');
       closeModal();
       route();
@@ -3356,7 +3491,7 @@ on(/^\/importar$/, async (view) => {
       default_category_id: $('#imp-cat') ? $('#imp-cat').value || null : null,
       keep_extra: $('#imp-extra').checked,
     };
-    if (!dryRun && !confirm(`¿Importar ${st.analysis.total_rows} fila(s) de ${IMPORT_KINDS.find((k) => k.key === st.kind).label.slice(4)}?`)) return;
+    if (!dryRun && !(await confirmModal({ title: 'Importar los datos', text: `Se cargan ${st.analysis.total_rows} fila(s) de ${IMPORT_KINDS.find((k) => k.key === st.kind).label.slice(4)}. Revisá antes la prueba: lo que se importa no se deshace solo.`, ok: 'Importar', danger: true }))) return;
     const buttons = $$('#imp-test, #imp-run', view);
     buttons.forEach((b) => (b.disabled = true));
     try {

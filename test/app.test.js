@@ -118,6 +118,13 @@ test('flujo completo: reserva, entrega, devolución con cargos y pagos', async (
   assert.equal(out.data.status, 'en_curso');
   assert.match(out.data.contract.number, /^C-\d{4}-\d{5}$/);
 
+  // "Alquilado" lo manejan la entrega y la devolución: desde la ficha del auto no se cambia.
+  const car = (await call('GET', '/api/vehicles')).data.find((x) => x.id === v.id);
+  assert.equal((await call('PUT', `/api/vehicles/${v.id}`, { ...car, status: 'disponible' })).status, 409);
+  assert.equal((await call('PUT', `/api/vehicles/${v.id}`, { ...car, color: 'Rojo' })).status, 200, 'editar otros datos sí');
+  const other = (await call('GET', '/api/vehicles')).data.find((x) => x.status === 'disponible');
+  assert.equal((await call('PUT', `/api/vehicles/${other.id}`, { ...other, status: 'alquilado' })).status, 409);
+
   // El mismo auto no puede reservarse en fechas solapadas
   const clash = await call('POST', '/api/reservations', {
     customer_id: cust.data.id,

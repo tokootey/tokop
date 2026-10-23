@@ -131,6 +131,18 @@ function catalogRoutes(db) {
       dateFields: ['start_date', 'end_date'],
     }),
   );
+  // "Alquilado" lo manejan la entrega y la devolución de una reserva, no la ficha del auto:
+  // así un auto no figura alquilado sin contrato, ni libre mientras lo tiene un cliente.
+  router.use('/vehicles', (req, _res, next) => {
+    const status = (req.body || {}).status;
+    if (!['POST', 'PUT'].includes(req.method) || status === undefined) return next();
+    const id = Number((req.path.match(/^\/(\d+)$/) || [])[1]) || null;
+    const current = id ? (db.prepare('SELECT status FROM vehicles WHERE id = ?').get(id) || {}).status : null;
+    const rented = id && db.prepare("SELECT 1 FROM reservations WHERE vehicle_id = ? AND status = 'en_curso'").get(id);
+    if (status === 'alquilado' && current !== 'alquilado') fail(409, 'Un auto pasa a "Alquilado" solo al entregarlo desde una reserva');
+    if (rented && status !== 'alquilado') fail(409, 'Este auto lo tiene un cliente: vuelve a "Disponible" al registrar la devolución');
+    next();
+  });
   router.use(
     '/vehicles',
     crud(db, {
