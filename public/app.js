@@ -750,6 +750,8 @@ on(/^\/reservas$/, async (view) => {
    Nueva reserva / cotización en mostrador
    ============================================================ */
 const branchOptions = () => state.branches.filter((b) => b.active).map((b) => [b.id, b.name]);
+// Lugares de retiro y devolución: las sucursales y, al final, el hotel del cliente.
+const placeOptions = () => [...branchOptions(), ['hotel', 'Hotel (se lo llevamos)']];
 
 on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
   const now = new Date();
@@ -784,13 +786,19 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
           <div class="full actions" id="durations"><small class="muted">Duración rápida:</small>${[1, 2, 3, 5, 7, 14]
             .map((n) => `<button type="button" class="btn small" data-days="${n}">${n === 7 ? '1 semana' : n === 14 ? '2 semanas' : `${n} día${n > 1 ? 's' : ''}`}</button>`)
             .join('')}</div>
-          ${field({ name: 'pickup_branch_id', label: 'Lugar de retiro', type: 'select', options: branchOptions, required: true })}
-          ${field({ name: 'return_branch_id', label: 'Lugar de devolución', type: 'select', options: branchOptions, required: true })}
+          ${field({ name: 'pickup_branch_id', label: 'Lugar de retiro', type: 'select', options: placeOptions, required: true })}
+          ${field({ name: 'return_branch_id', label: 'Lugar de devolución', type: 'select', options: placeOptions, required: true })}
+        </div>
+        <div class="qr-hotel hidden" id="nr-hotel">
+          ${hotelFee() ? `<p class="hotel-fee">${ICON.money}<span>La entrega en hotel tiene un costo extra de <b>${money(hotelFee())}</b>. Ya está sumado en los precios de abajo.</span></p>` : ''}
+          <p class="muted">Datos del hotel. Si todavía no los sabés, dejalos vacíos: al guardar te damos un link para que el cliente los complete.</p>
+          <div class="qr-hotel-grid">${hotelInputs({}, '')}</div>
+          ${branchOptions().length > 1 ? `<label class="hidden" data-from>El auto sale de<select name="branch_from">${branchOptions().map(([id, n]) => `<option value="${id}">${esc(n)}</option>`).join('')}</select></label>` : ''}
         </div>
         <details class="more-opts">
         <summary>Más opciones: adicionales, descuento y vuelo</summary>
         <div class="actions" style="margin-top:12px">${state.extras
-          .filter((x) => x.active)
+          .filter((x) => x.active && String(x.code).toUpperCase() !== 'HOTEL') // el costo del hotel se suma solo
           .map(
             (x) =>
               `<label class="check"><input type="checkbox" name="extra_${x.id}"/> ${esc(x.name)} <small class="muted">(${money(x.price)}${x.charge_type === 'dia' ? '/día' : ''})</small></label>`,
@@ -837,7 +845,18 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
   const pb = form.pickup_branch_id;
   if (preVehicle && preVehicle.branch_id && branchOptions().some(([id]) => id === preVehicle.branch_id)) pb.value = preVehicle.branch_id;
   form.return_branch_id.value = pb.value;
-  pb.addEventListener('change', () => (form.return_branch_id.value = pb.value));
+  // "Hotel" en retiro o devolución abre los datos del hotel; con hotel en el retiro, se elige de qué sucursal sale el auto.
+  const syncHotel = () => {
+    const deliver = pb.value === 'hotel';
+    const back = form.return_branch_id.value === 'hotel';
+    $('#nr-hotel').classList.toggle('hidden', !deliver && !back);
+    $('[data-from]', form)?.classList.toggle('hidden', !deliver);
+  };
+  pb.addEventListener('change', () => {
+    form.return_branch_id.value = pb.value;
+    syncHotel();
+  });
+  form.return_branch_id.addEventListener('change', syncHotel);
   // La devolución queda a N días del retiro, a la misma hora.
   $('#durations').addEventListener('click', (e) => {
     const b = e.target.closest('[data-days]');
@@ -849,7 +868,14 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
   const params = () => {
     const f = formData(form);
     const extras = state.extras.filter((x) => f[`extra_${x.id}`]).map((x) => x.id);
-    return { ...f, extras };
+    // Con hotel: las sucursales reales (de dónde sale y adónde vuelve el auto) y el costo del hotel en el precio.
+    const hotel = { deliver: f.pickup_branch_id === 'hotel', return: f.return_branch_id === 'hotel' };
+    const from = Number(f.branch_from) || Number(branchOptions()[0] && branchOptions()[0][0]);
+    const pickup = hotel.deliver ? from : Number(f.pickup_branch_id);
+    const back = hotel.return ? pickup : Number(f.return_branch_id);
+    const fee = state.extras.find((x) => String(x.code).toUpperCase() === 'HOTEL' && x.active && x.price > 0);
+    if (fee && (hotel.deliver || hotel.return)) extras.push(fee.id);
+    return { ...f, extras, hotel, pickup_branch_id: pickup, return_branch_id: back };
   };
 
   let quotes = [];
@@ -974,6 +1000,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       extras: f.extras.map((id) => ({ extra_id: id, quantity: 1 })),
       status,
       allow_overbooking: c && !c.available,
+      hotel: f.hotel.deliver || f.hotel.return ? { ...hotelFrom(form), ...f.hotel } : undefined,
     };
     const r = await run(() => POST('/reservations', body), 'Reserva creada');
     location.hash = `#/reservas/${r.id}${status === 'confirmada' ? '?accion=voucher' : ''}`;
