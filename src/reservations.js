@@ -6,7 +6,7 @@ const { emit } = require('./webhooks');
 const { getSettings } = require('./db');
 const { refundFor } = require('./refunds');
 const { fail, normDateTime, nowLocal, round2, tx } = require('./util');
-const { placeSql, saveHotel, hotelMissing } = require('./hotel');
+const { placeSql, saveHotel, hotelMissing, normalizeHotel, withHotelExtra } = require('./hotel');
 
 const STATUSES = ['pendiente', 'confirmada', 'en_curso', 'finalizada', 'cancelada', 'no_show'];
 // Para los mensajes de error: "Una reserva cancelada no puede pasar a confirmada".
@@ -124,6 +124,8 @@ function createReservation(db, input, userId) {
   if (!db.prepare('SELECT 1 FROM customers WHERE id = ?').get(data.customer_id)) fail(400, 'Cliente inexistente');
   if (!data.category_id) fail(400, 'Categoría obligatoria');
   const status = data.status && ['pendiente', 'confirmada'].includes(data.status) ? data.status : 'pendiente';
+  // Entrega en hotel: se suma sola su tarifa (adicional "Entrega en hotel"), si la agencia le puso precio.
+  if (normalizeHotel(data.hotel)) data.extras = withHotelExtra(db, data.extras, true);
 
   const id = tx(db, () => {
     assertAvailability(db, data);

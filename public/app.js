@@ -996,6 +996,11 @@ const HOTEL_FIELDS = [
 ];
 const hotelInputs = (h = {}, cls = 'qr-field') =>
   HOTEL_FIELDS.map(([k, label, ph]) => `<label class="${cls}${k === 'notes' || k === 'address' ? ' full' : ''}">${label}<input name="h_${k}" maxlength="${k === 'notes' ? 500 : 200}" value="${esc(h[k] || '')}" placeholder="${esc(ph)}"/></label>`).join('');
+/** Costo de la entrega en hotel: el adicional "Entrega en hotel" (código HOTEL), por alquiler. 0 = sin costo. */
+const hotelFee = () => {
+  const x = (state.extras || []).find((e) => String(e.code).toUpperCase() === 'HOTEL' && e.active);
+  return x ? Number(x.price) || 0 : 0;
+};
 const hotelFrom = (form) => Object.fromEntries(HOTEL_FIELDS.map(([k]) => [k, (form.elements[`h_${k}`] || {}).value || '']));
 /** Link para que el cliente complete los datos del hotel (lleva la agencia si no es la principal). */
 function hotelLink(r) {
@@ -1035,18 +1040,21 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
           <label class="qr-field">Vuelve<input type="datetime-local" name="to" required></label>
         </div>
         <div class="chips">${QUICK.map(([n, label]) => `<button type="button" class="chip" data-days="${n}">${label}</button>`).join('')}</div>
-      </section>
-      <section>
-        <h2>¿Dónde se lo das?</h2>
-        <div class="chips" role="group" aria-label="Lugar de entrega"><button type="button" class="chip on" data-where="agency" aria-pressed="true">En la agencia</button><button type="button" class="chip" data-where="hotel" aria-pressed="false">${ICON.building}En un hotel</button></div>
-        ${
-          branches.length > 1
-            ? `<label class="qr-field" style="margin-top:8px"><span data-branch-label>Lugar donde lo retira</span><select name="branch">${branches.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('')}</select></label>`
-            : ''
-        }
+        <label class="qr-field" style="margin-top:8px">Lugar de entrega<select name="place">${branches.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('')}<option value="hotel">Hotel (se lo llevamos)</option></select></label>
         <div class="qr-hotel hidden" id="qr-hotel">
-          <p class="muted">Si todavía no sabés los datos, dejalos vacíos: al guardar te damos un link para que el cliente los complete.</p>
+          ${
+            hotelFee()
+              ? `<p class="hotel-fee">${ICON.money}<span>La entrega en hotel tiene un costo extra de <b>${money(hotelFee())}</b>. Se suma al total.</span></p>`
+              : isAdmin()
+                ? '<p class="muted">La entrega en hotel no tiene costo extra. Si la querés cobrar, ponele precio en Más → Precios y lugares → Adicionales ("Entrega en hotel").</p>'
+                : ''
+          }
+          <p class="muted">Datos del hotel. Si todavía no los sabés, dejalos vacíos: al guardar te damos un link para que el cliente los complete.</p>
           <div class="qr-hotel-grid">${hotelInputs()}</div>
+          ${
+            // Con varias sucursales, de cuál sale el auto (para la disponibilidad y el contrato).
+            branches.length > 1 ? `<label class="qr-field">El auto sale de<select name="branch">${branches.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('')}</select></label>` : ''
+          }
           <label class="check"><input type="checkbox" name="h_return" checked/> La devolución también en el hotel</label>
         </div>
       </section>
@@ -1078,7 +1086,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   const summary = () => {
     const c = cars.find((x) => x.id === sel.vehicle);
     $('#qr-what', form).textContent = c ? `${days()} ${days() === 1 ? L('día', 'day') : L('días', 'days')} · ${[c.brand, c.model].filter(Boolean).join(' ') || c.plate}` : 'Elegí un auto';
-    $('#qr-sum', form).textContent = c ? money(c.quote.total) : '';
+    $('#qr-sum', form).textContent = c ? money(c.quote.total + (sel.hotel ? hotelFee() : 0)) : '';
   };
   const paint = () => {
     const box = $('#qr-cars', form);
@@ -1120,21 +1128,16 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
       sel.vehicle = Number(c.dataset.car);
       paint();
     }
-    const where = e.target.closest('[data-where]');
-    if (where) {
-      sel.hotel = where.dataset.where === 'hotel';
-      $$('[data-where]', form).forEach((b) => {
-        b.classList.toggle('on', b === where);
-        b.setAttribute('aria-pressed', String(b === where));
-      });
-      $('#qr-hotel', form).classList.toggle('hidden', !sel.hotel);
-      // Con hotel, la sucursal es de dónde sale el auto (para la disponibilidad y el contrato).
-      const lbl = $('[data-branch-label]', form);
-      if (lbl) lbl.textContent = sel.hotel ? 'Sucursal de donde sale el auto' : 'Lugar donde lo retira';
-      if (sel.hotel) form.h_name.focus();
-    }
   });
   form.addEventListener('change', (e) => {
+    // "Hotel" en el lugar de entrega abre el formulario del hotel ahí mismo.
+    if (e.target.name === 'place') {
+      sel.hotel = e.target.value === 'hotel';
+      $('#qr-hotel', form).classList.toggle('hidden', !sel.hotel);
+      if (sel.hotel) form.h_name.focus();
+      summary(); // el total suma (o saca) el costo del hotel
+      return;
+    }
     if (e.target.name !== 'from' && e.target.name !== 'to') return;
     const f = new Date(form.from.value);
     const t = new Date(form.to.value);
@@ -1163,7 +1166,8 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
     }
     const r = await run(async () => {
       if (!customer) customer = await POST('/customers', { full_name: name, phone });
-      const branch = form.branch ? Number(form.branch.value) : branches[0] && branches[0].id;
+      // Sucursal: la elegida como lugar de entrega; con hotel, de la que sale el auto (o la única).
+      const branch = sel.hotel ? (form.branch ? Number(form.branch.value) : branches[0] && branches[0].id) : Number(form.place.value);
       return POST('/reservations', {
         customer_id: customer.id,
         category_id: c.category_id,
@@ -1434,6 +1438,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
            <label class="check"><input type="checkbox" name="h_return" ${h.return ? 'checked' : ''}/> Lo retiramos del hotel al final</label>
            ${hotelInputs(h, '')}
          </div>
+         ${hotelFee() && canEdit ? `<p class="hotel-fee">${ICON.money}<span>La entrega en hotel suma <b>${money(hotelFee())}</b> al precio (si destildás las dos opciones, se saca).</span></p>` : ''}
          <p class="muted">Si no sabés algún dato, dejalo vacío y mandale el link al cliente. Destildá las dos opciones para volver a la agencia.</p>
          <div class="actions"><button class="btn primary" type="submit">Guardar</button><button class="btn" type="button" data-close>Cancelar</button></div></form>`,
         async (_d, form) => {
@@ -4032,6 +4037,7 @@ async function hotelPage() {
       <p>${esc(d.company)} · ${L('Reserva', 'Booking')} ${esc(d.code)}</p></div>
     <form class="card qr" id="hotel-form">
       <p style="margin:0">${L(`Para el ${fmtDT(d.pickup_at)} ${what} en tu hotel. Completá estos datos:`, `On ${fmtDT(d.pickup_at)} ${what} at your hotel. Please fill in:`)}</p>
+      ${d.fee ? `<p class="hotel-fee">${ICON.money}<span>${L(`La entrega en hotel tiene un costo de <b>${money(d.fee)}</b>, ya incluido en tu reserva.`, `Hotel delivery costs <b>${money(d.fee)}</b>, already included in your booking.`)}</span></p>` : ''}
       <div class="qr-hotel-grid">${hotelInputs(d.hotel)}</div>
       <button class="btn primary big" type="submit">${L('Enviar los datos', 'Send details')}</button>
       <p class="error" id="hotel-err"></p>

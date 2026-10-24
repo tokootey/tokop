@@ -65,6 +65,9 @@ test('reserva con entrega en hotel sin datos: el cliente los completa con su lin
   assert.equal(r.pickup_branch_name, 'Hotel: a confirmar');
   assert.equal(r.hotel_missing, true);
   assert.ok(r.hotel_token && r.hotel_token.length >= 20);
+  // El costo de la entrega en hotel (adicional "Entrega en hotel", 15.000 en los datos de ejemplo) se suma solo.
+  const fee = r.pricing.extras.find((x) => x.name === 'Entrega en hotel');
+  assert.equal(fee && fee.amount, 15000);
 
   // El cliente abre su link (sin usuario) y completa.
   const page = await call('GET', `/api/public/hotel/${r.hotel_token}`, undefined, false);
@@ -86,6 +89,12 @@ test('reserva con entrega en hotel sin datos: el cliente los completa con su lin
   // La agencia cambia: solo la entrega en el hotel; la devolución vuelve a la sucursal.
   const staff = await call('POST', `/api/reservations/${r.id}/hotel`, { ...after.hotel, return: false });
   assert.equal(staff.data.return_branch_name, db.prepare('SELECT name FROM branches WHERE id = 1').get().name);
+  assert.equal(staff.data.total, r.total, 'sigue habiendo entrega en hotel: el costo queda');
+  // Sin hotel (vuelve a la agencia): el costo se saca del precio.
+  const noHotel = await call('POST', `/api/reservations/${r.id}/hotel`, { deliver: false, return: false });
+  assert.equal(noHotel.data.total, r.total - 15000);
+  assert.equal(noHotel.data.pickup_branch_name, db.prepare('SELECT name FROM branches WHERE id = 1').get().name);
+  await call('POST', `/api/reservations/${r.id}/hotel`, { ...after.hotel });
 
   // Link inventado, o reserva cancelada: ya no sirve.
   assert.equal((await call('GET', '/api/public/hotel/inventado123', undefined, false)).status, 404);

@@ -23,6 +23,18 @@ function normalizeHotel(h) {
   return out;
 }
 
+/** Adicional "Entrega en hotel" (código HOTEL) si está activo y tiene precio; si no, la entrega en hotel no cobra extra. */
+const hotelExtra = (db) => db.prepare("SELECT * FROM extras WHERE code = 'HOTEL' AND active = 1 AND price > 0").get() || null;
+
+/** Los adicionales de la reserva con el costo del hotel puesto o sacado según corresponda. */
+function withHotelExtra(db, extras, hotel) {
+  const ex = hotelExtra(db);
+  const list = (extras || []).map((e) => ({ extra_id: Number(e.extra_id), quantity: e.quantity || 1 }));
+  if (!ex) return list;
+  const rest = list.filter((e) => e.extra_id !== ex.id);
+  return hotel ? [...rest, { extra_id: ex.id, quantity: 1 }] : rest;
+}
+
 /** Falta lo básico para llevar el auto: el nombre y la dirección del hotel. */
 const hotelMissing = (h) => Boolean(h && (!h.name || !h.address));
 
@@ -45,7 +57,7 @@ function hotelRoutes(db, log) {
   const find = (token) => {
     const r = db
       .prepare(
-        `SELECT r.id, r.code, r.status, r.pickup_at, r.return_at, r.hotel, c.full_name AS customer_name
+        `SELECT r.id, r.code, r.status, r.pickup_at, r.return_at, r.hotel, r.pricing, c.full_name AS customer_name
          FROM reservations r JOIN customers c ON c.id = r.customer_id WHERE r.hotel_token = ?`,
       )
       .get(String(token || ''));
@@ -54,9 +66,12 @@ function hotelRoutes(db, log) {
   };
   router.get('/:token', (req, res) => {
     const r = find(req.params.token);
+    const ex = db.prepare("SELECT id FROM extras WHERE code = 'HOTEL'").get();
+    const line = ex && ((JSON.parse(r.pricing || '{}').extras || []).find((x) => x.extra_id === ex.id) || null);
     res.json({
       company: getSetting(db, 'company_name') || '',
       code: r.code,
+      fee: line ? line.amount : 0, // costo de la entrega en hotel, ya incluido en el total de la reserva
       first_name: String(r.customer_name || '').split(' ')[0],
       pickup_at: r.pickup_at,
       return_at: r.return_at,
@@ -75,4 +90,4 @@ function hotelRoutes(db, log) {
   return router;
 }
 
-module.exports = { normalizeHotel, hotelMissing, placeSql, saveHotel, hotelRoutes };
+module.exports = { normalizeHotel, hotelMissing, placeSql, saveHotel, hotelRoutes, hotelExtra, withHotelExtra };

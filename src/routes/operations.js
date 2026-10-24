@@ -4,7 +4,7 @@ const express = require('express');
 const { computeQuote } = require('../pricing');
 const { categoryAvailability, availableVehicles, BLOCKING } = require('../availability');
 const R = require('../reservations');
-const { placeSql, saveHotel } = require('../hotel');
+const { placeSql, saveHotel, withHotelExtra } = require('../hotel');
 const invoicing = require('../invoicing/index');
 const { getSettings } = require('../db');
 const { refundFor } = require('../refunds');
@@ -147,7 +147,13 @@ function operationsRoutes(db) {
     const r = R.getReservation(db, req.params.id);
     if (!r) fail(404, 'Reserva inexistente');
     if (['finalizada', 'cancelada', 'no_show'].includes(r.status)) fail(409, 'La reserva ya terminó: no se cambia el hotel');
-    saveHotel(db, r.id, req.body, req.user.id, R.log);
+    const h = saveHotel(db, r.id, req.body, req.user.id, R.log);
+    // Antes de entregar el auto, el costo de la entrega en hotel se pone o se saca del precio.
+    if (['pendiente', 'confirmada'].includes(r.status)) {
+      const before = r.extras.map((e) => e.extra_id).sort().join();
+      const extras = withHotelExtra(db, r.extras, h);
+      if (extras.map((e) => e.extra_id).sort().join() !== before) R.updateReservation(db, r.id, { extras }, req.user.id);
+    }
     res.json(R.getReservation(db, r.id));
   });
   router.post('/reservations/:id/assign', (req, res) => res.json(R.assignVehicle(db, req.params.id, req.body.vehicle_id, req.user.id)));

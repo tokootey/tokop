@@ -468,6 +468,8 @@ function migrate(db) {
   // Entrega o devolución en un hotel (JSON) y el código del link para que el cliente complete los datos.
   if (!has('reservations', 'hotel')) db.exec('ALTER TABLE reservations ADD COLUMN hotel TEXT');
   if (!has('reservations', 'hotel_token')) db.exec('ALTER TABLE reservations ADD COLUMN hotel_token TEXT');
+  // El costo de la entrega en hotel es un adicional (código HOTEL): arranca en 0 y cada agencia le pone su precio.
+  db.exec("INSERT OR IGNORE INTO extras (code, name, price, charge_type, max_price) VALUES ('HOTEL', 'Entrega en hotel', 0, 'fijo', 0)");
 }
 
 const newApiKey = () => 'rk_' + crypto.randomBytes(24).toString('hex');

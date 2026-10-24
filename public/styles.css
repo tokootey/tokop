@@ -838,3 +838,5 @@ body.owner .acct-menu .lang-switch .btn.link.active { color: var(--text); }
 .hotel-card.missing { border-color: #f1dcb0; background: #fffdf7; }
 .hotel-warn { margin: 0; padding: 10px 12px; border-radius: 12px; background: #fff3df; color: #7a4e00; font-size: 14px; }
 @media (max-width: 480px) { .qr-hotel-grid { grid-template-columns: minmax(0, 1fr); } }
+.hotel-fee { margin: 0; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: #eaf2ff; color: #1450b5; font-size: 14px; }
+.hotel-fee svg { flex-shrink: 0; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
