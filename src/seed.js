@@ -20,7 +20,6 @@ function seed(db) {
   const cen = ins(
     "INSERT INTO branches (code, name, address, aliases) VALUES ('CEN', 'Oficina Centro', 'Av. Principal 100, Ushuaia', 'oficina,centro,ushuaia centro')",
   );
-  ins("INSERT INTO branches (code, name, address, aliases) VALUES ('HTL', 'Entrega en hotel', 'Hoteles de Ushuaia', 'hotel,a domicilio')");
   // En los datos de ejemplo el asistente de la web queda activado para poder probarlo.
   db.prepare("UPDATE settings SET value = '1' WHERE key = 'chat_enabled'").run();
 
@@ -46,6 +45,9 @@ function seed(db) {
     ['CAD', 'Cadenas para nieve', 7000, 'dia', 42000],
     ['LIMP', 'Lavado / limpieza especial', 12000, 'fijo', 0],
   ]) ins('INSERT INTO extras (code, name, price, charge_type, max_price) VALUES (?, ?, ?, ?, ?)', code, name, price, type, max);
+  // "Entrega en hotel" ya lo crea la base (en 0); en los datos de ejemplo cuesta 15.000.
+  db.prepare("UPDATE extras SET price = 15000 WHERE code = 'HOTEL'").run();
+  const extraId = (code) => db.prepare('SELECT id FROM extras WHERE code = ?').get(code).id;
 
   const y = new Date().getFullYear();
   ins('INSERT INTO seasons (name, start_date, end_date, multiplier) VALUES (?, ?, ?, ?)', 'Temporada alta verano (cruceros)', `${y}-12-15`, `${y + 1}-02-28`, 1.3);
@@ -93,7 +95,7 @@ function seed(db) {
 
   const r1 = createReservation(db, {
     customer_id: cust[0], category_id: cats.B, vehicle_id: vids.AE321HI, pickup_branch_id: aep, return_branch_id: aep,
-    pickup_at: at(-2, 10), return_at: at(3, 10), status: 'confirmada', extras: [{ extra_id: 1, quantity: 1 }],
+    pickup_at: at(-2, 10), return_at: at(3, 10), status: 'confirmada', extras: [{ extra_id: extraId('GPS'), quantity: 1 }],
   });
   checkout(db, r1.id, { out_km: 41000, out_fuel: 8 });
   addPayment(db, r1.id, { amount: r1.total, method: 'tarjeta' });
@@ -105,7 +107,7 @@ function seed(db) {
   });
   createReservation(db, {
     customer_id: cust[2], category_id: cats.D, pickup_branch_id: cen, return_branch_id: cen,
-    pickup_at: at(2, 9), return_at: at(9, 9), status: 'pendiente', extras: [{ extra_id: 2, quantity: 1 }, { extra_id: 4, quantity: 1 }],
+    pickup_at: at(2, 9), return_at: at(9, 9), status: 'pendiente', extras: [{ extra_id: extraId('SILLA'), quantity: 1 }, { extra_id: extraId('FULL'), quantity: 1 }],
   });
   createReservation(db, {
     customer_id: cust[3], category_id: cats.A, pickup_branch_id: aep, return_branch_id: aep,

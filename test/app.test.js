@@ -77,7 +77,7 @@ test('cotización: tarifa semanal, temporada y adicionales con tope', async () =
   const cats = (await call('GET', '/api/categories')).data;
   const a = cats.find((c) => c.code === 'A');
   // Fuera de temporada, 7 días => tarifa semanal 210000 (IVA incluido)
-  const q = await call('POST', '/api/quote', { category_id: a.id, pickup_at: '2027-04-05T10:00', return_at: '2027-04-12T10:00', extras: [{ extra_id: 1 }] });
+  const q = await call('POST', '/api/quote', { category_id: a.id, pickup_at: '2027-04-05T10:00', return_at: '2027-04-12T10:00', extras: [{ extra_id: (await call('GET', '/api/extras')).data.find((x) => x.code === 'GPS').id }] });
   assert.equal(q.status, 200);
   assert.equal(q.data.days, 7);
   assert.equal(q.data.base, 210000);

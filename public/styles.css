@@ -826,3 +826,17 @@ body.owner .acct-menu .lang-switch .btn.link.active { color: var(--text); }
 .btn.icon svg { width: 17px; height: 17px; }
 .btn.pill.small.warm { background: #fff3df; border-color: #f1dcb0; color: #7a4e00; }
 .vcard-actions { flex-wrap: wrap; }
+
+/* Entrega en hotel: en la reserva rápida, en la reserva y en la página del cliente. */
+.chip svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.qr-hotel { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.qr-hotel > .muted { margin: 0; font-size: 13px; }
+.qr-hotel-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.qr-hotel-grid .full { grid-column: 1 / -1; }
+.hotel-card h2 { display: flex; align-items: center; gap: 8px; }
+.hotel-card h2 svg { width: 20px; height: 20px; fill: none; stroke: var(--primary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.hotel-card.missing { border-color: #f1dcb0; background: #fffdf7; }
+.hotel-warn { margin: 0; padding: 10px 12px; border-radius: 12px; background: #fff3df; color: #7a4e00; font-size: 14px; }
+@media (max-width: 480px) { .qr-hotel-grid { grid-template-columns: minmax(0, 1fr); } }
+.hotel-fee { margin: 0; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: #eaf2ff; color: #1450b5; font-size: 14px; }
+.hotel-fee svg { flex-shrink: 0; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }

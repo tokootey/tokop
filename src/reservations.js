@@ -6,6 +6,7 @@ const { emit } = require('./webhooks');
 const { getSettings } = require('./db');
 const { refundFor } = require('./refunds');
 const { fail, normDateTime, nowLocal, round2, tx } = require('./util');
+const { placeSql, saveHotel, hotelMissing, normalizeHotel, withHotelExtra } = require('./hotel');
 
 const STATUSES = ['pendiente', 'confirmada', 'en_curso', 'finalizada', 'cancelada', 'no_show'];
 // Para los mensajes de error: "Una reserva cancelada no puede pasar a confirmada".
@@ -29,7 +30,7 @@ function getReservation(db, id) {
               cat.code AS category_code, cat.name AS category_name, cat.km_per_day AS category_km_per_day, cat.extra_km_rate AS category_extra_km_rate,
               v.plate AS vehicle_plate, v.brand AS vehicle_brand, v.model AS vehicle_model, v.color AS vehicle_color, v.year AS vehicle_year,
               v.km AS vehicle_km, v.fuel AS vehicle_fuel,
-              pb.name AS pickup_branch_name, rb.name AS return_branch_name
+              ${placeSql('deliver', 'pb')} AS pickup_branch_name, ${placeSql('return', 'rb')} AS return_branch_name
        FROM reservations r
        JOIN customers c ON c.id = r.customer_id
        JOIN categories cat ON cat.id = r.category_id
@@ -41,6 +42,8 @@ function getReservation(db, id) {
     .get(Number(id) || 0, String(id));
   if (!r) return null;
   r.pricing = r.pricing ? JSON.parse(r.pricing) : null;
+  r.hotel = r.hotel ? JSON.parse(r.hotel) : null;
+  r.hotel_missing = hotelMissing(r.hotel);
   r.extras = db
     .prepare('SELECT re.extra_id, re.quantity, e.name FROM reservation_extras re JOIN extras e ON e.id = re.extra_id WHERE re.reservation_id = ?')
     .all(r.id);
@@ -121,6 +124,8 @@ function createReservation(db, input, userId) {
   if (!db.prepare('SELECT 1 FROM customers WHERE id = ?').get(data.customer_id)) fail(400, 'Cliente inexistente');
   if (!data.category_id) fail(400, 'Categoría obligatoria');
   const status = data.status && ['pendiente', 'confirmada'].includes(data.status) ? data.status : 'pendiente';
+  // Entrega en hotel: se suma sola su tarifa (adicional "Entrega en hotel"), si la agencia le puso precio.
+  if (normalizeHotel(data.hotel)) data.extras = withHotelExtra(db, data.extras, true);
 
   const id = tx(db, () => {
     assertAvailability(db, data);
@@ -164,6 +169,7 @@ function createReservation(db, input, userId) {
     const insExtra = db.prepare('INSERT INTO reservation_extras (reservation_id, extra_id, quantity) VALUES (?, ?, ?)');
     for (const e of data.extras || []) insExtra.run(rid, e.extra_id, Math.max(1, Number(e.quantity) || 1));
     log(db, rid, userId, 'creada', { status, source: data.source || 'manual' });
+    if (data.hotel) saveHotel(db, rid, data.hotel, userId, log);
     return rid;
   });
   const r = getReservation(db, id);

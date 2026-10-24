@@ -4,6 +4,7 @@ const express = require('express');
 const { computeQuote } = require('../pricing');
 const { categoryAvailability, availableVehicles, BLOCKING } = require('../availability');
 const R = require('../reservations');
+const { placeSql, saveHotel, withHotelExtra } = require('../hotel');
 const invoicing = require('../invoicing/index');
 const { getSettings } = require('../db');
 const { refundFor } = require('../refunds');
@@ -96,7 +97,7 @@ function operationsRoutes(db) {
       .prepare(
         `SELECT r.id, r.code, r.status, r.source, r.external_id, r.pickup_at, r.return_at, r.days, r.total, r.vehicle_id,
                 c.full_name AS customer_name, c.phone AS customer_phone, cat.code AS category_code, cat.name AS category_name,
-                v.plate AS vehicle_plate, pb.name AS pickup_branch_name, rb.name AS return_branch_name
+                v.plate AS vehicle_plate, ${placeSql('deliver', 'pb')} AS pickup_branch_name, ${placeSql('return', 'rb')} AS return_branch_name
          FROM reservations r
          JOIN customers c ON c.id = r.customer_id
          JOIN categories cat ON cat.id = r.category_id
@@ -140,6 +141,20 @@ function operationsRoutes(db) {
     const r = R.getReservation(db, req.params.id);
     if (!r) fail(404, 'Reserva inexistente');
     res.json(refundFor(r, getSettings(db), new Date(), req.query.motivo === 'no_show' ? 'no_show' : 'cancelada'));
+  });
+  // Datos del hotel (entrega o devolución ahí). Se pueden cambiar hasta que termina el alquiler.
+  router.post('/reservations/:id/hotel', (req, res) => {
+    const r = R.getReservation(db, req.params.id);
+    if (!r) fail(404, 'Reserva inexistente');
+    if (['finalizada', 'cancelada', 'no_show'].includes(r.status)) fail(409, 'La reserva ya terminó: no se cambia el hotel');
+    const h = saveHotel(db, r.id, req.body, req.user.id, R.log);
+    // Antes de entregar el auto, el costo de la entrega en hotel se pone o se saca del precio.
+    if (['pendiente', 'confirmada'].includes(r.status)) {
+      const before = r.extras.map((e) => e.extra_id).sort().join();
+      const extras = withHotelExtra(db, r.extras, h);
+      if (extras.map((e) => e.extra_id).sort().join() !== before) R.updateReservation(db, r.id, { extras }, req.user.id);
+    }
+    res.json(R.getReservation(db, r.id));
   });
   router.post('/reservations/:id/assign', (req, res) => res.json(R.assignVehicle(db, req.params.id, req.body.vehicle_id, req.user.id)));
   router.post('/reservations/:id/checkout', (req, res) => res.json(R.checkout(db, req.params.id, req.body, req.user.id)));
@@ -196,7 +211,7 @@ function operationsRoutes(db) {
     // total y paid: la pantalla Hoy muestra cuánto debe cada cliente.
     const baseSelect = `SELECT r.id, r.code, r.status, r.source, r.pickup_at, r.return_at, r.total, c.full_name AS customer_name, c.phone AS customer_phone,
         cat.code AS category_code, cat.name AS category_name, v.plate AS vehicle_plate, v.brand AS vehicle_brand, v.model AS vehicle_model,
-        pb.name AS pickup_branch_name, rb.name AS return_branch_name,
+        ${placeSql('deliver', 'pb')} AS pickup_branch_name, ${placeSql('return', 'rb')} AS return_branch_name,
         (SELECT COALESCE(SUM(CASE WHEN p.kind = 'pago' THEN p.amount WHEN p.kind = 'devolucion' THEN -p.amount ELSE 0 END), 0) FROM payments p WHERE p.reservation_id = r.id) AS paid
       FROM reservations r JOIN customers c ON c.id = r.customer_id JOIN categories cat ON cat.id = r.category_id
       LEFT JOIN vehicles v ON v.id = r.vehicle_id LEFT JOIN branches pb ON pb.id = r.pickup_branch_id LEFT JOIN branches rb ON rb.id = r.return_branch_id`;

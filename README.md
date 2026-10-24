@@ -112,6 +112,16 @@ Variables: `BACKUP_DIR` (carpeta de las copias; por defecto, `respaldos` al lado
 - Las columnas que no tienen lugar se guardan en "Observaciones" para no perder nada.
 - El archivo no se guarda; en la actividad de Usuarios queda sólo quién importó y cuántas filas (sin datos personales). Después de importar, borrá el CSV de la computadora y dejá de compartir la planilla vieja.
 
+## Entrega en un hotel
+
+Si el cliente quiere el auto en su hotel, en **Nueva reserva → Lugar de entrega → Hotel (se lo llevamos)** se cargan el hotel, la dirección, la habitación, un contacto y las indicaciones (también desde la reserva: *Más acciones → Entregar o retirar en un hotel*). Se puede elegir si la devolución también es en el hotel.
+
+Si todavía no se saben los datos, se dejan vacíos: la reserva muestra **"Faltan los datos del hotel"** con un botón para mandarle al cliente, por WhatsApp, un link propio de su reserva (`/hotel/<código>`). El cliente los completa desde el celular y aparecen en la reserva. El link deja de funcionar cuando la reserva termina o se cancela.
+
+En Hoy, en el listado, en el voucher y en el contrato el lugar figura como "Hotel: <nombre> · hab. <número>".
+
+**Costo extra:** es el adicional **"Entrega en hotel"** (Precios y lugares → Adicionales, código `HOTEL`). Arranca en 0; con precio, se suma solo a las reservas en hotel (y se saca si la reserva vuelve a la agencia antes de entregar el auto), y se le avisa a la agencia al reservar y al cliente en su link.
+
 ## Link de reservas (opcional)
 
 Para las agencias que no tienen reservas por internet. Viene apagado: se activa en **Más → Link de reservas (opcional)**. Si la agencia ya tiene su página o su propio link de reservas, conviene dejarlo apagado y conectar su página con **Página web: formulario** (ver *Conexión con el cotizador*).
