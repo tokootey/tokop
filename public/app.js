@@ -986,6 +986,28 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
    Nueva reserva rápida: fechas, auto libre, nombre y WhatsApp. Se hace en un minuto desde el celular.
    Lo demás (adicionales, descuento, vuelo, otro lugar de devolución) está en "Reserva con más opciones".
    ============================================================ */
+/* ---------- Entrega en hotel: los datos los carga la agencia o el cliente con su link ---------- */
+const HOTEL_FIELDS = [
+  ['name', 'Hotel', 'Ej.: Hotel Arakur'],
+  ['address', 'Dirección', 'Calle y número, o cómo llegar'],
+  ['room', 'Habitación', ''],
+  ['contact', 'Teléfono o contacto en el hotel', 'Recepción, nombre…'],
+  ['notes', 'Indicaciones', 'A qué hora, a quién se lo damos…'],
+];
+const hotelInputs = (h = {}, cls = 'qr-field') =>
+  HOTEL_FIELDS.map(([k, label, ph]) => `<label class="${cls}${k === 'notes' || k === 'address' ? ' full' : ''}">${label}<input name="h_${k}" maxlength="${k === 'notes' ? 500 : 200}" value="${esc(h[k] || '')}" placeholder="${esc(ph)}"/></label>`).join('');
+const hotelFrom = (form) => Object.fromEntries(HOTEL_FIELDS.map(([k]) => [k, (form.elements[`h_${k}`] || {}).value || '']));
+/** Link para que el cliente complete los datos del hotel (lleva la agencia si no es la principal). */
+function hotelLink(r) {
+  const co = state.user && state.user.company;
+  return `${location.origin}/hotel/${r.hotel_token}${co && !co.principal ? `?empresa=${encodeURIComponent(co.slug)}` : ''}`;
+}
+const hotelAsk = (r) => {
+  const text = `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L('Para llevarte el auto al hotel necesitamos unos datos. Completalos acá', 'To bring the car to your hotel we need a few details. Fill them in here')}: ${hotelLink(r)}`;
+  const n = String(r.customer_phone || '').replace(/\D/g, '');
+  return `https://wa.me/${n}?text=${encodeURIComponent(text)}`;
+};
+
 on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   const pre = new URLSearchParams(query || '');
   const dayAt10 = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(s || '') ? new Date(`${s}T10:00`) : null);
@@ -1013,11 +1035,20 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
           <label class="qr-field">Vuelve<input type="datetime-local" name="to" required></label>
         </div>
         <div class="chips">${QUICK.map(([n, label]) => `<button type="button" class="chip" data-days="${n}">${label}</button>`).join('')}</div>
+      </section>
+      <section>
+        <h2>¿Dónde se lo das?</h2>
+        <div class="chips" role="group" aria-label="Lugar de entrega"><button type="button" class="chip on" data-where="agency" aria-pressed="true">En la agencia</button><button type="button" class="chip" data-where="hotel" aria-pressed="false">${ICON.building}En un hotel</button></div>
         ${
           branches.length > 1
-            ? `<label class="qr-field" style="margin-top:8px">Lugar donde lo retira<select name="branch">${branches.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('')}</select></label>`
+            ? `<label class="qr-field" style="margin-top:8px"><span data-branch-label>Lugar donde lo retira</span><select name="branch">${branches.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('')}</select></label>`
             : ''
         }
+        <div class="qr-hotel hidden" id="qr-hotel">
+          <p class="muted">Si todavía no sabés los datos, dejalos vacíos: al guardar te damos un link para que el cliente los complete.</p>
+          <div class="qr-hotel-grid">${hotelInputs()}</div>
+          <label class="check"><input type="checkbox" name="h_return" checked/> La devolución también en el hotel</label>
+        </div>
       </section>
       <section>
         <h2>¿Qué auto? <span class="muted" style="font-weight:400">(libres en esas fechas)</span></h2>
@@ -1089,6 +1120,19 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
       sel.vehicle = Number(c.dataset.car);
       paint();
     }
+    const where = e.target.closest('[data-where]');
+    if (where) {
+      sel.hotel = where.dataset.where === 'hotel';
+      $$('[data-where]', form).forEach((b) => {
+        b.classList.toggle('on', b === where);
+        b.setAttribute('aria-pressed', String(b === where));
+      });
+      $('#qr-hotel', form).classList.toggle('hidden', !sel.hotel);
+      // Con hotel, la sucursal es de dónde sale el auto (para la disponibilidad y el contrato).
+      const lbl = $('[data-branch-label]', form);
+      if (lbl) lbl.textContent = sel.hotel ? 'Sucursal de donde sale el auto' : 'Lugar donde lo retira';
+      if (sel.hotel) form.h_name.focus();
+    }
   });
   form.addEventListener('change', (e) => {
     if (e.target.name !== 'from' && e.target.name !== 'to') return;
@@ -1129,9 +1173,11 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         pickup_at: localISO(from),
         return_at: localISO(to),
         status: 'confirmada',
+        hotel: sel.hotel ? { ...hotelFrom(form), deliver: true, return: form.h_return.checked } : undefined,
       });
     }, 'Reserva guardada');
-    location.hash = send ? `#/reservas/${r.id}?accion=voucher` : '#/panel';
+    // Hotel sin datos: primero la reserva, donde está el botón para pedírselos al cliente.
+    location.hash = r.hotel_missing ? `#/reservas/${r.id}` : send ? `#/reservas/${r.id}?accion=voucher` : '#/panel';
   });
   set();
   await load();
@@ -1223,6 +1269,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
     more.push('<button data-act="assign">Asignar vehículo</button>');
     more.push('<button data-act="edit">Modificar fechas o datos</button>');
   }
+  const hotelOpen = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
+  if (hotelOpen && !r.hotel) more.push('<button data-act="hotel">Entregar o retirar en un hotel</button>');
   if (r.status === 'en_curso') actions.push(`<button class="btn ok" data-act="checkin">${ICON.in}Registrar devolución</button>`);
   // Saldo a cobrar a la vista, con el importe: un toque abre el cobro ya completado.
   if (['confirmada', 'en_curso', 'finalizada'].includes(r.status) && r.balance.pending > 0)
@@ -1263,6 +1311,29 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           <dt>Notas</dt><dd>${esc(r.notes || '—')}</dd>
         </dl>
       </div>
+      ${
+        r.hotel
+          ? `<div class="card hotel-card${r.hotel_missing ? ' missing' : ''}">
+        <h2>${ICON.building} ${[r.hotel.deliver && 'Entrega', r.hotel.return && 'devolución'].filter(Boolean).join(' y ').replace(/^d/, 'D')} en hotel</h2>
+        ${
+          r.hotel_missing
+            ? `<p class="hotel-warn">Faltan los datos del hotel. Completalos vos o pedíselos al cliente: le llega un link para completarlos desde el celular.</p>`
+            : `<dl class="info">${HOTEL_FIELDS.filter(([k]) => r.hotel[k])
+                .map(([k, label]) => `<dt>${label}</dt><dd>${esc(r.hotel[k])}</dd>`)
+                .join('')}</dl>`
+        }
+        ${
+          hotelOpen
+            ? `<div class="actions no-print" style="margin-top:12px">
+          <button class="btn${r.hotel_missing ? '' : ' small'}" type="button" data-act="hotel">${r.hotel_missing ? 'Completar yo' : 'Cambiar'}</button>
+          ${r.customer_phone ? `<a class="btn${r.hotel_missing ? ' ok' : ' small'}" href="${esc(hotelAsk(r))}" target="_blank" rel="noopener">${WA_ICON}${r.hotel_missing ? 'Pedírselos por WhatsApp' : 'Mandarle el link'}</a>` : ''}
+          <button class="btn small" type="button" data-hotel-copy>Copiar link</button>
+        </div>`
+            : ''
+        }
+      </div>`
+          : ''
+      }
       ${
         c
           ? `<div class="card"><h2>Contrato ${esc(c.number)}</h2>
@@ -1353,6 +1424,25 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
     invoice: async () =>
       (await confirmModal({ title: 'Emitir factura de prueba', text: `Se emite por ${money(r.balance.due)}. Es de prueba: no tiene validez fiscal.`, ok: 'Emitir', danger: true })) &&
       run(() => POST(`/reservations/${r.id}/invoice`), 'Factura de prueba emitida').then(reload),
+    // Entrega y/o devolución en un hotel: los datos pueden quedar vacíos (los completa el cliente con su link).
+    hotel: () => {
+      const h = r.hotel || { deliver: 1, return: 1 };
+      openModal(
+        'Entrega en hotel',
+        `<form><div class="form-grid">
+           <label class="check"><input type="checkbox" name="h_deliver" ${h.deliver ? 'checked' : ''}/> Le llevamos el auto al hotel</label>
+           <label class="check"><input type="checkbox" name="h_return" ${h.return ? 'checked' : ''}/> Lo retiramos del hotel al final</label>
+           ${hotelInputs(h, '')}
+         </div>
+         <p class="muted">Si no sabés algún dato, dejalo vacío y mandale el link al cliente. Destildá las dos opciones para volver a la agencia.</p>
+         <div class="actions"><button class="btn primary" type="submit">Guardar</button><button class="btn" type="button" data-close>Cancelar</button></div></form>`,
+        async (_d, form) => {
+          await POST(`/reservations/${r.id}/hotel`, { ...hotelFrom(form), deliver: form.h_deliver.checked, return: form.h_return.checked });
+          toast('Hotel guardado');
+          reload();
+        },
+      );
+    },
     assign: async () => {
       const list = await GET(`/reservations/${r.id}/available-vehicles`);
       openModal(
@@ -1525,6 +1615,9 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       ),
   };
   $$('[data-act]', view).forEach((b) => b.addEventListener('click', () => handlers[b.dataset.act]()));
+  $('[data-hotel-copy]', view)?.addEventListener('click', () =>
+    (navigator.clipboard ? navigator.clipboard.writeText(hotelLink(r)) : Promise.reject()).then(() => toast('Link copiado: mandáselo al cliente'), () => toast(hotelLink(r))),
+  );
   wireFiles(view, r, reload);
   // Con ?accion=checkout|checkin|pay se abre ese paso directo si el estado lo permite (pay: sólo si queda saldo).
   if (accion) {
@@ -1587,11 +1680,13 @@ function voucherLines(r) {
         ['Vehículo', vehicle],
         ['Retiro', `${dt(r.pickup_at)} · ${r.pickup_branch_name || ''}`],
         ['Devolución', `${dt(r.return_at)} · ${r.return_branch_name || ''}`],
+        r.hotel && r.hotel.address ? ['Dirección del hotel', r.hotel.address] : null,
+        r.hotel && r.hotel.notes ? ['Indicaciones', r.hotel.notes] : null,
         ['Duración', days],
         ['Kilometraje', q.km_included ? `${num(q.km_included)} km incluidos` : 'Libre'],
         ['Adicionales', r.extras.map((x) => x.name).join(', ') || 'Ninguno'],
         ...(r.flight ? [['Vuelo', r.flight]] : []),
-      ],
+      ].filter(Boolean),
     },
     { title: 'Precio', rows: price },
     ...(Number(r.deposit) > 0 ? [{ title: 'Garantía', rows: [['Depósito', `${money(r.deposit)} (se toma al retirar el auto y se devuelve al entregarlo en las mismas condiciones)`]] }] : []),
@@ -1623,6 +1718,7 @@ function voucherWhatsapp(r) {
     `Reserva ${r.code} (${get('Reserva', 'Estado')})`,
     `Retiro: ${get('Alquiler', 'Retiro')}`,
     `Devolución: ${get('Alquiler', 'Devolución')} (${get('Alquiler', 'Duración')})`,
+    ...(r.hotel && r.hotel.address ? [`Dirección del hotel: ${r.hotel.address}`] : []),
     `Auto: categoría ${r.category_code} · ${r.category_name}`,
     `Total ${money(r.balance.due)} · Pagado ${money(r.balance.paid)} · Saldo ${money(r.balance.pending)}`,
     ...(Number(r.deposit) > 0 ? [`Garantía: ${money(r.deposit)} (se devuelve al entregar el auto)`] : []),
@@ -3916,5 +4012,50 @@ try {
   localStorage.removeItem('token');
 } catch {}
 // El link de reservas y la hoja "Cómo funciona" son públicos: no piden usuario.
+/** /hotel/<código>[?empresa=slug]: el cliente completa los datos del hotel donde le llevamos el auto. */
+async function hotelPage() {
+  const token = location.pathname.split('/')[2] || '';
+  const empresa = new URLSearchParams(location.search).get('empresa');
+  const url = `/api/public/hotel/${encodeURIComponent(token)}${empresa ? `?empresa=${encodeURIComponent(empresa)}` : ''}`;
+  let d;
+  try {
+    const res = await fetch(url);
+    d = await res.json();
+    if (!res.ok) throw new Error(d.error);
+  } catch {
+    publicPage(`<div class="card pub-done"><h1>${L('Datos del hotel', 'Hotel details')}</h1><p class="muted">${L('Este link ya no está disponible. Escribile a la agencia.', 'This link is no longer available. Please contact the agency.')}</p></div>`);
+    return;
+  }
+  document.title = `${d.company} · ${L('Datos del hotel', 'Hotel details')}`;
+  const what = [d.hotel.deliver && L('te llevamos el auto', 'we bring you the car'), d.hotel.return && L('lo retiramos', 'we pick it up')].filter(Boolean).join(L(' y ', ' and '));
+  const page = publicPage(`<div class="pub-head"><h1>${L('Hola', 'Hi')} ${esc(d.first_name)}</h1>
+      <p>${esc(d.company)} · ${L('Reserva', 'Booking')} ${esc(d.code)}</p></div>
+    <form class="card qr" id="hotel-form">
+      <p style="margin:0">${L(`Para el ${fmtDT(d.pickup_at)} ${what} en tu hotel. Completá estos datos:`, `On ${fmtDT(d.pickup_at)} ${what} at your hotel. Please fill in:`)}</p>
+      <div class="qr-hotel-grid">${hotelInputs(d.hotel)}</div>
+      <button class="btn primary big" type="submit">${L('Enviar los datos', 'Send details')}</button>
+      <p class="error" id="hotel-err"></p>
+    </form>`);
+  const form = $('#hotel-form', page);
+  form.h_name.required = true;
+  form.h_address.required = true;
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('#hotel-err', page).textContent = '';
+    const btn = $('[type=submit]', form);
+    btn.disabled = true;
+    try {
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(hotelFrom(form)) });
+      const r = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(r.error || `Error ${res.status}`);
+      form.outerHTML = `<div class="card pub-done"><div class="pub-ok">✓</div><h1>${L('¡Listo, gracias!', 'Done, thank you!')}</h1><p>${L('La agencia ya tiene los datos de tu hotel.', 'The agency has your hotel details.')}</p></div>`;
+    } catch (err) {
+      $('#hotel-err', page).textContent = err.message;
+      btn.disabled = false;
+    }
+  });
+}
+
 const PUBLIC_PAGES = { '/reservar': bookingPage, '/como-funciona': howItWorksPage };
-(PUBLIC_PAGES[location.pathname.replace(/\/+$/, '')] || startSession)();
+const publicPath = location.pathname.replace(/\/+$/, '');
+(PUBLIC_PAGES[publicPath] || (/^\/hotel\/[\w-]+$/.test(publicPath) ? hotelPage : startSession))();

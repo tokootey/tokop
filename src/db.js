@@ -465,6 +465,9 @@ function migrate(db) {
   if (!has('sessions', 'created_at')) db.exec('ALTER TABLE sessions ADD COLUMN created_at TEXT');
   if (!has('sessions', 'last_seen')) db.exec('ALTER TABLE sessions ADD COLUMN last_seen TEXT');
   if (!has('customers', 'anonymized_at')) db.exec('ALTER TABLE customers ADD COLUMN anonymized_at TEXT');
+  // Entrega o devolución en un hotel (JSON) y el código del link para que el cliente complete los datos.
+  if (!has('reservations', 'hotel')) db.exec('ALTER TABLE reservations ADD COLUMN hotel TEXT');
+  if (!has('reservations', 'hotel_token')) db.exec('ALTER TABLE reservations ADD COLUMN hotel_token TEXT');
 }
 
 const newApiKey = () => 'rk_' + crypto.randomBytes(24).toString('hex');

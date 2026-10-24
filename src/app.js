@@ -16,6 +16,8 @@ const { importRoutes } = require('./routes/importer');
 const { HttpError, fail } = require('./util');
 const { backupStatus } = require('./backup');
 const { COMPANY_FIELDS } = require('./owner-book');
+const { hotelRoutes } = require('./hotel');
+const { log: reservationLog } = require('./reservations');
 
 /** Crea el usuario administrador inicial si no hay ninguno. */
 function ensureAdmin(db) {
@@ -71,6 +73,7 @@ function companyApi(db, { uploadsDir, company, platform }) {
   app.use('/api/public/webform', webformRoutes(db));
   app.use('/api/public/chat', chatRoutes(db));
   app.use('/api/public/v1', publicRoutes(db));
+  app.use('/api/public/hotel', hotelRoutes(db, reservationLog));
 
   app.post('/api/auth/login', sameOrigin, (req, res) => res.json(login(db, req, res, prefix)));
   const auth = requireUser(db);
