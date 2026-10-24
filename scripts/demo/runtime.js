@@ -7,8 +7,10 @@
  */
 (function () {
   'use strict';
-  const STORE_KEY = 'rentacar-demo-db-v1';
-  const COOKIE_KEY = 'rentacar-demo-cookies';
+  // Demo personalizada para una agencia (build-demo --perfil=<nombre>): sus datos se guardan aparte de la demo general.
+  const PROFILE = __PROFILE__;
+  const STORE_KEY = `rentacar-demo-db-v1${PROFILE ? `-${PROFILE}` : ''}`;
+  const COOKIE_KEY = `rentacar-demo-cookies${PROFILE ? `-${PROFILE}` : ''}`;
 
   /* ---------- Cookies (la sesión de la app es una cookie; acá se guarda en el navegador) ---------- */
   let jar = {};
@@ -289,8 +291,11 @@
     const db = openDb(':memory:');
     if (!initialBytes) {
       ensureAdmin(db);
-      req('./src/seed.js').seed(db);
-      setSetting(db, 'company_name', 'Demo Rent a Car');
+      if (PROFILE) req('./src/perfil.js').seed(db);
+      else {
+        req('./src/seed.js').seed(db);
+        setSetting(db, 'company_name', 'Demo Rent a Car');
+      }
       scheduleSave();
     } else if (getSetting(db, 'company_name') === 'Austral Rent a Car (demo)') {
       // Quien ya había abierto la demo con el nombre anterior ve el nuevo sin reiniciar sus datos.

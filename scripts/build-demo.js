@@ -18,8 +18,11 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const args = process.argv.slice(2);
 const standalone = args.includes('--standalone');
+// --perfil=discover: demo personalizada con los datos de una agencia (scripts/demo/perfiles/discover.js).
+const profile = (args.find((a) => a.startsWith('--perfil=')) || '').slice(9) || null;
+if (profile && !/^[a-z0-9-]+$/.test(profile)) throw new Error(`Perfil inválido: ${profile}`);
 const outArg = args.find((a) => !a.startsWith('--'));
-const out = path.resolve(outArg || path.join(root, 'demo', 'rentacar-demo.html'));
+const out = path.resolve(outArg || path.join(root, 'demo', profile ? `${profile}-demo.html` : 'rentacar-demo.html'));
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 // Evita que un "</script" dentro del código cierre la etiqueta antes de tiempo.
 const safe = (code) => code.replace(/<\/script/gi, '<\\/script');
@@ -37,11 +40,16 @@ for (const file of listJs('src')) {
   if (file === 'src/server.js') continue;
   sources[file] = file === 'src/routes/files.js' ? read('scripts/demo/files-demo.js') : read(file);
 }
+const profileCode = profile ? read(`scripts/demo/perfiles/${profile}.js`) : null;
+if (profileCode) sources['src/perfil.js'] = profileCode; // vive en src/ para usar require('./db'), etc.
+const profileCompany = profileCode ? (profileCode.match(/const company = '([^']+)'/) || [])[1] : null;
 const modules = `{\n${Object.entries(sources)
   .map(([name, code]) => `${JSON.stringify(name)}: function (module, exports, require, __filename, __dirname) {\n${code}\n}`)
   .join(',\n')}\n}`;
 
-const runtime = read('scripts/demo/runtime.js').replace('const modules = __MODULES__;', () => `const modules = ${modules};`);
+const runtime = read('scripts/demo/runtime.js')
+  .replace('const modules = __MODULES__;', () => `const modules = ${modules};`)
+  .replace('const PROFILE = __PROFILE__;', `const PROFILE = ${JSON.stringify(profile)};`);
 const sqljs = fs.readFileSync(require.resolve('sql.js/dist/sql-asm-memory-growth.js'), 'utf8');
 
 const index = read('public/index.html');
@@ -110,7 +118,7 @@ const demoUi = `
 })();
 `;
 
-const html = `<title>Floty · Demo del sistema para rent a car</title>
+const html = `<title>${profileCompany ? `${profileCompany} · Demo de Floty` : 'Floty · Demo del sistema para rent a car'}</title>
 <link rel="icon" href="${logo}" type="image/svg+xml">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
