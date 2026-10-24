@@ -101,3 +101,22 @@ test('reserva con entrega en hotel sin datos: el cliente los completa con su lin
   await call('POST', `/api/reservations/${r.id}/status`, { status: 'cancelada' });
   assert.equal((await call('GET', `/api/public/hotel/${r.hotel_token}`, undefined, false)).status, 404);
 });
+
+test('la sucursal de ejemplo "Entrega en hotel" se apaga una sola vez (la opción Hotel la reemplaza)', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'rc-htl-')), 'r.db');
+  let d = openDb(file);
+  d.prepare("INSERT INTO branches (code, name, active) VALUES ('HTL', 'Entrega en hotel', 1)").run();
+  d.prepare("DELETE FROM settings WHERE key = 'migracion_sucursal_hotel'").run(); // como una base de antes
+  d.close();
+  d = openDb(file);
+  assert.equal(d.prepare("SELECT active FROM branches WHERE code = 'HTL'").get().active, 0);
+  // Si la agencia la vuelve a activar, se respeta.
+  d.prepare("UPDATE branches SET active = 1 WHERE code = 'HTL'").run();
+  d.close();
+  d = openDb(file);
+  assert.equal(d.prepare("SELECT active FROM branches WHERE code = 'HTL'").get().active, 1);
+  d.close();
+});
