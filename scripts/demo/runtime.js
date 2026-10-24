@@ -410,8 +410,12 @@
 
   const realFetch = window.fetch.bind(window);
   window.fetch = (input, init = {}) => {
-    const u = new URL(typeof input === 'string' ? input : input.url, location.href);
-    if (u.origin === location.origin && u.pathname.startsWith('/api/')) return handle(u.href, init);
+    let u = new URL(typeof input === 'string' ? input : input.url, location.href);
+    // Abierta como archivo (file://): en Windows "/api/..." queda "file:///C:/api/...". Se le saca la unidad
+    // y se arma una dirección común, así la demo la reconoce como propia.
+    if (location.protocol === 'file:' && u.protocol === 'file:') u = new URL(u.pathname.replace(/^\/[A-Za-z]:/, '') + u.search, 'http://demo.local');
+    else if (u.origin !== location.origin) return realFetch(input, init);
+    if (u.pathname.startsWith('/api/')) return handle(u.href, init);
     return realFetch(input, init);
   };
 
