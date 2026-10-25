@@ -53,6 +53,13 @@ function seed(db) {
   ])
     ins('INSERT INTO extras (code, name, price, charge_type, max_price) VALUES (?, ?, ?, ?, ?)', code, name, price, type, max);
   db.prepare("UPDATE extras SET price = 15000 WHERE code = 'HOTEL'").run();
+  // Sus tres coberturas (nombres de su página; precios y franquicias de ejemplo).
+  for (const [code, name, price, deductible] of [
+    ['DISC', 'Cobertura Discover (con franquicia)', 0, 600000],
+    ['PLUS', 'Discover Plus (franquicia reducida)', 9000, 250000],
+    ['ADV', 'Discover Advance (sin franquicia)', 16000, 0],
+  ])
+    ins("INSERT INTO extras (code, name, price, charge_type, max_price, kind, deductible) VALUES (?, ?, ?, 'dia', 0, 'seguro', ?)", code, name, price, deductible);
   const extraId = (code) => db.prepare('SELECT id FROM extras WHERE code = ?').get(code).id;
 
   const y = new Date().getFullYear();
