@@ -57,8 +57,9 @@ function computeQuote(db, input) {
     const qty = Math.max(1, Number(item.quantity) || 1);
     let amount = extra.charge_type === 'fijo' ? extra.price * qty : extra.price * days * qty;
     if (extra.max_price > 0) amount = Math.min(amount, extra.max_price * qty);
-    extrasLines.push({ extra_id: extra.id, name: extra.name, quantity: qty, amount: round2(amount) });
+    extrasLines.push({ extra_id: extra.id, name: extra.name, quantity: qty, amount: round2(amount), kind: extra.kind || 'adicional', deductible: extra.deductible || 0 });
   }
+  if (extrasLines.filter((l) => l.kind === 'seguro').length > 1) fail(400, 'Elegí un solo seguro para la reserva');
   const extrasTotal = extrasLines.reduce((a, l) => a + l.amount, 0);
 
   const oneWay =

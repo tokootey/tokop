@@ -178,7 +178,10 @@ function buildContractPdf(r) {
       ['Saldo pendiente', money(r.balance.pending)],
       ['Garantía requerida', money(r.deposit)],
       ['Garantía recibida', money(r.balance.deposit_held)],
-      ['Adicionales', r.extras.map((x) => x.name).join(', ') || '-'],
+      ...r.extras
+        .filter((x) => x.kind === 'seguro')
+        .map((x) => ['Seguro', `${x.name} · ${x.deductible ? `franquicia ${money(x.deductible)}` : 'sin franquicia'}`]),
+      ['Adicionales', r.extras.filter((x) => x.kind !== 'seguro').map((x) => x.name).join(', ') || '-'],
     ],
     columnStyles: { 0: { fontStyle: 'bold', fillColor: [240, 240, 240] }, 1: { halign: 'right' } },
   });

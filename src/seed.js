@@ -47,6 +47,10 @@ function seed(db) {
   ]) ins('INSERT INTO extras (code, name, price, charge_type, max_price) VALUES (?, ?, ?, ?, ?)', code, name, price, type, max);
   // "Entrega en hotel" ya lo crea la base (en 0); en los datos de ejemplo cuesta 15.000.
   db.prepare("UPDATE extras SET price = 15000 WHERE code = 'HOTEL'").run();
+  // Seguros de ejemplo: la cobertura básica viene incluida (con franquicia); la total la elimina.
+  ins("INSERT INTO extras (code, name, price, charge_type, max_price, kind, deductible) VALUES ('BASICO', 'Cobertura básica (incluida)', 0, 'fijo', 0, 'seguro', 800000)");
+  db.prepare("UPDATE extras SET kind = 'seguro', deductible = 0, name = 'Cobertura total (sin franquicia)' WHERE code = 'FULL'").run();
+  ins("INSERT INTO extras (code, name, price, charge_type, max_price, kind, deductible) VALUES ('MEDIO', 'Cobertura media (franquicia reducida)', 8000, 'dia', 0, 'seguro', 300000)");
   const extraId = (code) => db.prepare('SELECT id FROM extras WHERE code = ?').get(code).id;
 
   const y = new Date().getFullYear();

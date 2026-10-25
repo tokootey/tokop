@@ -13,6 +13,7 @@ const { webformRoutes } = require('./routes/webform');
 const { chatRoutes } = require('./routes/chat');
 const { fileRoutes } = require('./routes/files');
 const { importRoutes } = require('./routes/importer');
+const { statsRoutes } = require('./routes/stats');
 const { HttpError, fail } = require('./util');
 const { backupStatus } = require('./backup');
 const { COMPANY_FIELDS } = require('./owner-book');
@@ -106,6 +107,7 @@ function companyApi(db, { uploadsDir, company, platform }) {
     fileRoutes(db, uploadsDir),
     adminRoutes(db, { emailTaken, publicQuery: company && !company.principal ? `?empresa=${company.slug}` : '' }),
     importRoutes(db),
+    statsRoutes(db),
   );
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Ruta inexistente')));
   app.use(errorHandler);

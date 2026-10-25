@@ -470,6 +470,9 @@ function migrate(db) {
   if (!has('reservations', 'hotel_token')) db.exec('ALTER TABLE reservations ADD COLUMN hotel_token TEXT');
   // El costo de la entrega en hotel es un adicional (código HOTEL): arranca en 0 y cada agencia le pone su precio.
   db.exec("INSERT OR IGNORE INTO extras (code, name, price, charge_type, max_price) VALUES ('HOTEL', 'Entrega en hotel', 0, 'fijo', 0)");
+  // Seguros: un adicional con tipo "seguro" (se elige uno por reserva) y su franquicia, que carga cada agencia.
+  if (!has('extras', 'kind')) db.exec("ALTER TABLE extras ADD COLUMN kind TEXT NOT NULL DEFAULT 'adicional'");
+  if (!has('extras', 'deductible')) db.exec('ALTER TABLE extras ADD COLUMN deductible REAL NOT NULL DEFAULT 0');
   // La sucursal de ejemplo "Entrega en hotel" duplicaba la opción Hotel: se apaga una sola vez (sus reservas viejas quedan igual;
   // si la agencia la vuelve a activar, no se toca más).
   if (!getSetting(db, 'migracion_sucursal_hotel')) {

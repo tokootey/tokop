@@ -504,6 +504,7 @@ const ICON = {
   disk: svgIcon('M3 14h18v6H3zM5 14l2.5-9h9L19 14M7 17h.01M11 17h.01'),
   alert: svgIcon('M12 3.5l9.5 16.5h-19zM12 10v4.5M12 17.5h.01'),
   trash: svgIcon('M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3'),
+  chart: svgIcon('M4 20V10M10 20V4M16 20v-7M22 20H2'),
   copy: svgIcon('M9 9h11v11H9zM5 15H4V4h11v1'),
   reset: svgIcon('M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5'),
 };
@@ -788,6 +789,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
             .join('')}</div>
           ${field({ name: 'pickup_branch_id', label: 'Lugar de retiro', type: 'select', options: placeOptions, required: true })}
           ${field({ name: 'return_branch_id', label: 'Lugar de devolución', type: 'select', options: placeOptions, required: true })}
+          ${insurances().length ? `<div class="full">${insuranceSelect()}</div>` : ''}
         </div>
         <div class="qr-hotel hidden" id="nr-hotel">
           ${hotelFee() ? `<p class="hotel-fee">${ICON.money}<span>La entrega en hotel tiene un costo extra de <b>${money(hotelFee())}</b>. Ya está sumado en los precios de abajo.</span></p>` : ''}
@@ -798,7 +800,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
         <details class="more-opts">
         <summary>Más opciones: adicionales, descuento y vuelo</summary>
         <div class="actions" style="margin-top:12px">${state.extras
-          .filter((x) => x.active && String(x.code).toUpperCase() !== 'HOTEL') // el costo del hotel se suma solo
+          .filter((x) => x.active && x.kind !== 'seguro' && String(x.code).toUpperCase() !== 'HOTEL') // el hotel se suma solo; el seguro se elige arriba
           .map(
             (x) =>
               `<label class="check"><input type="checkbox" name="extra_${x.id}"/> ${esc(x.name)} <small class="muted">(${money(x.price)}${x.charge_type === 'dia' ? '/día' : ''})</small></label>`,
@@ -875,6 +877,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
     const back = hotel.return ? pickup : Number(f.return_branch_id);
     const fee = state.extras.find((x) => String(x.code).toUpperCase() === 'HOTEL' && x.active && x.price > 0);
     if (fee && (hotel.deliver || hotel.return)) extras.push(fee.id);
+    if (Number(f.insurance)) extras.push(Number(f.insurance));
     return { ...f, extras, hotel, pickup_branch_id: pickup, return_branch_id: back };
   };
 
@@ -1023,6 +1026,31 @@ const HOTEL_FIELDS = [
 ];
 const hotelInputs = (h = {}, cls = 'qr-field') =>
   HOTEL_FIELDS.map(([k, label, ph]) => `<label class="${cls}${k === 'notes' || k === 'address' ? ' full' : ''}">${label}<input name="h_${k}" maxlength="${k === 'notes' ? 500 : 200}" value="${esc(h[k] || '')}" placeholder="${esc(ph)}"/></label>`).join('');
+/* ---------- Seguros: los carga la agencia (Precios y lugares → Seguros); en cada reserva se elige uno ---------- */
+const insurances = () => (state.extras || []).filter((e) => e.kind === 'seguro' && e.active).sort((a, b) => a.price - b.price);
+const insurancePrice = (x, days) => {
+  const a = x.charge_type === 'fijo' ? x.price : x.price * days;
+  return x.max_price > 0 ? Math.min(a, x.max_price) : a;
+};
+const insuranceNote = (x) =>
+  x ? `${x.deductible ? `Franquicia: ${money(x.deductible)} (lo que paga el cliente si hay un daño)` : 'Sin franquicia: si hay un daño, el cliente no paga nada'}${x.price ? ` · ${money(x.price)}${x.charge_type === 'dia' ? ' por día' : ' por alquiler'}` : ' · incluido en la tarifa'}` : '';
+// Viene elegido el más barato (normalmente el incluido en la tarifa). Abajo, la franquicia del elegido.
+const insuranceSelect = (cls = '') => {
+  const list = insurances();
+  if (!list.length) return '';
+  return `<label class="${cls}">Seguro<select name="insurance">${list
+    .map((x) => `<option value="${x.id}">${esc(x.name)}${x.price ? ` (+${money(x.price)}${x.charge_type === 'dia' ? '/día' : ''})` : ''}</option>`)
+    .join('')}</select></label><small class="ins-note" data-ins-note>${esc(insuranceNote(list[0]))}</small>`;
+};
+document.addEventListener('change', (e) => {
+  if (e.target.name !== 'insurance') return;
+  const note = e.target.closest('form')?.querySelector('[data-ins-note]');
+  if (note) note.textContent = insuranceNote(insurances().find((x) => x.id === Number(e.target.value)));
+});
+/** Seguro de una reserva ya hecha (o null) y los adicionales sin el seguro. */
+const resInsurance = (r) => (r.extras || []).find((x) => x.kind === 'seguro') || null;
+const resAddons = (r) => (r.extras || []).filter((x) => x.kind !== 'seguro');
+
 /** Costo de la entrega en hotel: el adicional "Entrega en hotel" (código HOTEL), por alquiler. 0 = sin costo. */
 const hotelFee = () => {
   const x = (state.extras || []).find((e) => String(e.code).toUpperCase() === 'HOTEL' && e.active);
@@ -1088,6 +1116,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
       <section>
         <h2>¿Qué auto? <span class="muted" style="font-weight:400">(libres en esas fechas)</span></h2>
         <div class="cars" id="qr-cars"><p class="muted">Cargando…</p></div>
+        ${insurances().length ? `<div style="margin-top:10px">${insuranceSelect('qr-field')}</div>` : ''}
       </section>
       <section>
         <h2>¿Quién lo alquila?</h2>
@@ -1113,7 +1142,8 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   const summary = () => {
     const c = cars.find((x) => x.id === sel.vehicle);
     $('#qr-what', form).textContent = c ? `${days()} ${days() === 1 ? L('día', 'day') : L('días', 'days')} · ${[c.brand, c.model].filter(Boolean).join(' ') || c.plate}` : 'Elegí un auto';
-    $('#qr-sum', form).textContent = c ? money(c.quote.total + (sel.hotel ? hotelFee() : 0)) : '';
+    const ins = form.insurance && insurances().find((x) => x.id === Number(form.insurance.value));
+    $('#qr-sum', form).textContent = c ? money(c.quote.total + (sel.hotel ? hotelFee() : 0) + (ins ? insurancePrice(ins, days()) : 0)) : '';
   };
   const paint = () => {
     const box = $('#qr-cars', form);
@@ -1157,6 +1187,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
     }
   });
   form.addEventListener('change', (e) => {
+    if (e.target.name === 'insurance') return summary();
     // "Hotel" en el lugar de entrega abre el formulario del hotel ahí mismo.
     if (e.target.name === 'place') {
       sel.hotel = e.target.value === 'hotel';
@@ -1205,6 +1236,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         return_at: localISO(to),
         status: 'confirmada',
         hotel: sel.hotel ? { ...hotelFrom(form), deliver: true, return: form.h_return.checked } : undefined,
+        extras: form.insurance ? [{ extra_id: Number(form.insurance.value), quantity: 1 }] : undefined,
       });
     }, 'Reserva guardada');
     // Hotel sin datos: primero la reserva, donde está el botón para pedírselos al cliente.
@@ -1223,6 +1255,7 @@ on(/^\/mas$/, async (view) => {
   const admin = isAdmin();
   view.innerHTML = `
     <div class="page-head"><h1>Más</h1></div>
+    ${admin ? `<div class="mas-group">Información</div><div class="mas">${tile('#/estadisticas', 'Estadísticas', 'Qué autos se piden más, categorías, seguros, ingresos, daños y taller', ICON.chart, 'green')}</div>` : ''}
     <div class="mas-group">Reservas y clientes</div>
     <div class="mas">
       ${tile('#/reservas', 'Todas las reservas', 'Buscar, filtrar y ver las anteriores', ICON.list)}
@@ -1337,7 +1370,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           <dt>Devolución</dt><dd>${fmtDT(r.return_at)} · ${esc(r.return_branch_name || '')}</dd>
           <dt>Categoría</dt><dd>${esc(r.category_code)} · ${esc(r.category_name)}</dd>
           <dt>Vehículo</dt><dd>${r.vehicle_plate ? `<b>${esc(r.vehicle_plate)}</b> ${esc(r.vehicle_brand)} ${esc(r.vehicle_model)}` : '<span class="badge b-pendiente">Sin asignar</span>'}</dd>
-          <dt>Adicionales</dt><dd>${r.extras.map((x) => esc(x.name)).join(', ') || '—'}</dd>
+          <dt>Seguro</dt><dd>${resInsurance(r) ? `<b>${esc(resInsurance(r).name)}</b> · ${resInsurance(r).deductible ? `franquicia ${money(resInsurance(r).deductible)}` : 'sin franquicia'}` : '<span class="muted">Sin elegir</span>'}</dd>
+          <dt>Adicionales</dt><dd>${resAddons(r).map((x) => esc(x.name)).join(', ') || '—'}</dd>
           ${r.flight ? `<dt>Vuelo</dt><dd>${esc(r.flight)}</dd>` : ''}
           <dt>Notas</dt><dd>${esc(r.notes || '—')}</dd>
         </dl>
@@ -1716,7 +1750,8 @@ function voucherLines(r) {
         r.hotel && r.hotel.notes ? ['Indicaciones', r.hotel.notes] : null,
         ['Duración', days],
         ['Kilometraje', q.km_included ? `${num(q.km_included)} km incluidos` : 'Libre'],
-        ['Adicionales', r.extras.map((x) => x.name).join(', ') || 'Ninguno'],
+        resInsurance(r) ? ['Seguro', `${resInsurance(r).name} · ${resInsurance(r).deductible ? `franquicia ${money(resInsurance(r).deductible)}` : 'sin franquicia'}`] : null,
+        ['Adicionales', resAddons(r).map((x) => x.name).join(', ') || 'Ninguno'],
         ...(r.flight ? [['Vuelo', r.flight]] : []),
       ].filter(Boolean),
     },
@@ -1752,6 +1787,7 @@ function voucherWhatsapp(r) {
     `Devolución: ${get('Alquiler', 'Devolución')} (${get('Alquiler', 'Duración')})`,
     ...(r.hotel && r.hotel.address ? [`Dirección del hotel: ${r.hotel.address}`] : []),
     `Auto: categoría ${r.category_code} · ${r.category_name}`,
+    ...(resInsurance(r) ? [`Seguro: ${get('Alquiler', 'Seguro')}`] : []),
     `Total ${money(r.balance.due)} · Pagado ${money(r.balance.paid)} · Saldo ${money(r.balance.pending)}`,
     ...(Number(r.deposit) > 0 ? [`Garantía: ${money(r.deposit)} (se devuelve al entregar el auto)`] : []),
     '',
@@ -2366,7 +2402,8 @@ const VEHICLE_FIELDS = [
 ];
 
 /** Pantalla de listado + alta/edición/baja genérica. */
-function crudPage({ title, endpoint, fields, columns, searchable, after, before, extraActions, canWrite = () => true, canDelete, nav }) {
+// rowFilter: qué filas mostrar (p. ej. solo los seguros); defaults: valores que se agregan al crear.
+function crudPage({ title, endpoint, fields, columns, searchable, after, before, extraActions, canWrite = () => true, canDelete, nav, rowFilter, defaults }) {
   const mayDelete = () => (canDelete ? canDelete() : canWrite());
   return async (view) => {
     if (before) await before();
@@ -2375,7 +2412,8 @@ function crudPage({ title, endpoint, fields, columns, searchable, after, before,
       <div class="table-wrap" id="crud-table"></div>`;
     const load = async () => {
       const q = searchable ? $('#crud-q').value.trim() : '';
-      const rows = await GET(`/${endpoint}${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+      const all = await GET(`/${endpoint}${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+      const rows = rowFilter ? all.filter(rowFilter) : all;
       $('#crud-table').innerHTML = rows.length
         ? `<table><thead><tr>${columns.map((c) => `<th>${esc(c.label)}</th>`).join('')}<th></th></tr></thead><tbody>
           ${rows
@@ -2410,7 +2448,7 @@ function crudPage({ title, endpoint, fields, columns, searchable, after, before,
     if (nb)
       nb.addEventListener('click', () =>
         openModal(`Agregar · ${title}`, formHtml(fields), async (d) => {
-          await POST(`/${endpoint}`, d);
+          await POST(`/${endpoint}`, { ...d, ...(defaults || {}) });
           toast('Guardado');
           if (after) await after();
           load();
@@ -2721,6 +2759,31 @@ on(/^\/tarifas$/, async (view) => {
         { label: 'Tope', render: (r) => (r.max_price ? money(r.max_price) : '—') },
         { label: 'Activo', render: (r) => (r.active ? '✔' : '—') },
       ],
+      rowFilter: (r) => r.kind !== 'seguro',
+    },
+    {
+      // Los seguros son adicionales de tipo "seguro": en cada reserva se elige uno (y figura su franquicia).
+      key: 'seguros',
+      endpoint: 'extras',
+      label: 'Seguros',
+      intro: 'Cargá las coberturas que ofrecés, con su precio y su franquicia (lo que paga el cliente si hay un daño). En cada reserva se elige una, y figura en el voucher y en el contrato.',
+      fields: [
+        { name: 'name', label: 'Nombre del seguro', required: true, full: true, attrs: 'placeholder="Ej.: Cobertura total (sin franquicia)"' },
+        { name: 'price', label: 'Precio (0 = incluido en la tarifa)', type: 'number', default: 0 },
+        { name: 'charge_type', label: 'Se cobra', type: 'select', options: [['dia', 'Por día'], ['fijo', 'Por alquiler']], required: true, default: 'dia' },
+        { name: 'deductible', label: 'Franquicia (0 = sin franquicia)', type: 'number', default: 0 },
+        { name: 'max_price', label: 'Tope por alquiler (0 = sin tope)', type: 'number', default: 0 },
+        { name: 'code', label: 'Código (opcional)' },
+        { name: 'active', label: 'Activo', type: 'checkbox', default: 1 },
+      ],
+      columns: [
+        { label: 'Seguro', render: (r) => `<b>${esc(r.name)}</b>` },
+        { label: 'Precio', render: (r) => (r.price ? `${money(r.price)} ${r.charge_type === 'dia' ? '/día' : '/alquiler'}` : 'Incluido') },
+        { label: 'Franquicia', render: (r) => (r.deductible ? money(r.deductible) : 'Sin franquicia') },
+        { label: 'Activo', render: (r) => (r.active ? '✔' : '—') },
+      ],
+      rowFilter: (r) => r.kind === 'seguro',
+      defaults: { kind: 'seguro' },
     },
     {
       key: 'seasons',
@@ -2768,7 +2831,8 @@ on(/^\/tarifas$/, async (view) => {
     }),
   );
   const tab = tabs.find((t) => t.key === current);
-  await crudPage({ title: tab.label, endpoint: tab.key, fields: tab.fields, columns: tab.columns, canWrite: isAdmin, after: loadCatalogs })($('#tab-body'));
+  await crudPage({ title: tab.label, endpoint: tab.endpoint || tab.key, fields: tab.fields, columns: tab.columns, canWrite: isAdmin, after: loadCatalogs, rowFilter: tab.rowFilter, defaults: tab.defaults })($('#tab-body'));
+  if (tab.intro) $('#tab-body .page-head').insertAdjacentHTML('afterend', `<p class="muted tab-intro">${esc(tab.intro)}</p>`);
 }, 'tarifas');
 
 /* ============================================================
@@ -3182,6 +3246,115 @@ on(/^\/usuarios$/, async (view) => {
     }),
   );
 }, 'usuarios');
+
+/* ---------- Estadísticas: qué autos se piden, por categoría, seguros, rendimiento, daños y taller (administradores) ---------- */
+const STATS_PERIODS = [
+  ['90', 'Últimos 90 días y próximos 30', () => [-89, 30]],
+  ['30', 'Últimos 30 días', () => [-29, 0]],
+  ['next', 'Próximos 30 días', () => [0, 30]],
+  ['year', 'Este año', () => {
+    const t = new Date();
+    return [-Math.round((t - new Date(t.getFullYear(), 0, 1)) / 86400000), 0];
+  }],
+];
+const SOURCE_TEXT = { manual: 'Mostrador', web: 'Por internet', cotizador: 'Cotizador', importado: 'Importadas' };
+
+on(
+  /^\/estadisticas$/,
+  async (view) => {
+    if (!isAdmin()) {
+      view.innerHTML = '<div class="card"><p class="muted">Sólo los administradores ven las estadísticas.</p></div>';
+      return;
+    }
+    const key = state.statsPeriod || '90';
+    const [a, b] = STATS_PERIODS.find(([k]) => k === key)[2]();
+    const day = (n) => localISO(addDays(new Date(), n)).slice(0, 10);
+    const s = await GET(`/stats?from=${day(a)}&to=${day(b)}`);
+    const t = s.totals;
+    const pct = (n, d) => (d ? Math.round((n / d) * 100) : 0);
+    // Barras: una fila por ítem, el largo relativo al más alto.
+    const bars = (rows, value, label, sub) => {
+      const max = Math.max(1, ...rows.map(value));
+      return rows.length
+        ? `<div class="bars">${rows
+            .map(
+              (r) => `<div class="bar-row"><div class="bar-label"><b>${label(r)}</b>${sub ? `<small>${sub(r)}</small>` : ''}</div>
+                <div class="bar"><i style="width:${Math.max(2, (value(r) / max) * 100)}%"></i></div><b class="bar-value">${value(r)}</b></div>`,
+            )
+            .join('')}</div>`
+        : '<p class="muted">Todavía no hay datos en este período.</p>';
+    };
+    const tile = (v, l, tone = '') => `<div class="stat-tile ${tone}"><b>${v}</b><span>${l}</span></div>`;
+    view.innerHTML = `
+      <div class="page-head"><h1>Estadísticas</h1></div>
+      <div class="chips" role="group" aria-label="Período">${STATS_PERIODS.map(([k, l]) => `<button type="button" class="chip${k === key ? ' on' : ''}" data-period="${k}" aria-pressed="${k === key}">${l}</button>`).join('')}</div>
+      <p class="muted stats-range">Reservas que se retiran entre el ${fmtD(s.from)} y el ${fmtD(s.to)}.</p>
+      <div class="stat-tiles">
+        ${tile(t.requested, 'reservas pedidas')}
+        ${tile(t.rentals, 'alquileres (sin canceladas)')}
+        ${tile(money(t.revenue), 'ingresos', 'good')}
+        ${tile(money(t.avg_ticket), 'por alquiler, en promedio')}
+        ${tile(`${t.avg_days} días`, 'duración promedio')}
+        ${tile(`${pct(t.cancelled, t.requested)} %`, `canceladas o no show (${t.cancelled})`, pct(t.cancelled, t.requested) > 20 ? 'warn' : '')}
+      </div>
+      <div class="stats-grid">
+        <section class="card">
+          <h2>Qué categorías se piden más</h2>
+          ${bars(s.categories.filter((c) => c.requested), (c) => c.requested, (c) => `${esc(c.code)} · ${esc(c.name)}`, (c) => `${c.days} días alquilados · ${money(c.revenue)}${c.occupancy !== null ? ` · ocupación ${c.occupancy} %` : ''}`)}
+        </section>
+        <section class="card">
+          <h2>Modelos más alquilados</h2>
+          ${bars(s.models, (m) => m.rentals, (m) => esc([m.brand, m.model].filter(Boolean).join(' ')), (m) => `${m.days} días · ${money(m.revenue)}`)}
+        </section>
+        <section class="card">
+          <h2>Seguros que llevan</h2>
+          <p class="muted">${t.rentals ? `${pct(t.with_insurance, t.rentals)} % de los alquileres tiene un seguro elegido.` : ''} Los seguros se cargan en <a href="#/tarifas">Precios y lugares → Seguros</a>.</p>
+          ${bars(s.insurance, (x) => x.times, (x) => esc(x.name), (x) => (x.deductible ? `franquicia ${money(x.deductible)}` : 'sin franquicia'))}
+        </section>
+        <section class="card">
+          <h2>Adicionales más pedidos</h2>
+          ${bars(s.extras, (x) => x.times, (x) => esc(x.name))}
+        </section>
+        <section class="card">
+          <h2>De dónde vienen las reservas</h2>
+          ${bars(s.sources, (x) => x.requested, (x) => esc(SOURCE_TEXT[x.source] || x.source), (x) => `${x.rentals} concretadas · ${money(x.revenue)}`)}
+        </section>
+        <section class="card">
+          <h2>Daños y accidentes</h2>
+          ${
+            s.damages.length
+              ? `<p><b>${s.damages.length}</b> devolución(es) con daños · <b>${money(s.damages.reduce((x, d) => x + d.amount, 0))}</b> cobrados</p>
+                 <ul class="stats-list">${s.damages.map((d) => `<li><a href="#/reservas/${d.id}">${esc(d.code)}</a> · <span class="plate">${esc(d.plate || '—')}</span> ${esc(d.vehicle)} · ${fmtD(d.at)} · ${d.amount ? money(d.amount) : `${d.noted} daño(s) anotado(s)`}</li>`).join('')}</ul>`
+              : '<p class="muted">Ninguna devolución con daños en este período. Los daños se cargan al recibir el auto.</p>'
+          }
+        </section>
+        <section class="card">
+          <h2>Taller</h2>
+          ${bars(s.shop, (x) => x.jobs, (x) => esc(maintKind(x.kind)), (x) => money(x.cost))}
+        </section>
+      </div>
+      <section class="card" style="margin-top:16px">
+        <h2>Cada auto: cuánto rinde</h2>
+        <div class="table-scroll"><table class="mini"><thead><tr><th>Auto</th><th class="right">Alquileres</th><th class="right">Días</th><th class="right">Ocupación</th><th class="right">Ingresos</th><th class="right">Taller</th></tr></thead><tbody>
+        ${s.vehicles
+          .map(
+            (v) => `<tr><td><span class="plate">${esc(v.plate)}</span> ${esc([v.brand, v.model].filter(Boolean).join(' '))} <small class="muted">${esc(v.category_code)}</small></td>
+              <td class="right">${v.rentals}</td><td class="right">${v.days}</td>
+              <td class="right"><span class="occ ${v.occupancy >= 60 ? 'hi' : v.occupancy >= 25 ? 'mid' : 'lo'}">${v.occupancy} %</span></td>
+              <td class="right nowrap">${money(v.revenue)}</td><td class="right nowrap">${v.shop_cost ? money(v.shop_cost) : '—'}</td></tr>`,
+          )
+          .join('')}
+        </tbody></table></div>
+      </section>`;
+    $$('[data-period]', view).forEach((btn) =>
+      btn.addEventListener('click', () => {
+        state.statsPeriod = btn.dataset.period;
+        route();
+      }),
+    );
+  },
+  'estadisticas',
+);
 
 /* ---------- Panel de Floty: las agencias, sus direcciones y si todo funciona (sólo el dueño de Floty) ---------- */
 /** "hace 3 días", "hoy", "nunca": para leer de un vistazo cuándo pasó algo. */

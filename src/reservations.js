@@ -45,7 +45,7 @@ function getReservation(db, id) {
   r.hotel = r.hotel ? JSON.parse(r.hotel) : null;
   r.hotel_missing = hotelMissing(r.hotel);
   r.extras = db
-    .prepare('SELECT re.extra_id, re.quantity, e.name FROM reservation_extras re JOIN extras e ON e.id = re.extra_id WHERE re.reservation_id = ?')
+    .prepare('SELECT re.extra_id, re.quantity, e.name, e.kind, e.deductible FROM reservation_extras re JOIN extras e ON e.id = re.extra_id WHERE re.reservation_id = ?')
     .all(r.id);
   r.contract = db.prepare('SELECT * FROM contracts WHERE reservation_id = ?').get(r.id) || null;
   if (r.contract) {

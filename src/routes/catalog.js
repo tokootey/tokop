@@ -118,7 +118,7 @@ function catalogRoutes(db) {
   );
   router.use(
     '/extras',
-    crud(db, { table: 'extras', fields: ['code', 'name', 'price', 'charge_type', 'max_price', 'aliases', 'active'], required: ['name'], order: 'name', adminWrite: true }),
+    crud(db, { table: 'extras', fields: ['code', 'name', 'price', 'charge_type', 'max_price', 'aliases', 'active', 'kind', 'deductible'], required: ['name'], order: 'name', adminWrite: true }),
   );
   router.use(
     '/seasons',
