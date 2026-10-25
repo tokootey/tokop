@@ -13,7 +13,7 @@ const { webformRoutes } = require('./routes/webform');
 const { chatRoutes } = require('./routes/chat');
 const { fileRoutes } = require('./routes/files');
 const { importRoutes } = require('./routes/importer');
-const { statsRoutes } = require('./routes/stats');
+const { statsRoutes, computeStats } = require('./routes/stats');
 const { HttpError, fail } = require('./util');
 const { backupStatus } = require('./backup');
 const { COMPANY_FIELDS } = require('./owner-book');
@@ -189,6 +189,12 @@ function platformRoutes(platform, company) {
   });
   router.post('/companies', (req, res) => res.status(201).json(platform.create(req.body || {})));
   router.put('/companies/:id/domain', (req, res) => res.json(platform.setDomain(req.params.id, (req.body || {}).domain)));
+  // Estadísticas de una agencia (las mismas que ve su administrador), sin entrar a su cuenta.
+  router.get('/companies/:id/stats', (req, res) => {
+    const c = platform.get(req.params.id);
+    if (!c) fail(404, 'Empresa inexistente');
+    res.json({ company: { id: c.id, name: c.name }, ...computeStats(c.db, req.query) });
+  });
   return router;
 }
 

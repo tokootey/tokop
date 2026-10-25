@@ -427,7 +427,7 @@ function renderSubnav(group, current) {
 async function route() {
   if (!state.user) return;
   const hash = location.hash.replace(/^#/, '') || '/panel';
-  if (state.user.owner_mode && hash !== '/empresas') {
+  if (state.user.owner_mode && !/^\/empresas(\/\d+\/estadisticas)?$/.test(hash)) {
     location.hash = '#/empresas'; // vuelve a entrar acá por hashchange
     return;
   }
@@ -3266,95 +3266,105 @@ on(
       view.innerHTML = '<div class="card"><p class="muted">Sólo los administradores ven las estadísticas.</p></div>';
       return;
     }
-    const key = state.statsPeriod || '90';
-    const [a, b] = STATS_PERIODS.find(([k]) => k === key)[2]();
-    const day = (n) => localISO(addDays(new Date(), n)).slice(0, 10);
-    const s = await GET(`/stats?from=${day(a)}&to=${day(b)}`);
-    const t = s.totals;
-    const pct = (n, d) => (d ? Math.round((n / d) * 100) : 0);
-    // Barras: una fila por ítem, el largo relativo al más alto.
-    const bars = (rows, value, label, sub) => {
-      const max = Math.max(1, ...rows.map(value));
-      return rows.length
-        ? `<div class="bars">${rows
-            .map(
-              (r) => `<div class="bar-row"><div class="bar-label"><b>${label(r)}</b>${sub ? `<small>${sub(r)}</small>` : ''}</div>
-                <div class="bar"><i style="width:${Math.max(2, (value(r) / max) * 100)}%"></i></div><b class="bar-value">${value(r)}</b></div>`,
-            )
-            .join('')}</div>`
-        : '<p class="muted">Todavía no hay datos en este período.</p>';
-    };
-    const tile = (v, l, tone = '') => `<div class="stat-tile ${tone}"><b>${v}</b><span>${l}</span></div>`;
-    view.innerHTML = `
-      <div class="page-head"><h1>Estadísticas</h1></div>
-      <div class="chips" role="group" aria-label="Período">${STATS_PERIODS.map(([k, l]) => `<button type="button" class="chip${k === key ? ' on' : ''}" data-period="${k}" aria-pressed="${k === key}">${l}</button>`).join('')}</div>
-      <p class="muted stats-range">Reservas que se retiran entre el ${fmtD(s.from)} y el ${fmtD(s.to)}.</p>
-      <div class="stat-tiles">
-        ${tile(t.requested, 'reservas pedidas')}
-        ${tile(t.rentals, 'alquileres (sin canceladas)')}
-        ${tile(money(t.revenue), 'ingresos', 'good')}
-        ${tile(money(t.avg_ticket), 'por alquiler, en promedio')}
-        ${tile(`${t.avg_days} días`, 'duración promedio')}
-        ${tile(`${pct(t.cancelled, t.requested)} %`, `canceladas o no show (${t.cancelled})`, pct(t.cancelled, t.requested) > 20 ? 'warn' : '')}
-      </div>
-      <div class="stats-grid">
-        <section class="card">
-          <h2>Qué categorías se piden más</h2>
-          ${bars(s.categories.filter((c) => c.requested), (c) => c.requested, (c) => `${esc(c.code)} · ${esc(c.name)}`, (c) => `${c.days} días alquilados · ${money(c.revenue)}${c.occupancy !== null ? ` · ocupación ${c.occupancy} %` : ''}`)}
-        </section>
-        <section class="card">
-          <h2>Modelos más alquilados</h2>
-          ${bars(s.models, (m) => m.rentals, (m) => esc([m.brand, m.model].filter(Boolean).join(' ')), (m) => `${m.days} días · ${money(m.revenue)}`)}
-        </section>
-        <section class="card">
-          <h2>Seguros que llevan</h2>
-          <p class="muted">${t.rentals ? `${pct(t.with_insurance, t.rentals)} % de los alquileres tiene un seguro elegido.` : ''} Los seguros se cargan en <a href="#/tarifas">Precios y lugares → Seguros</a>.</p>
-          ${bars(s.insurance, (x) => x.times, (x) => esc(x.name), (x) => (x.deductible ? `franquicia ${money(x.deductible)}` : 'sin franquicia'))}
-        </section>
-        <section class="card">
-          <h2>Adicionales más pedidos</h2>
-          ${bars(s.extras, (x) => x.times, (x) => esc(x.name))}
-        </section>
-        <section class="card">
-          <h2>De dónde vienen las reservas</h2>
-          ${bars(s.sources, (x) => x.requested, (x) => esc(SOURCE_TEXT[x.source] || x.source), (x) => `${x.rentals} concretadas · ${money(x.revenue)}`)}
-        </section>
-        <section class="card">
-          <h2>Daños y accidentes</h2>
-          ${
-            s.damages.length
-              ? `<p><b>${s.damages.length}</b> devolución(es) con daños · <b>${money(s.damages.reduce((x, d) => x + d.amount, 0))}</b> cobrados</p>
-                 <ul class="stats-list">${s.damages.map((d) => `<li><a href="#/reservas/${d.id}">${esc(d.code)}</a> · <span class="plate">${esc(d.plate || '—')}</span> ${esc(d.vehicle)} · ${fmtD(d.at)} · ${d.amount ? money(d.amount) : `${d.noted} daño(s) anotado(s)`}</li>`).join('')}</ul>`
-              : '<p class="muted">Ninguna devolución con daños en este período. Los daños se cargan al recibir el auto.</p>'
-          }
-        </section>
-        <section class="card">
-          <h2>Taller</h2>
-          ${bars(s.shop, (x) => x.jobs, (x) => esc(maintKind(x.kind)), (x) => money(x.cost))}
-        </section>
-      </div>
-      <section class="card" style="margin-top:16px">
-        <h2>Cada auto: cuánto rinde</h2>
-        <div class="table-scroll"><table class="mini"><thead><tr><th>Auto</th><th class="right">Alquileres</th><th class="right">Días</th><th class="right">Ocupación</th><th class="right">Ingresos</th><th class="right">Taller</th></tr></thead><tbody>
-        ${s.vehicles
-          .map(
-            (v) => `<tr><td><span class="plate">${esc(v.plate)}</span> ${esc([v.brand, v.model].filter(Boolean).join(' '))} <small class="muted">${esc(v.category_code)}</small></td>
-              <td class="right">${v.rentals}</td><td class="right">${v.days}</td>
-              <td class="right"><span class="occ ${v.occupancy >= 60 ? 'hi' : v.occupancy >= 25 ? 'mid' : 'lo'}">${v.occupancy} %</span></td>
-              <td class="right nowrap">${money(v.revenue)}</td><td class="right nowrap">${v.shop_cost ? money(v.shop_cost) : '—'}</td></tr>`,
-          )
-          .join('')}
-        </tbody></table></div>
-      </section>`;
-    $$('[data-period]', view).forEach((btn) =>
-      btn.addEventListener('click', () => {
-        state.statsPeriod = btn.dataset.period;
-        route();
-      }),
-    );
+    await statsView(view, '/stats');
   },
   'estadisticas',
 );
+
+// El dueño de Floty ve las estadísticas de cada agencia desde su panel, sin entrar a su cuenta.
+on(/^\/empresas\/(\d+)\/estadisticas$/, (view, id) => statsView(view, `/platform/companies/${id}/stats`, { owner: true }), 'empresas');
+
+/** Pantalla de estadísticas: la de la agencia o, con owner, la de una agencia vista desde el Panel de Floty. */
+async function statsView(view, url, { owner = false } = {}) {
+  const key = state.statsPeriod || '90';
+  const [a, b] = STATS_PERIODS.find(([k]) => k === key)[2]();
+  const day = (n) => localISO(addDays(new Date(), n)).slice(0, 10);
+  const s = await GET(`${url}?from=${day(a)}&to=${day(b)}`);
+  // Desde el panel del dueño no hay pantallas de la agencia a las que saltar: el texto va sin enlace.
+  const link = (href, text) => (owner ? text : `<a href="${href}">${text}</a>`);
+  const t = s.totals;
+  const pct = (n, d) => (d ? Math.round((n / d) * 100) : 0);
+  // Barras: una fila por ítem, el largo relativo al más alto.
+  const bars = (rows, value, label, sub) => {
+    const max = Math.max(1, ...rows.map(value));
+    return rows.length
+      ? `<div class="bars">${rows
+          .map(
+            (r) => `<div class="bar-row"><div class="bar-label"><b>${label(r)}</b>${sub ? `<small>${sub(r)}</small>` : ''}</div>
+              <div class="bar"><i style="width:${Math.max(2, (value(r) / max) * 100)}%"></i></div><b class="bar-value">${value(r)}</b></div>`,
+          )
+          .join('')}</div>`
+      : '<p class="muted">Todavía no hay datos en este período.</p>';
+  };
+  const tile = (v, l, tone = '') => `<div class="stat-tile ${tone}"><b>${v}</b><span>${l}</span></div>`;
+  view.innerHTML = `
+    <div class="page-head">${owner ? `<a class="btn link" href="#/empresas">← ${L('Tus agencias', 'Your agencies')}</a>` : ''}<h1>${owner ? `Estadísticas · ${esc(s.company.name)}` : 'Estadísticas'}</h1></div>
+    <div class="chips" role="group" aria-label="Período">${STATS_PERIODS.map(([k, l]) => `<button type="button" class="chip${k === key ? ' on' : ''}" data-period="${k}" aria-pressed="${k === key}">${l}</button>`).join('')}</div>
+    <p class="muted stats-range">Reservas que se retiran entre el ${fmtD(s.from)} y el ${fmtD(s.to)}.</p>
+    <div class="stat-tiles">
+      ${tile(t.requested, 'reservas pedidas')}
+      ${tile(t.rentals, 'alquileres (sin canceladas)')}
+      ${tile(money(t.revenue), 'ingresos', 'good')}
+      ${tile(money(t.avg_ticket), 'por alquiler, en promedio')}
+      ${tile(`${t.avg_days} días`, 'duración promedio')}
+      ${tile(`${pct(t.cancelled, t.requested)} %`, `canceladas o no show (${t.cancelled})`, pct(t.cancelled, t.requested) > 20 ? 'warn' : '')}
+    </div>
+    <div class="stats-grid">
+      <section class="card">
+        <h2>Qué categorías se piden más</h2>
+        ${bars(s.categories.filter((c) => c.requested), (c) => c.requested, (c) => `${esc(c.code)} · ${esc(c.name)}`, (c) => `${c.days} días alquilados · ${money(c.revenue)}${c.occupancy !== null ? ` · ocupación ${c.occupancy} %` : ''}`)}
+      </section>
+      <section class="card">
+        <h2>Modelos más alquilados</h2>
+        ${bars(s.models, (m) => m.rentals, (m) => esc([m.brand, m.model].filter(Boolean).join(' ')), (m) => `${m.days} días · ${money(m.revenue)}`)}
+      </section>
+      <section class="card">
+        <h2>Seguros que llevan</h2>
+        <p class="muted">${t.rentals ? `${pct(t.with_insurance, t.rentals)} % de los alquileres tiene un seguro elegido.` : ''} Los seguros se cargan en ${link('#/tarifas', 'Precios y lugares → Seguros')}.</p>
+        ${bars(s.insurance, (x) => x.times, (x) => esc(x.name), (x) => (x.deductible ? `franquicia ${money(x.deductible)}` : 'sin franquicia'))}
+      </section>
+      <section class="card">
+        <h2>Adicionales más pedidos</h2>
+        ${bars(s.extras, (x) => x.times, (x) => esc(x.name))}
+      </section>
+      <section class="card">
+        <h2>De dónde vienen las reservas</h2>
+        ${bars(s.sources, (x) => x.requested, (x) => esc(SOURCE_TEXT[x.source] || x.source), (x) => `${x.rentals} concretadas · ${money(x.revenue)}`)}
+      </section>
+      <section class="card">
+        <h2>Daños y accidentes</h2>
+        ${
+          s.damages.length
+            ? `<p><b>${s.damages.length}</b> devolución(es) con daños · <b>${money(s.damages.reduce((x, d) => x + d.amount, 0))}</b> cobrados</p>
+               <ul class="stats-list">${s.damages.map((d) => `<li>${link(`#/reservas/${d.id}`, esc(d.code))} ·<span class="plate">${esc(d.plate || '—')}</span> ${esc(d.vehicle)} · ${fmtD(d.at)} · ${d.amount ? money(d.amount) : `${d.noted} daño(s) anotado(s)`}</li>`).join('')}</ul>`
+            : '<p class="muted">Ninguna devolución con daños en este período. Los daños se cargan al recibir el auto.</p>'
+        }
+      </section>
+      <section class="card">
+        <h2>Taller</h2>
+        ${bars(s.shop, (x) => x.jobs, (x) => esc(maintKind(x.kind)), (x) => money(x.cost))}
+      </section>
+    </div>
+    <section class="card" style="margin-top:16px">
+      <h2>Cada auto: cuánto rinde</h2>
+      <div class="table-scroll"><table class="mini"><thead><tr><th>Auto</th><th class="right">Alquileres</th><th class="right">Días</th><th class="right">Ocupación</th><th class="right">Ingresos</th><th class="right">Taller</th></tr></thead><tbody>
+      ${s.vehicles
+        .map(
+          (v) => `<tr><td><span class="plate">${esc(v.plate)}</span> ${esc([v.brand, v.model].filter(Boolean).join(' '))} <small class="muted">${esc(v.category_code)}</small></td>
+            <td class="right">${v.rentals}</td><td class="right">${v.days}</td>
+            <td class="right"><span class="occ ${v.occupancy >= 60 ? 'hi' : v.occupancy >= 25 ? 'mid' : 'lo'}">${v.occupancy} %</span></td>
+            <td class="right nowrap">${money(v.revenue)}</td><td class="right nowrap">${v.shop_cost ? money(v.shop_cost) : '—'}</td></tr>`,
+        )
+        .join('')}
+      </tbody></table></div>
+    </section>`;
+  $$('[data-period]', view).forEach((btn) =>
+    btn.addEventListener('click', () => {
+      state.statsPeriod = btn.dataset.period;
+      route();
+    }),
+  );
+}
 
 /* ---------- Panel de Floty: las agencias, sus direcciones y si todo funciona (sólo el dueño de Floty) ---------- */
 /** "hace 3 días", "hoy", "nunca": para leer de un vistazo cuándo pasó algo. */
@@ -3471,6 +3481,7 @@ on(/^\/empresas$/, async (view) => {
       </div>
       <div class="agency-actions">
         <button class="btn primary pill" type="button" data-account>${ICON.user}Ficha y abono</button>
+        <a class="btn pill" href="#/empresas/${c.id}/estadisticas">${ICON.chart}Estadísticas</a>
         <div class="agency-actions-2">
           <button class="btn pill" type="button" data-check>${ICON.reset}Probar dirección</button>
           <button class="btn pill" type="button" data-domain>${ICON.globe}Dominio propio</button>

@@ -351,6 +351,15 @@ test('Panel de Floty administrativo: uso de cada agencia, prueba de su direcció
     const acc = await call(cookieA, 'PUT', `/api/platform/companies/${companyB.id}/account`, { plan_price: 20000, next_charge: '2026-10-01' });
     assert.equal(acc.status, 200);
     assert.equal((await call(cookieA, 'POST', `/api/platform/companies/${companyB.id}/paid`)).data.next_charge, '2026-11-01');
+
+    // Estadísticas de cada agencia: el dueño ve las de esa agencia (no las suyas); la agencia no ve las de otra.
+    const st = await call(cookieA, 'GET', `/api/platform/companies/${companyB.id}/stats`);
+    assert.equal(st.status, 200);
+    assert.equal(st.data.company.id, companyB.id);
+    assert.equal(st.data.vehicles.length, b.vehicles);
+    assert.ok(st.data.totals && Array.isArray(st.data.categories));
+    assert.equal((await call(cookieB, 'GET', `/api/platform/companies/${companyB.id}/stats`)).status, 403);
+    assert.equal((await call(cookieA, 'GET', '/api/platform/companies/9999/stats')).status, 404);
   } finally {
     delete process.env.FLOTY_OWNERS;
     delete process.env.FLOTY_DOMAIN;
