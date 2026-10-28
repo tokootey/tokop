@@ -228,6 +228,17 @@ h1 .badge { font-size: 12.5px; }
 .pl-track.pl-drag { cursor: crosshair; touch-action: pan-x pan-y; user-select: none; -webkit-user-select: none; }
 .pl-sel { position: absolute; top: 5px; height: 26px; border-radius: 6px; background: rgba(31, 111, 235, 0.18); border: 2px dashed var(--primary); color: var(--primary-dark); font-size: 11px; font-weight: 600; padding: 4px 6px; white-space: nowrap; overflow: visible; pointer-events: none; z-index: 1; }
 .pl-sel.bad { background: rgba(209, 55, 58, 0.15); border-color: var(--danger); color: var(--danger); }
+/* En el celular: la patente queda fija a la izquierda al deslizar y entran más días en pantalla. */
+@media (max-width: 800px) {
+  .pl-row { grid-template-columns: 92px 1fr; min-width: 720px; }
+  .pl-label { position: sticky; left: 0; z-index: 3; background: var(--card); padding: 8px; }
+  .pl-row.head .pl-label { background: var(--soft); }
+  .pl-row.group .pl-label { background: #eef2f8; overflow: visible; }
+  .pl-label small { display: none; }
+  .pl-label small.error { display: inline; }
+  .pl-track { height: 44px; }
+  .pl-bar, .pl-sel { top: 6px; height: 32px; line-height: 22px; }
+}
 .pl-bar.mant { background: repeating-linear-gradient(45deg, #d1373a, #d1373a 6px, #e25b5d 6px, #e25b5d 12px); cursor: default; }
 .legend { display: flex; gap: 8px 16px; font-size: 12px; color: var(--muted); align-items: center; flex-wrap: wrap; }
 .legend span::before { content: ''; display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -2px; background: var(--c); }

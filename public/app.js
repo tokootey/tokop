@@ -2382,7 +2382,7 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
       <div class="actions"><button class="btn" data-nav="-7">◀ Semana</button><button class="btn" data-nav="0">Hoy</button><button class="btn" data-nav="7">Semana ▶</button></div></div>
     <div class="legend" style="margin-bottom:10px">
       <span style="--c:#e0a100">Pendiente</span><span style="--c:#1f6feb">Confirmada</span><span style="--c:#1a9b5b">En curso</span>
-      <span style="--c:#8b94a6">Finalizada</span><span style="--c:#d1373a">En el taller</span><span>· Tocá una barra para abrir la reserva · <b>Para reservar, tocá un día libre en la fila de un auto. Para elegir varios días, arrastrá con el mouse o mantené apretado el dedo y deslizá.</b></span></div>
+      <span style="--c:#8b94a6">Finalizada</span><span style="--c:#d1373a">En el taller</span><span>· Tocá una barra para abrir la reserva · <b>Para reservar, tocá en la fila de un auto el día de retiro y después el de devolución (con el mouse también podés arrastrar).</b></span></div>
     <div class="planning">
       <div class="pl-row head"><div class="pl-label"><small>Vehículo</small></div><div class="pl-days" style="grid-template-columns:repeat(${days},1fr)">${dayCells}</div></div>
       ${rows || '<p class="muted" style="padding:16px">No hay vehículos cargados.</p>'}
@@ -2445,26 +2445,23 @@ function enableDragToBook(container, p, days) {
     }
     paint();
   };
-  // Con el dedo, deslizar mueve el calendario; para elegir días hay que mantener apretado medio segundo.
-  // Un toque corto en un día libre reserva ese día (con el mouse, un clic hace lo mismo).
-  let hold = null;
+  // Con el mouse se arrastra (o un clic reserva ese día). Con el dedo, deslizar mueve el calendario
+  // y se reserva con dos toques: el día de retiro y después el de devolución (el mismo día otra vez: un día).
+  let tap = null;
+  let pick = null;
+  const clearPick = () => {
+    pick?.el.remove();
+    pick = null;
+  };
   container.addEventListener('pointerdown', (e) => {
     const track = e.target.closest('.pl-drag');
     if (!track || e.target.closest('.pl-bar') || (e.pointerType === 'mouse' && e.button !== 0)) return;
     if (e.pointerType === 'mouse') return start(track, e.pointerId, e.clientX);
-    hold = { track, id: e.pointerId, x: e.clientX, y: e.clientY, timer: setTimeout(() => {
-      start(track, hold.id, hold.x);
-      drag.moved = true; // ya eligió: al soltar se reserva aunque no deslice
-      hold = null;
-      navigator.vibrate?.(15);
-    }, 450) };
+    tap = { track, x: e.clientX, y: e.clientY };
   });
 
   container.addEventListener('pointermove', (e) => {
-    if (hold && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 10) {
-      clearTimeout(hold.timer); // se está moviendo el calendario
-      hold = null;
-    }
+    if (tap && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 10) tap = null; // se está moviendo el calendario
     if (!drag) return;
     if (Math.abs(e.clientX - drag.x0) > 6) drag.moved = true;
     const d = dayAt(drag.track, e.clientX);
@@ -2473,21 +2470,42 @@ function enableDragToBook(container, p, days) {
       paint();
     }
   });
-  // Mientras se eligen días con el dedo, el calendario no se mueve.
-  container.addEventListener('touchmove', (e) => drag && e.cancelable && e.preventDefault(), { passive: false });
 
   const go = (d) => {
     if (d.bad) return toast(d.past ? 'No se puede reservar en días que ya pasaron' : 'Ese auto ya está ocupado (o en taller) en esas fechas', true);
     location.hash = `#/reservas/nueva?vehiculo=${d.vehicleId}&desde=${d.from.slice(0, 10)}&hasta=${d.to.slice(0, 10)}`;
   };
+  const touchTap = (t) => {
+    const day = dayAt(t.track, t.x);
+    if (pick && pick.track === t.track && day >= pick.startDay) {
+      // Segundo toque: el día de devolución.
+      drag = pick;
+      pick = null;
+      drag.endDay = day;
+      paint();
+      const d = drag;
+      drag = null;
+      d.el.remove();
+      return go(d);
+    }
+    // Primer toque (o un día anterior, u otro auto): ese es el día de retiro.
+    clearPick();
+    start(t.track, null, t.x);
+    pick = drag;
+    drag = null;
+    if (pick.bad) {
+      go(pick);
+      return clearPick();
+    }
+    pick.el.textContent = 'Retiro';
+    toast(`Retiro el ${fmtD(pick.from)}. Ahora tocá el día de devolución`);
+  };
   const finish = (e) => {
-    if (hold) {
-      // Toque corto: reserva de un día desde ese día.
-      clearTimeout(hold.timer);
-      const h = hold;
-      hold = null;
-      if (e.type === 'pointercancel') return;
-      start(h.track, h.id, h.x);
+    if (tap) {
+      const t = tap;
+      tap = null;
+      if (e.type !== 'pointercancel') touchTap(t);
+      return;
     }
     if (!drag) return;
     const d = drag;
