@@ -150,7 +150,7 @@ test('protección CSRF: se rechazan pedidos que modifican datos desde otro sitio
 
 test('permisos: un operador no borra clientes ni ve el registro de actividad; el administrador anonimiza', async () => {
   const op = await userSession('mostrador@x.com');
-  const c = (await req('POST', '/api/customers', { cookie: op, body: { full_name: 'Ana Privada', doc_number: '40111222', email: 'ana@x.com', phone: '123', license_number: 'L1' } })).data;
+  const c = (await req('POST', '/api/customers', { cookie: op, body: { full_name: 'Ana Privada', doc_number: '40111222', email: 'ana@x.com', phone: '+54 9 11 5555 0123', license_number: 'L1' } })).data;
   assert.equal((await req('DELETE', `/api/customers/${c.id}`, { cookie: op })).status, 403);
   assert.equal((await req('POST', `/api/customers/${c.id}/anonymize`, { cookie: op })).status, 403);
   assert.equal((await req('GET', '/api/audit', { cookie: op })).status, 403);

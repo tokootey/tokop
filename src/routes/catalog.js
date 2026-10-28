@@ -13,9 +13,21 @@ function crud(db, { table, fields, required = [], order = 'id', search = [], adm
   const guard = adminWrite ? [requireAdmin] : [];
   const deleteGuard = adminWrite || adminDelete ? [requireAdmin] : [];
 
+  // Un campo vacío en el formulario llega como null: en las columnas NOT NULL va su valor por defecto
+  // (por ejemplo el costo del taller, que es opcional), en vez de fallar con "Error interno".
+  let defaults;
+  const defaultsOf = () =>
+    (defaults ??= Object.fromEntries(
+      db
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .filter((c) => c.notnull && c.dflt_value !== null)
+        .map((c) => [c.name, /^'.*'$/.test(c.dflt_value) ? c.dflt_value.slice(1, -1) : Number(c.dflt_value)]),
+    ));
   const clean = (body) => {
     const data = pick(body, fields);
     for (const f of dateFields) if (f in data && data[f]) data[f] = normDate(data[f]);
+    for (const [f, v] of Object.entries(defaultsOf())) if (f in data && (data[f] === null || data[f] === '')) data[f] = v;
     return data;
   };
 
@@ -153,10 +165,23 @@ function catalogRoutes(db) {
       search: ['plate', 'brand', 'model'],
       dateFields: ['insurance_expiry', 'vtv_expiry'],
       adminDelete: true,
-      listSql: `SELECT v.*, c.name AS category_name, c.code AS category_code, b.name AS branch_name
+      // Con su próximo movimiento (la próxima salida y, si está alquilado, cuándo vuelve) y su trabajo abierto en el taller.
+      listSql: `SELECT v.*, c.name AS category_name, c.code AS category_code, b.name AS branch_name,
+                  (SELECT MIN(r.pickup_at) FROM reservations r WHERE r.vehicle_id = v.id AND r.status IN ('pendiente','confirmada')) AS next_out,
+                  (SELECT r.return_at FROM reservations r WHERE r.vehicle_id = v.id AND r.status = 'en_curso' ORDER BY r.return_at LIMIT 1) AS back_at,
+                  (SELECT m.kind FROM maintenance m WHERE m.vehicle_id = v.id AND m.status = 'abierto' ORDER BY m.start_date LIMIT 1) AS shop_kind,
+                  (SELECT m.start_date FROM maintenance m WHERE m.vehicle_id = v.id AND m.status = 'abierto' ORDER BY m.start_date LIMIT 1) AS shop_since
                 FROM vehicles v JOIN categories c ON c.id = v.category_id LEFT JOIN branches b ON b.id = v.branch_id`,
     }),
   );
+  // WhatsApp del cliente: un número de 8 a 15 dígitos, para que el voucher no se mande a un número mal cargado.
+  router.use('/customers', (req, _res, next) => {
+    const phone = String((req.body || {}).phone || '').trim();
+    if (!['POST', 'PUT'].includes(req.method) || !phone) return next();
+    const digits = phone.replace(/\D/g, '').length;
+    if (!/^[+\d\s().-]+$/.test(phone) || digits < 8 || digits > 15) fail(400, 'El WhatsApp tiene que ser un número con código de país, por ejemplo +54 9 2901 555123');
+    next();
+  });
   router.use(
     '/customers',
     crud(db, {

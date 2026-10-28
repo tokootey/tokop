@@ -31,6 +31,10 @@ services:
         value: "14"
       - key: TRUST_PROXY
         value: "1"
+      # Hora de la agencia: el servidor de Render está en hora universal y "hoy" se correría 3 horas.
+      # shortcut: una sola zona para todas las agencias; si se suman de otro país, pasarla a Ajustes de cada empresa.
+      - key: TZ
+        value: America/Argentina/Buenos_Aires
       # Dominio de Floty para que cada empresa tenga su subdominio: flotyapp.com.ar → andes-rent.flotyapp.com.ar.
       # El dueño de Floty entra por app.flotyapp.com.ar; flotyapp.com.ar a secas es la página web (Netlify).
       # Se carga en Environment cuando exista el dominio; vacío = una sola dirección para todas.
