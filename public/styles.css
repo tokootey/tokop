@@ -225,7 +225,7 @@ h1 .badge { font-size: 12.5px; }
 .pl-bar.en_curso { background: #17915a; }
 .pl-bar.finalizada { background: #8b94a6; }
 /* Arrastrar para crear: el gesto horizontal es nuestro, el vertical sigue desplazando la página */
-.pl-track.pl-drag { cursor: crosshair; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.pl-track.pl-drag { cursor: crosshair; touch-action: pan-x pan-y; user-select: none; -webkit-user-select: none; }
 .pl-sel { position: absolute; top: 5px; height: 26px; border-radius: 6px; background: rgba(31, 111, 235, 0.18); border: 2px dashed var(--primary); color: var(--primary-dark); font-size: 11px; font-weight: 600; padding: 4px 6px; white-space: nowrap; overflow: visible; pointer-events: none; z-index: 1; }
 .pl-sel.bad { background: rgba(209, 55, 58, 0.15); border-color: var(--danger); color: var(--danger); }
 .pl-bar.mant { background: repeating-linear-gradient(45deg, #d1373a, #d1373a 6px, #e25b5d 6px, #e25b5d 12px); cursor: default; }
@@ -388,7 +388,8 @@ pre.snippet { color: var(--text); background: var(--soft); border: 1px solid var
 .trip-actions { display: flex; gap: 8px; }
 .trip-actions .btn { flex: 1; min-height: 46px; font-size: 16px; font-weight: 700; border-radius: 12px; }
 .trip-actions .btn.back { color: #9a3412; border: 1.5px solid #c2410c; }
-.trip-actions .btn.wa { flex: 0 0 52px; padding: 0; color: #15803d; }
+.trip-actions .btn.wa { flex: 0 0 auto; padding: 0 14px; gap: 6px; color: #15803d; font-size: 14px; }
+@media (max-width: 420px) { .trip-actions .btn.wa span { display: none; } .trip-actions .btn.wa { padding: 0 12px; } }
 .trip-actions .btn.wa svg { flex-shrink: 0; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .hoy-empty { color: var(--muted); background: var(--card); border: 1px dashed var(--border-strong); border-radius: 16px; padding: 18px; margin: 0 0 10px; }
 .hoy-next { color: var(--muted); margin: 6px 0 18px; font-size: 14px; }
@@ -843,9 +844,9 @@ body.owner .acct-menu .lang-switch .btn.link.active { color: var(--text); }
 
 /* Estadísticas */
 .stats-range { margin: 8px 0 14px; font-size: 13px; }
-.stat-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.stat-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .stat-tile { background: #fff; border: 1px solid var(--border); border-radius: 16px; padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; box-shadow: var(--shadow); min-width: 0; }
-.stat-tile b { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat-tile b { font-size: clamp(17px, 1.6vw, 21px); font-weight: 800; letter-spacing: -0.02em; overflow-wrap: anywhere; }
 .stat-tile span { color: var(--muted); font-size: 12.5px; }
 .stat-tile.good b { color: #16a35f; }
 .stat-tile.warn b { color: #a66a00; }
@@ -854,7 +855,7 @@ body.owner .acct-menu .lang-switch .btn.link.active { color: var(--text); }
 .bars { display: flex; flex-direction: column; gap: 12px; }
 .bar-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto; gap: 10px; align-items: center; }
 .bar-label { min-width: 0; display: flex; flex-direction: column; }
-.bar-label b { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-label b { font-size: 13.5px; overflow-wrap: anywhere; }
 .bar-label small { color: var(--muted); font-size: 12px; }
 .bar { height: 10px; border-radius: 999px; background: #eef1f6; overflow: hidden; }
 .bar i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #3381f8, #1f6feb); }
@@ -871,3 +872,57 @@ body.owner .acct-menu .lang-switch .btn.link.active { color: var(--text); }
   .bar-row .bar { grid-column: 1 / -1; grid-row: 2; }
 }
 .ins-note { display: block; margin: 6px 4px 0; color: #5b6678; font-size: 12.5px; }
+
+/* Tarjeta del auto: qué le toca después (sale, vuelve) y qué se le hace en el taller. */
+.vcard-next { display: grid; gap: 4px; margin: 8px 0 2px; padding: 8px 10px; border-radius: 10px; background: var(--bg); font-size: 13px; }
+.vcard-next p { display: flex; align-items: center; gap: 8px; margin: 0; }
+.vcard-next svg { width: 15px; height: 15px; flex: none; color: var(--muted); }
+.vcard-next.soon { background: var(--accent-soft); }
+.vcard-next.soon svg { color: var(--accent); }
+
+/* Pedido para confirmar: lo que falta, y la ventana de confirmación con sus datos. */
+.pend-alerts { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; color: #92400e; font-size: 12.5px; font-weight: 600; }
+.pend-alerts svg { width: 14px; height: 14px; flex: none; }
+.confirm-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; margin: 0 0 12px; }
+.confirm-facts dt { font-size: 12px; color: var(--muted); }
+.confirm-facts dd { margin: 2px 0 0; font-weight: 600; }
+.confirm-facts .wide { grid-column: 1 / -1; }
+.notes-box { white-space: pre-wrap; font-weight: 500 !important; background: var(--warn-soft); border-radius: 8px; padding: 8px 10px; }
+.warn-text { color: #b45309; }
+
+/* Estadísticas: lo que pierde plata en rojo, subtítulos de cada grupo y la tabla que se ordena. */
+.stat-tile.bad b, .neg-text { color: #c62828; }
+.stats-sub { font-size: 14px; color: var(--muted); font-weight: 700; margin: 4px 0 8px; text-transform: uppercase; letter-spacing: .04em; }
+.bar-row.neg .bar i { background: #e57373; }
+.bar-row.neg .bar-value { color: #c62828; }
+.th-sort { all: unset; cursor: pointer; font: inherit; font-weight: 700; }
+.th-sort:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+th[aria-sort="ascending"] .th-sort::after { content: ' ▲'; font-size: 10px; }
+th[aria-sort="descending"] .th-sort::after { content: ' ▼'; font-size: 10px; }
+
+/* Calendario: la reserva recién creada se ve resaltada un momento. */
+.pl-bar.just-made { outline: 3px solid var(--accent); outline-offset: 1px; animation: just-made 1.2s ease-in-out 3; z-index: 3; }
+@keyframes just-made { 50% { transform: scaleY(1.15); } }
+
+/* Formularios: obligatorios marcados y cada error debajo de su campo. */
+.req { color: #c62828; font-weight: 700; }
+.req-note { margin: -4px 0 8px; font-size: 12.5px; }
+.field-error { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; color: #c62828; font-size: 13px; font-weight: 600; }
+.field-warn { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; color: #92400e; background: var(--warn-soft); border-radius: 8px; padding: 6px 10px; font-size: 13px; font-weight: 600; }
+.field-warn svg { width: 15px; height: 15px; flex: none; }
+input[aria-invalid="true"] { border-color: #c62828 !important; box-shadow: 0 0 0 3px rgba(198, 40, 40, 0.12); }
+
+/* Celular: el resumen de la reserva queda fijo abajo solo con un auto elegido, y el botón "Nueva reserva"
+   es un círculo (con su nombre para lectores de pantalla) para no tapar el contenido. */
+@media (max-width: 800px) {
+  .qr-total:not(.ready) { position: static; box-shadow: none; }
+  .qr-total:not(.ready) .btn.link { display: none; }
+  .fab { width: 58px; min-height: 58px; padding: 0; justify-content: center; }
+  .fab span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .fab svg { width: 28px; height: 28px; }
+  .view { padding-bottom: 170px; }
+}
+
+/* Pedido para confirmar: tres botones (Confirmar, Ver detalle, WhatsApp); si no entran, bajan de renglón. */
+.trip.pend .trip-actions { flex-wrap: wrap; }
+.trip.pend .trip-actions .btn { flex: 1 1 auto; }

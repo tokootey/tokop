@@ -167,6 +167,27 @@ function operationsRoutes(db) {
     res.json(availableVehicles(db, { category_id: r.category_id, pickup_at: r.pickup_at, return_at: r.return_at, exclude_reservation_id: r.id }));
   });
 
+  /**
+   * Un auto que sale de circulación (taller) con reservas por delante: se le saca a cada reserva
+   * y se le asigna otro libre de la misma categoría, si hay. Las que no consiguen auto quedan sin asignar.
+   */
+  router.post('/vehicles/:id/release', (req, res) => {
+    const vehicleId = Number(req.params.id);
+    const ids = (Array.isArray(req.body.reservation_ids) ? req.body.reservation_ids : []).map(Number);
+    const out = [];
+    for (const id of ids) {
+      const r = R.getReservation(db, id);
+      if (!r || r.vehicle_id !== vehicleId || !['pendiente', 'confirmada'].includes(r.status)) continue;
+      R.assignVehicle(db, r.id, null, req.user.id);
+      const other = availableVehicles(db, { category_id: r.category_id, pickup_at: r.pickup_at, return_at: r.return_at, exclude_reservation_id: r.id }).find(
+        (v) => v.id !== vehicleId,
+      );
+      if (other) R.assignVehicle(db, r.id, other.id, req.user.id);
+      out.push({ id: r.id, code: r.code, plate: other ? other.plate : null });
+    }
+    res.json(out);
+  });
+
   router.get('/available-vehicles', (req, res) => {
     const pickup_at = normDateTime(req.query.pickup_at);
     const return_at = normDateTime(req.query.return_at);
@@ -209,7 +230,9 @@ function operationsRoutes(db) {
     const total = fleet.reduce((a, f) => a + f.n, 0);
     const operational = total - (byStatus.mantenimiento || 0) - (byStatus.fuera_servicio || 0);
     // total y paid: la pantalla Hoy muestra cuánto debe cada cliente.
-    const baseSelect = `SELECT r.id, r.code, r.status, r.source, r.pickup_at, r.return_at, r.total, c.full_name AS customer_name, c.phone AS customer_phone,
+    // notes y la licencia: antes de confirmar un pedido se muestran sus notas y lo que falta.
+    const baseSelect = `SELECT r.id, r.code, r.status, r.source, r.pickup_at, r.return_at, r.total, r.notes, c.full_name AS customer_name, c.phone AS customer_phone,
+        c.license_number AS customer_license,
         cat.code AS category_code, cat.name AS category_name, v.plate AS vehicle_plate, v.brand AS vehicle_brand, v.model AS vehicle_model,
         ${placeSql('deliver', 'pb')} AS pickup_branch_name, ${placeSql('return', 'rb')} AS return_branch_name,
         (SELECT COALESCE(SUM(CASE WHEN p.kind = 'pago' THEN p.amount WHEN p.kind = 'devolucion' THEN -p.amount ELSE 0 END), 0) FROM payments p WHERE p.reservation_id = r.id) AS paid

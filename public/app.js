@@ -17,6 +17,13 @@ const locale = () => state.settings.locale || 'es-AR';
 const taxName = () => state.settings.tax_name || 'IVA';
 const taxIdLabel = () => state.settings.tax_id_label || 'CUIT';
 const num = (n) => Number(n).toLocaleString(locale());
+/** "1 reserva" / "3 reservas": en vez de "reserva(s)". */
+const plural = (n, one, many) => `${num(n)} ${Number(n) === 1 ? one : many}`;
+// WhatsApp: vacío o un número de 8 a 15 dígitos (con +, espacios, guiones o paréntesis).
+const validPhone = (s) => !s || (/^[+\d\s().-]+$/.test(s) && String(s).replace(/\D/g, '').length >= 8 && String(s).replace(/\D/g, '').length <= 15);
+const PHONE_ERROR = 'Tiene que ser un número con código de país, por ejemplo +54 9 2901 555123.';
+// Una fecha que ya pasó (con 5 minutos de margen): se avisa antes de guardar.
+const isPast = (d) => d < new Date(Date.now() - 5 * 60000);
 const money = (n) => {
   const cur = state.settings.currency || 'ARS';
   try {
@@ -27,6 +34,9 @@ const money = (n) => {
 };
 // Las fechas también se escapan: se muestran dentro de HTML.
 const fmtDT = (s) => (s ? esc(`${String(s).slice(8, 10)}/${String(s).slice(5, 7)}/${String(s).slice(0, 4)} ${String(s).slice(11, 16)}`) : '');
+// Horas que guarda la base por su cuenta (CURRENT_TIMESTAMP): vienen en hora universal (UTC);
+// se muestran en la hora de la compu o el celular de quien mira, que es la de la agencia.
+const stampLocal = (s) => (s ? localISO(new Date(/[zZ]$|[+-]\d\d:?\d\d$/.test(s) ? s : `${String(s).replace(' ', 'T')}Z`)) : '');
 const fmtD = (s) => (s ? esc(`${String(s).slice(8, 10)}/${String(s).slice(5, 7)}/${String(s).slice(0, 4)}`) : '');
 const pad = (n) => String(n).padStart(2, '0');
 const localISO = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -41,7 +51,7 @@ const STATUS_LABEL = {
   no_show: 'No show',
   disponible: 'Disponible',
   alquilado: 'Alquilado',
-  mantenimiento: 'Mantenimiento',
+  mantenimiento: 'En el taller',
   fuera_servicio: 'Fuera de servicio',
   procesada: 'Procesada',
   duplicada: 'Duplicada',
@@ -138,8 +148,8 @@ function openModal(title, html, onSubmit, { wide = false } = {}) {
       const btn = form.querySelector('[type=submit]');
       if (btn) btn.disabled = true;
       try {
-        await onSubmit(formData(form), form);
-        closeModal();
+        // false = el usuario se arrepintió en una confirmación: la ventana queda abierta con lo cargado.
+        if ((await onSubmit(formData(form), form)) !== false) closeModal();
       } catch (e) {
         toast(e.message, true);
       } finally {
@@ -405,7 +415,8 @@ const on = (pattern, handler, navKey) => routes.push({ pattern, handler, navKey 
 
 // Menú corto: "Ajustes" agrupa varias pantallas, que se eligen con pestañas arriba. El taller se maneja desde cada auto.
 // Sección del menú que queda marcada (Ajustes, Reservas y Clientes están en "Más").
-const NAV_MENU = { ajustes: 'mas', reservas: 'mas', clientes: 'mas', completa: 'mas' };
+// detalle: una reserva se abre desde Hoy, el Calendario o Más; el menú deja marcada la sección de la que venías.
+const NAV_MENU = { ajustes: 'mas', reservas: 'mas', clientes: 'mas', completa: 'mas', detalle: null };
 const NAV_GROUP = { tarifas: 'ajustes', cotizador: 'ajustes', config: 'ajustes', usuarios: 'ajustes', importar: 'ajustes', asistente: 'ajustes' };
 const SUBNAV = {
   ajustes: [
@@ -435,8 +446,9 @@ async function route() {
     const m = hash.match(r.pattern);
     if (m) {
       const group = NAV_GROUP[r.navKey];
-      const menu = NAV_MENU[group || r.navKey] || group || r.navKey;
-      $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === menu));
+      const key = group || r.navKey;
+      const menu = key in NAV_MENU ? NAV_MENU[key] : group || r.navKey;
+      if (menu !== null) $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === menu));
       $('#fab').classList.toggle('hidden', ['nueva', 'completa'].includes(r.navKey));
       renderSubnav(group, r.navKey);
       closeModal(); // un cartel abierto no queda encima de otra pantalla
@@ -511,7 +523,7 @@ const ICON = {
 /** Enlace para escribirle por WhatsApp al cliente (el número con código de país, sin signos). */
 const waLink = (phone) => {
   const n = String(phone || '').replace(/\D/g, '');
-  return n ? `<a class="btn wa" href="https://wa.me/${n}" target="_blank" rel="noopener" aria-label="Escribirle por WhatsApp">${WA_ICON}</a>` : '';
+  return n ? `<a class="btn wa" href="https://wa.me/${n}" target="_blank" rel="noopener" aria-label="Escribirle por WhatsApp">${WA_ICON}<span>WhatsApp</span></a>` : '';
 };
 
 on(/^\/panel$/, async (view) => {
@@ -551,12 +563,17 @@ on(/^\/panel$/, async (view) => {
     </div>`;
   };
   // Pedidos sin confirmar (del link de reservas, del cotizador o cargados como pendientes).
+  // Lo que conviene saber antes de confirmar: falta auto, falta licencia, o la reserva tiene notas.
+  const pendAlerts = (r) =>
+    [!r.vehicle_plate && 'Sin auto asignado', !r.customer_license && 'Falta la licencia del cliente', r.notes && 'Tiene notas'].filter(Boolean);
+  // El lugar de retiro (no dónde se tomó la reserva: "Mostrador" se leía como lugar de entrega).
   const pend = (r) => `<div class="trip pend">
       <div class="trip-top" data-href="#/reservas/${r.id}">
-        ${who(r, `<small>${esc(r.category_name)} · ${esc(STATUS_LABEL[r.source] || r.source)}</small><small>${dayName(r.pickup_at)} ${fmtDT(r.pickup_at).slice(11)} → ${dayName(r.return_at)}</small>`)}
+        ${who(r, `<small>${esc(r.category_name)}${r.pickup_branch_name ? ` · ${L('retira en', 'pick-up at')} ${esc(r.pickup_branch_name)}` : ''}${sourceBadge(r.source)}</small><small>${dayName(r.pickup_at)} ${fmtDT(r.pickup_at).slice(11)} → ${dayName(r.return_at)}</small>`)}
         <span class="pill">${money(r.total)}</span>
       </div>
-      <div class="trip-actions"><button class="btn primary" type="button" data-confirm="${r.id}">${ICON.check}Confirmar</button>${waLink(r.customer_phone)}</div>
+      ${pendAlerts(r).length ? `<p class="pend-alerts">${ICON.alert}${pendAlerts(r).map(esc).join(' · ')}</p>` : ''}
+      <div class="trip-actions"><button class="btn primary" type="button" data-confirm="${r.id}">${ICON.check}Confirmar</button><a class="btn" href="#/reservas/${r.id}">Ver detalle</a>${waLink(r.customer_phone)}</div>
     </div>`;
   const column = (title, icon, color, rows, kind, empty) => `<div class="hoy-col">
       <h2><svg viewBox="0 0 24 24" stroke="${color}" aria-hidden="true"><path d="${icon}"/></svg>${title}${rows.length ? ` <span class="count">${rows.length}</span>` : ''}</h2>
@@ -572,21 +589,21 @@ on(/^\/panel$/, async (view) => {
   view.innerHTML = `
     <div class="hoy-head">
       <div><div class="date">${esc(now.toLocaleDateString(L('es-AR', 'en-US'), { weekday: 'long', day: 'numeric', month: 'long' }))}</div><h1>${hello}, ${esc(first)}</h1>
-        <p class="hello">${out.length + back.length ? L(`Hoy hay ${out.length + back.length} movimiento(s) de autos.`, `${out.length + back.length} car movement(s) today.`) : L('Día tranquilo: hoy no se mueve ningún auto.', 'Quiet day: no cars moving today.')}</p></div>
+        <p class="hello">${out.length + back.length ? L(`Hoy hay ${plural(out.length + back.length, 'movimiento', 'movimientos')} de autos.`, `${plural(out.length + back.length, 'car movement', 'car movements')} today.`) : L('Día tranquilo: hoy no se mueve ningún auto.', 'Quiet day: no cars moving today.')}</p></div>
       <svg class="hoy-art" viewBox="0 0 260 120" preserveAspectRatio="xMaxYMax meet" aria-hidden="true"><path d="M10 110 C 80 110, 90 60, 150 60 S 220 20, 250 14"/><circle class="pin" cx="250" cy="14" r="6"/><g transform="translate(132 40)"><path class="car-ic" d="M0 12a4 4 0 0 1 4-4h2l5-7h12l6 7h1a4 4 0 0 1 4 4v6H0z" style="stroke:none"/><circle cx="8" cy="18" r="4" fill="#0f1a2e" style="stroke:none"/><circle cx="26" cy="18" r="4" fill="#0f1a2e" style="stroke:none"/></g></svg>
     </div>
     <div class="hoy-counts">
-      <a href="#/flota"><i class="ic free" aria-hidden="true">${ICON.car}</i><b>${d.fleet.disponible || 0}</b><span>autos libres</span></a>
-      <a href="#/flota"><i class="ic out" aria-hidden="true">${ICON.road}</i><b>${d.fleet.alquilado || 0}</b><span>alquilados</span></a>
+      <a href="#/flota?estado=disponible"><i class="ic free" aria-hidden="true">${ICON.car}</i><b>${d.fleet.disponible || 0}</b><span>autos libres</span></a>
+      <a href="#/flota?estado=alquilado"><i class="ic out" aria-hidden="true">${ICON.road}</i><b>${d.fleet.alquilado || 0}</b><span>alquilados</span></a>
       <a href="#/flota?estado=mantenimiento"><i class="ic shop" aria-hidden="true">${ICON.wrench}</i><b>${d.fleet.mantenimiento || 0}</b><span>en el taller</span></a>
     </div>
-    ${d.quote_errors ? `<div class="notice warn">Hay <b>${d.quote_errors}</b> solicitud(es) del cotizador o del formulario web con error. <a href="#/cotizador">Revisar bandeja</a></div>` : ''}
+    ${d.quote_errors ? `<div class="notice warn">Hay <b>${plural(d.quote_errors, 'solicitud', 'solicitudes')}</b> del cotizador o del formulario web con error. <a href="#/cotizador">Revisar bandeja</a></div>` : ''}
     ${d.pending.length ? `<div class="hoy-col"><h2>Para confirmar <span class="count">${d.pending_confirmation}</span></h2><div class="hoy-pending">${d.pending.map(pend).join('')}</div></div>` : ''}
     <div class="hoy-cols">
       ${column('Salen hoy', 'M5 12h14M13 6l6 6-6 6', 'var(--primary)', out, 'out', 'Hoy no sale ningún auto.')}
       ${column('Vuelven hoy', 'M19 12H5M11 6l-6 6 6 6', '#c2410c', back, 'back', 'Hoy no vuelve ningún auto.')}
     </div>
-    <p class="hoy-next">Mañana: ${tomorrow.pickups} sale(n), ${tomorrow.returns} vuelve(n). <a href="#/planning">Ver calendario</a></p>
+    <p class="hoy-next">Mañana: ${tomorrow.pickups === 1 ? 'sale 1 auto' : `salen ${tomorrow.pickups} autos`}, ${tomorrow.returns === 1 ? 'vuelve 1' : `vuelven ${tomorrow.returns}`}. <a href="#/planning">Ver calendario</a></p>
     ${/* Lo del día va primero; los primeros pasos de una empresa nueva, abajo. */ setupCard(d.setup)}
     ${
       d.alerts.documents.length
@@ -598,16 +615,29 @@ on(/^\/panel$/, async (view) => {
             .join('')}</div></div>`
         : ''
     }`;
-  // Al confirmar se abre el voucher, listo para mandarlo por WhatsApp.
+  // Antes de confirmar se ve lo importante (auto, notas, lo que falta); al confirmar se abre el voucher.
   $$('[data-confirm]', view).forEach((b) =>
-    b.addEventListener('click', async () => {
-      b.disabled = true;
-      try {
-        await run(() => POST(`/reservations/${b.dataset.confirm}/status`, { status: 'confirmada' }), 'Reserva confirmada');
-        location.hash = `#/reservas/${b.dataset.confirm}?accion=voucher`;
-      } catch {
-        b.disabled = false;
-      }
+    b.addEventListener('click', () => {
+      const r = d.pending.find((x) => x.id === Number(b.dataset.confirm));
+      const alerts = pendAlerts(r).filter((a) => a !== 'Tiene notas');
+      openModal(
+        `Confirmar ${r.code}`,
+        `<dl class="confirm-facts">
+          <div><dt>Cliente</dt><dd>${esc(r.customer_name)}</dd></div>
+          <div><dt>Retira</dt><dd>${fmtDT(r.pickup_at)}${r.pickup_branch_name ? ` · ${esc(r.pickup_branch_name)}` : ''}</dd></div>
+          <div><dt>Devuelve</dt><dd>${fmtDT(r.return_at)}</dd></div>
+          <div><dt>Auto</dt><dd>${r.vehicle_plate ? `<span class="plate">${esc(r.vehicle_plate)}</span> ${esc([r.vehicle_brand, r.vehicle_model].filter(Boolean).join(' '))}` : `<span class="warn-text">Sin auto asignado</span> · ${esc(r.category_name)}`}</dd></div>
+          <div><dt>Total</dt><dd>${money(r.total)}</dd></div>
+          ${r.notes ? `<div class="wide"><dt>Notas</dt><dd class="notes-box">${esc(r.notes)}</dd></div>` : ''}
+        </dl>
+        ${alerts.length ? `<div class="notice warn">${alerts.map(esc).join('. ')}. Podés confirmarla igual y completarlo antes de la entrega.</div>` : ''}
+        <form class="form"><div class="actions"><a class="btn" href="#/reservas/${r.id}" data-close>Abrir la reserva</a><button class="btn primary" type="submit">${ICON.check}Confirmar reserva</button></div></form>`,
+        async () => {
+          await POST(`/reservations/${r.id}/status`, { status: 'confirmada' });
+          toast('Reserva confirmada');
+          location.hash = `#/reservas/${r.id}?accion=voucher`;
+        },
+      );
     }),
   );
   if (!tourSeen()) showTour();
@@ -765,25 +795,35 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
   const pre = new URLSearchParams(query || '');
   let preVehicle = null;
   if (pre.get('vehiculo')) preVehicle = await GET(`/vehicles/${Number(pre.get('vehiculo'))}`).catch(() => null);
-  const dayAt10 = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(d || '') ? new Date(`${d}T10:00`) : null);
+  // Fecha sola (desde el Planning, a las 10) o fecha y hora (desde la reserva rápida, con "Más opciones").
+  const dayAt10 = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(d || '') ? new Date(`${d}T10:00`) : /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(d || '') ? new Date(d) : null);
   if (dayAt10(pre.get('desde')) && dayAt10(pre.get('hasta'))) {
     p0 = dayAt10(pre.get('desde'));
     r0 = dayAt10(pre.get('hasta'));
   }
   if (preVehicle) sel.category_id = preVehicle.category_id;
+  // Cliente escrito en la reserva rápida: se busca por su WhatsApp; si no está, se carga al guardar.
+  const preName = (pre.get('nombre') || '').trim();
+  const prePhone = (pre.get('tel') || '').trim();
+  let preCustomer = null;
+  if (prePhone.replace(/\D/g, '').length >= 6) {
+    const digits = prePhone.replace(/\D/g, '');
+    preCustomer = (await GET(`/customers?q=${encodeURIComponent(digits.slice(-6))}`).catch(() => [])).find((x) => String(x.phone || '').replace(/\D/g, '') === digits) || null;
+  }
   view.innerHTML = `
     <div class="page-head"><h1>Nueva reserva</h1></div>
     ${
       preVehicle
-        ? `<div class="card" style="border-color:var(--primary);margin-bottom:16px">Reserva para <b>${esc(preVehicle.plate)}</b> ${esc(preVehicle.brand || '')} ${esc(preVehicle.model || '')}, del ${fmtD(localISO(p0))} al ${fmtD(localISO(r0))}, elegida desde el Planning. Completá el cliente y guardá.</div>`
+        ? `<div class="card" style="border-color:var(--primary);margin-bottom:16px">Reserva para <b>${esc(preVehicle.plate)}</b> ${esc(preVehicle.brand || '')} ${esc(preVehicle.model || '')}, del ${fmtD(localISO(p0))} al ${fmtD(localISO(r0))}. Completá lo que falta y guardá.</div>`
         : ''
     }
     <form id="new-res" class="stack">
       <div class="card">
         <h2>1 · Fechas y lugares</h2>
         <div class="form-grid">
-          <label>Retiro<input type="datetime-local" name="pickup_at" value="${localISO(p0)}" required/></label>
-          <label>Devolución<input type="datetime-local" name="return_at" value="${localISO(r0)}" required/></label>
+          <label>Retiro <span class="req">*</span><input type="datetime-local" name="pickup_at" value="${localISO(p0)}" required/></label>
+          <label>Devolución <span class="req">*</span><input type="datetime-local" name="return_at" value="${localISO(r0)}" required/></label>
+          <p class="field-warn full hidden" id="nr-past">${ICON.alert}El retiro es en el pasado. Revisá la fecha antes de guardar.</p>
           <div class="full actions" id="durations"><small class="muted">Duración rápida:</small>${[1, 2, 3, 5, 7, 14]
             .map((n) => `<button type="button" class="btn small" data-days="${n}">${n === 7 ? '1 semana' : n === 14 ? '2 semanas' : `${n} día${n > 1 ? 's' : ''}`}</button>`)
             .join('')}</div>
@@ -846,7 +886,11 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
   const form = $('#new-res');
   const pb = form.pickup_branch_id;
   if (preVehicle && preVehicle.branch_id && branchOptions().some(([id]) => id === preVehicle.branch_id)) pb.value = preVehicle.branch_id;
+  if (pre.get('lugar') && [...pb.options].some((o) => o.value === pre.get('lugar'))) pb.value = pre.get('lugar');
   form.return_branch_id.value = pb.value;
+  const checkPast = () => $('#nr-past').classList.toggle('hidden', !(form.pickup_at.value && isPast(new Date(form.pickup_at.value))));
+  checkPast();
+  form.pickup_at.addEventListener('change', checkPast);
   // "Hotel" en retiro o devolución abre los datos del hotel; con hotel en el retiro, se elige de qué sucursal sale el auto.
   const syncHotel = () => {
     const deliver = pb.value === 'hotel';
@@ -903,7 +947,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       .map(
         (c) => `<div class="cat-card ${c.available ? '' : 'none'} ${sel.category_id === c.id ? 'selected' : ''}" data-cat="${c.id}">
           <div class="cat-name"><span class="cat-code">${esc(c.code)}</span>${esc(c.name)}</div>
-          <div class="muted">${c.available} disponible(s) · ${c.quote.days} día(s)</div>
+          <div class="muted">${plural(c.available, 'disponible', 'disponibles')} · ${plural(c.quote.days, 'día', 'días')}</div>
           <div class="price">${money(c.quote.total)} <small class="muted">total</small></div>
           <small class="muted">${money(c.quote.total / (c.quote.days || 1))} promedio por día</small>
           <small class="muted">Garantía ${money(c.quote.deposit)}</small></div>`,
@@ -980,15 +1024,26 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
     });
   };
   $('#cust-new').addEventListener('click', () => newCustomer($('#cust-q').value.trim()));
+  if (preCustomer) pickCustomer(preCustomer);
+  else if (preName) {
+    $('#cust-selected').classList.remove('muted');
+    $('#cust-selected').innerHTML = `Cliente nuevo: <b>${esc(preName)}</b>${prePhone ? ` · ${esc(prePhone)}` : ''} <span class="muted">(se carga al guardar)</span>`;
+  }
+  syncHotel();
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const status = e.submitter ? e.submitter.dataset.status : 'pendiente';
-    if (!sel.category_id) return toast('Elegí una categoría', true);
-    if (!sel.customer_id) return toast('Elegí o cargá un cliente', true);
+    // Todo lo que falta, junto, debajo de cada parte (no de a un aviso por vez).
+    const missing = [!sel.category_id && ['cats', 'Elegí una categoría.'], !sel.customer_id && !preName && ['cust-selected', 'Elegí o cargá un cliente.']].filter(Boolean);
+    $$('.field-error[data-for]', form).forEach((p) => p.remove());
+    for (const [id, msg] of missing) $(`#${id}`).insertAdjacentHTML('afterend', `<p class="field-error" data-for="${id}">${esc(msg)}</p>`);
+    if (missing.length) return $(`#${missing[0][0]}`).scrollIntoView({ block: 'center', behavior: 'smooth' });
     const f = params();
+    if (isPast(new Date(f.pickup_at)) && !(await confirmModal({ title: 'El retiro es en el pasado', text: `La reserva se retira el ${fmtDT(f.pickup_at)}, que ya pasó. ¿La guardás igual?`, ok: 'Guardar igual' }))) return;
     const c = quotes.find((x) => x.id === sel.category_id);
     if (c && !c.available && !(await confirmModal({ title: 'No hay autos libres en esa categoría', text: 'Si la guardás igual queda una sobreventa: vas a tener que conseguir un auto para esas fechas.', ok: 'Guardar igual' }))) return;
+    if (!sel.customer_id) sel.customer_id = (await run(() => POST('/customers', { full_name: preName, phone: prePhone }))).id;
     const body = {
       customer_id: sel.customer_id,
       category_id: sel.category_id,
@@ -1087,15 +1142,17 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
 
   view.innerHTML = `
     <form class="qr" id="qr" novalidate>
-      <div class="page-head"><h1>Nueva reserva</h1><a class="btn link" href="#/reservas/completa">Más opciones</a></div>
+      <div class="page-head"><h1>Nueva reserva</h1><a class="btn link" href="#/reservas/completa" data-more>Más opciones (adicionales, descuento, notas)</a></div>
+      <p class="muted req-note">Los campos con <span class="req">*</span> son obligatorios.</p>
       <section>
         <h2>¿Cuándo?</h2>
         <div class="qr-dates">
-          <label class="qr-field">Sale<input type="datetime-local" name="from" required></label>
-          <label class="qr-field">Vuelve<input type="datetime-local" name="to" required></label>
+          <label class="qr-field">Retiro <span class="req">*</span><input type="datetime-local" name="from" required></label>
+          <label class="qr-field">Devolución <span class="req">*</span><input type="datetime-local" name="to" required></label>
         </div>
+        <p class="field-warn hidden" id="qr-past">${ICON.alert}El retiro es en el pasado. Revisá la fecha antes de guardar.</p>
         <div class="chips">${QUICK.map(([n, label]) => `<button type="button" class="chip" data-days="${n}">${label}</button>`).join('')}</div>
-        <label class="qr-field" style="margin-top:8px">Lugar de entrega<select name="place">${branches.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('')}<option value="hotel">Hotel (se lo llevamos)</option></select></label>
+        <label class="qr-field" style="margin-top:8px">Lugar de retiro<select name="place">${branches.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('')}<option value="hotel">Hotel (se lo llevamos)</option></select></label>
         <div class="qr-hotel hidden" id="qr-hotel">
           ${
             hotelFee()
@@ -1114,15 +1171,18 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         </div>
       </section>
       <section>
-        <h2>¿Qué auto? <span class="muted" style="font-weight:400">(libres en esas fechas)</span></h2>
+        <h2>¿Qué auto? <span class="req">*</span> <span class="muted" style="font-weight:400">(libres en esas fechas)</span></h2>
         <div class="cars" id="qr-cars"><p class="muted">Cargando…</p></div>
+        <p class="field-error hidden" data-err="car"></p>
         ${insurances().length ? `<div style="margin-top:10px">${insuranceSelect('qr-field')}</div>` : ''}
       </section>
       <section>
         <h2>¿Quién lo alquila?</h2>
         <div style="display:flex;flex-direction:column;gap:8px">
-          <label class="qr-field">Nombre y apellido<input name="name" autocomplete="off" required></label>
-          <label class="qr-field">WhatsApp (con código de país)<input name="phone" type="tel" inputmode="tel" placeholder="+54 9 2901 555123"></label>
+          <label class="qr-field">Nombre y apellido <span class="req">*</span><input name="name" autocomplete="off" required aria-describedby="err-name"></label>
+          <p class="field-error hidden" data-err="name" id="err-name"></p>
+          <label class="qr-field">WhatsApp (con código de país)<input name="phone" type="tel" inputmode="tel" placeholder="+54 9 2901 555123" aria-describedby="err-phone"></label>
+          <p class="field-error hidden" data-err="phone" id="err-phone"></p>
         </div>
       </section>
       <div class="qr-total">
@@ -1137,17 +1197,41 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
     form.to.value = localISO(to);
     const days = Math.round((to - from) / 86400000);
     $$('.chip', form).forEach((c) => c.classList.toggle('on', Number(c.dataset.days) === days));
+    $('#qr-past', form).classList.toggle('hidden', !isPast(from));
   };
+  // Los errores aparecen todos juntos, cada uno debajo de su campo.
+  const showErr = (k, msg) => {
+    const p = $(`[data-err="${k}"]`, form);
+    p.textContent = msg || '';
+    p.classList.toggle('hidden', !msg);
+    const input = k === 'car' ? null : form[k];
+    if (input) input.setAttribute('aria-invalid', msg ? 'true' : 'false');
+  };
+  // "Más opciones" lleva lo ya cargado al formulario completo.
+  $('[data-more]', form).addEventListener('click', (e) => {
+    e.preventDefault();
+    const q = new URLSearchParams({ desde: localISO(from), hasta: localISO(to), lugar: form.place.value });
+    if (sel.vehicle) q.set('vehiculo', sel.vehicle);
+    if (form.name.value.trim()) q.set('nombre', form.name.value.trim());
+    if (form.phone.value.trim()) q.set('tel', form.phone.value.trim());
+    location.hash = `#/reservas/completa?${q}`;
+  });
   const days = () => Math.max(1, Math.round((to - from) / 86400000));
   const summary = () => {
     const c = cars.find((x) => x.id === sel.vehicle);
     $('#qr-what', form).textContent = c ? `${days()} ${days() === 1 ? L('día', 'day') : L('días', 'days')} · ${[c.brand, c.model].filter(Boolean).join(' ') || c.plate}` : 'Elegí un auto';
     const ins = form.insurance && insurances().find((x) => x.id === Number(form.insurance.value));
     $('#qr-sum', form).textContent = c ? money(c.quote.total + (sel.hotel ? hotelFee() : 0) + (ins ? insurancePrice(ins, days()) : 0)) : '';
+    // En el celular el resumen queda fijo abajo recién cuando hay auto elegido: antes ocupaba un tercio de la pantalla.
+    $('.qr-total', form).classList.toggle('ready', Boolean(c));
   };
   const paint = () => {
     const box = $('#qr-cars', form);
-    if (!cars.some((c) => c.id === sel.vehicle)) sel.vehicle = null;
+    if (sel.vehicle && !cars.some((c) => c.id === sel.vehicle)) {
+      // El auto elegido no está libre en las fechas nuevas: se avisa en vez de borrarlo en silencio.
+      sel.vehicle = null;
+      toast('El auto que habías elegido no está libre en esas fechas. Elegí otro.', true);
+    }
     box.innerHTML = cars.length
       ? cars
           .map(
@@ -1164,7 +1248,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   const load = async () => {
     if (!(to > from)) {
       cars = [];
-      $('#qr-cars', form).innerHTML = '<p class="error">La vuelta tiene que ser después de la salida.</p>';
+      $('#qr-cars', form).innerHTML = '<p class="error">La devolución tiene que ser después del retiro.</p>';
       return summary();
     }
     const q = `pickup_at=${encodeURIComponent(localISO(from))}&return_at=${encodeURIComponent(localISO(to))}`;
@@ -1183,11 +1267,15 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
     const c = e.target.closest('[data-car]');
     if (c) {
       sel.vehicle = Number(c.dataset.car);
+      showErr('car');
       paint();
     }
   });
   form.addEventListener('change', (e) => {
     if (e.target.name === 'insurance') return summary();
+    // El WhatsApp se revisa al salir del campo: así el voucher no se manda a un número mal cargado.
+    if (e.target.name === 'phone') return showErr('phone', validPhone(e.target.value.trim()) ? '' : PHONE_ERROR);
+    if (e.target.name === 'name') return showErr('name', e.target.value.trim() ? '' : 'Escribí el nombre y apellido del cliente.');
     // "Hotel" en el lugar de entrega abre el formulario del hotel ahí mismo.
     if (e.target.name === 'place') {
       sel.hotel = e.target.value === 'hotel';
@@ -1213,8 +1301,14 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
     const c = cars.find((x) => x.id === sel.vehicle);
     const name = form.name.value.trim();
     const phone = form.phone.value.trim();
-    if (!c) return toast('Elegí un auto', true);
-    if (!name) return toast('Escribí el nombre del cliente', true);
+    showErr('car', c ? '' : 'Elegí un auto de la lista.');
+    showErr('name', name ? '' : 'Escribí el nombre y apellido del cliente.');
+    showErr('phone', validPhone(phone) ? '' : PHONE_ERROR);
+    if (!c || !name || !validPhone(phone)) {
+      $('.field-error:not(.hidden)', form)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
+    if (isPast(from) && !(await confirmModal({ title: 'El retiro es en el pasado', text: `La reserva se retira el ${fmtDT(localISO(from))}, que ya pasó. ¿La guardás igual (por ejemplo, para cargar un alquiler que ya empezó)?`, ok: 'Guardar igual' }))) return;
     // Si ya existe un cliente con ese WhatsApp, se usa ese (así no se duplica).
     const digits = phone.replace(/\D/g, '');
     let customer = null;
@@ -1240,7 +1334,9 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
       });
     }, 'Reserva guardada');
     // Hotel sin datos: primero la reserva, donde está el botón para pedírselos al cliente.
-    location.hash = r.hotel_missing ? `#/reservas/${r.id}` : send ? `#/reservas/${r.id}?accion=voucher` : '#/panel';
+    // Sin mandar: al calendario, con la reserva nueva resaltada (el calendario arranca el día antes de la salida).
+    if (!send) planningFrom = addDays(new Date(from.getFullYear(), from.getMonth(), from.getDate()), -1);
+    location.hash = r.hotel_missing ? `#/reservas/${r.id}` : send ? `#/reservas/${r.id}?accion=voucher` : `#/planning?r=${r.id}`;
   });
   set();
   await load();
@@ -1305,7 +1401,7 @@ on(/^\/mas$/, async (view) => {
 function breakdownHtml(q) {
   const row = (l, v, cls = '') => `<tr class="${cls}"><td>${l}</td><td class="right">${v}</td></tr>`;
   return `<table class="breakdown"><tbody>
-    ${row(`${esc(q.category ? q.category.name : '')} · ${q.days} día(s) × ${money(q.per_day)}`, money(q.base))}
+    ${row(`${esc(q.category ? q.category.name : '')} · ${plural(q.days, 'día', 'días')} × ${money(q.per_day)}`, money(q.base))}
     ${q.season_extra ? row('Recargo de temporada', money(q.season_extra)) : ''}
     ${(q.extras || []).map((x) => row(`${esc(x.name)}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount))).join('')}
     ${q.one_way_fee ? row('Devolución en otra sucursal', money(q.one_way_fee)) : ''}
@@ -1436,7 +1532,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             ? `<div class="table-scroll"><table class="mini" style="margin-top:12px"><thead><tr><th>Fecha</th><th>Tipo</th><th>Medio</th><th class="right">Importe</th></tr></thead><tbody>${r.payments
                 .map(
                   (p) =>
-                    `<tr><td class="nowrap">${fmtDT(String(p.created_at).replace(' ', 'T')).slice(0, 5)} ${esc(String(p.created_at).slice(11, 16))}</td><td>${esc(PAYMENT_KINDS[p.kind] || p.kind)}</td><td>${esc(p.method || '')} ${p.reference ? `<small class="muted">${esc(p.reference)}</small>` : ''}</td><td class="right">${money(p.amount)}</td></tr>`,
+                    `<tr><td class="nowrap">${fmtDT(stampLocal(p.created_at)).slice(0, 5)} ${esc(stampLocal(p.created_at).slice(11, 16))}</td><td>${esc(PAYMENT_KINDS[p.kind] || p.kind)}</td><td>${esc(p.method || '')} ${p.reference ? `<small class="muted">${esc(p.reference)}</small>` : ''}</td><td class="right">${money(p.amount)}</td></tr>`,
                 )
                 .join('')}</tbody></table></div>`
             : ''
@@ -1448,7 +1544,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           .slice()
           .reverse()
           .map(
-            (l) => `<li><div class="t-head"><b>${esc(LOG_LABEL[l.action] || l.action)}</b><small>${fmtDT(String(l.at).replace(' ', 'T'))} · ${esc(l.user_name || 'sistema')}</small></div>${
+            (l) => `<li><div class="t-head"><b>${esc(LOG_LABEL[l.action] || l.action)}</b><small>${fmtDT(stampLocal(l.at))} · ${esc(l.user_name || 'sistema')}</small></div>${
               l.detail ? `<div class="t-detail">${esc(logDetail(l.detail))}</div>` : ''
             }</li>`,
           )
@@ -1690,7 +1786,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
     history.replaceState(null, '', `#/reservas/${r.id}`);
     if (accion === 'pay' ? r.balance.pending > 0 : $(`[data-act="${accion}"]`, view)) handlers[accion]();
   }
-}, 'reservas');
+}, 'detalle');
 
 /* ---------- Voucher de la reserva (PDF, WhatsApp y email) ---------- */
 /** Política de devolución de la empresa, en una frase (va en el voucher y en el contrato). */
@@ -1894,7 +1990,7 @@ function invoicesCardHtml(r) {
         <dt>${i.provider === 'arca' ? 'CAE' : 'Track ID'}</dt><dd>${esc(i.auth_code || '—')}${i.auth_due ? ` <small class="muted">vence ${fmtD(i.auth_due)}</small>` : ''}</dd>
         <dt>Cliente</dt><dd>${esc(i.customer_name)} ${i.customer_doc ? `<small class="muted">${esc(i.customer_doc)}</small>` : ''}</dd>
         <dt>Importe</dt><dd>Neto ${money(i.net)} · ${esc(taxName())} ${money(i.tax)} · <b>Total ${money(i.total)}</b></dd>
-        <dt>Fecha</dt><dd>${fmtD(String(i.created_at).replace(' ', 'T'))}</dd>
+        <dt>Fecha</dt><dd>${fmtD(stampLocal(i.created_at))}</dd>
       </dl>`,
     )
     .join('')}</div>`;
@@ -1995,7 +2091,7 @@ function wireFiles(view, r, reload) {
       openModal(
         `${STAGE_LABEL[f.stage]} · ${f.name}`,
         `${f.mime.startsWith('image/') ? `<img src="${url}" alt="${esc(f.name)}" style="width:100%;border-radius:8px"/>` : '<p>Documento PDF.</p>'}
-         <p class="muted">Subido el ${esc(fmtDT(f.created_at.replace(' ', 'T')))}${f.user_name ? ` por ${esc(f.user_name)}` : ''}.</p>
+         <p class="muted">Subido el ${fmtDT(stampLocal(f.created_at))}${f.user_name ? ` por ${esc(f.user_name)}` : ''}.</p>
          <div class="actions"><a class="btn" href="${url}" target="_blank" rel="noopener">Abrir en otra pestaña</a>
          <button class="btn danger" type="button" id="file-del">Borrar</button></div>`,
       );
@@ -2083,7 +2179,7 @@ function printContract(r) {
   const q = r.pricing || {};
   const line = (label, value) => `<tr><th>${label}</th><td>${value || '<span class="blank"></span>'}</td></tr>`;
   const priceRows = [
-    q.base !== undefined ? [`Alquiler ${esc(r.days)} día(s)${q.per_day ? ` × ${money(q.per_day)}` : ''}`, money(q.base)] : null,
+    q.base !== undefined ? [`Alquiler ${plural(r.days, 'día', 'días')}${q.per_day ? ` × ${money(q.per_day)}` : ''}`, money(q.base)] : null,
     q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
     ...(q.extras || []).map((x) => [esc(x.name) + (x.quantity > 1 ? ` ×${esc(x.quantity)}` : ''), money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
@@ -2221,7 +2317,8 @@ function printContract(r) {
    Planning (grilla de ocupación, estilo Rently)
    ============================================================ */
 let planningFrom = null;
-on(/^\/planning$/, async (view) => {
+// ?r=ID: la reserva recién creada desde el calendario se ve resaltada al volver.
+on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
   if (!planningFrom) {
     const t = new Date();
     planningFrom = new Date(t.getFullYear(), t.getMonth(), t.getDate() - 1);
@@ -2241,7 +2338,7 @@ on(/^\/planning$/, async (view) => {
     const l = Math.max(0, pos(r.pickup_at));
     const rr = Math.min(100, pos(r.return_at));
     if (rr <= 0 || l >= 100) return '';
-    return `<div class="pl-bar ${r.status}" style="left:${l}%;width:${Math.max(rr - l, 0.8)}%" data-href="#/reservas/${r.id}"
+    return `<div class="pl-bar ${r.status}${String(r.id) === highlight ? ' just-made' : ''}" style="left:${l}%;width:${Math.max(rr - l, 0.8)}%" data-href="#/reservas/${r.id}"
       title="${esc(r.code)} · ${esc(r.customer_name)} · ${fmtDT(r.pickup_at)} → ${fmtDT(r.return_at)}">${esc(r.customer_name)}</div>`;
   };
   const mbar = (m) => {
@@ -2249,7 +2346,7 @@ on(/^\/planning$/, async (view) => {
     const endD = m.end_date || localISO(addDays(planningFrom, days)).slice(0, 10);
     const rr = Math.min(100, pos(`${endD}T23:59`));
     if (rr <= 0 || l >= 100) return '';
-    return `<div class="pl-bar mant" style="left:${l}%;width:${rr - l}%" title="Mantenimiento: ${esc(m.kind || '')}">Taller</div>`;
+    return `<div class="pl-bar mant" style="left:${l}%;width:${rr - l}%" title="En el taller: ${esc(maintKind(m.kind || ''))}">En el taller</div>`;
   };
   const todayStr = localISO(new Date()).slice(0, 10);
   const dayCells = Array.from({ length: days }, (_, i) => {
@@ -2285,7 +2382,7 @@ on(/^\/planning$/, async (view) => {
       <div class="actions"><button class="btn" data-nav="-7">◀ Semana</button><button class="btn" data-nav="0">Hoy</button><button class="btn" data-nav="7">Semana ▶</button></div></div>
     <div class="legend" style="margin-bottom:10px">
       <span style="--c:#e0a100">Pendiente</span><span style="--c:#1f6feb">Confirmada</span><span style="--c:#1a9b5b">En curso</span>
-      <span style="--c:#8b94a6">Finalizada</span><span style="--c:#d1373a">Taller</span><span>· Tocá una barra para abrir la reserva · <b>Deslizá el dedo (o arrastrá con el mouse) sobre la fila de un auto para crear una reserva</b></span></div>
+      <span style="--c:#8b94a6">Finalizada</span><span style="--c:#d1373a">En el taller</span><span>· Tocá una barra para abrir la reserva · <b>Para reservar, tocá un día libre en la fila de un auto. Para elegir varios días, arrastrá con el mouse o mantené apretado el dedo y deslizá.</b></span></div>
     <div class="planning">
       <div class="pl-row head"><div class="pl-label"><small>Vehículo</small></div><div class="pl-days" style="grid-template-columns:repeat(${days},1fr)">${dayCells}</div></div>
       ${rows || '<p class="muted" style="padding:16px">No hay vehículos cargados.</p>'}
@@ -2299,6 +2396,7 @@ on(/^\/planning$/, async (view) => {
     }),
   );
   enableDragToBook($('.planning', view), p, days);
+  $('.just-made', view)?.scrollIntoView({ block: 'center', inline: 'center' });
 }, 'planning');
 
 /**
@@ -2335,18 +2433,38 @@ function enableDragToBook(container, p, days) {
     drag.el.textContent = drag.past ? 'No se puede reservar en el pasado' : drag.bad ? 'Ocupado en esas fechas' : `${n} día${n > 1 ? 's' : ''} · ${fmtD(drag.from)} → ${fmtD(drag.to)}`;
   };
 
+  const start = (track, pointerId, x) => {
+    const startDay = dayAt(track, x);
+    drag = { track, vehicleId: Number(track.dataset.vehicle), startDay, endDay: startDay, x0: x, moved: false, el: document.createElement('div') };
+    drag.el.className = 'pl-sel';
+    track.appendChild(drag.el);
+    try {
+      track.setPointerCapture(pointerId);
+    } catch {
+      // el dedo ya se levantó: no hay a quién capturar
+    }
+    paint();
+  };
+  // Con el dedo, deslizar mueve el calendario; para elegir días hay que mantener apretado medio segundo.
+  // Un toque corto en un día libre reserva ese día (con el mouse, un clic hace lo mismo).
+  let hold = null;
   container.addEventListener('pointerdown', (e) => {
     const track = e.target.closest('.pl-drag');
     if (!track || e.target.closest('.pl-bar') || (e.pointerType === 'mouse' && e.button !== 0)) return;
-    const startDay = dayAt(track, e.clientX);
-    drag = { track, vehicleId: Number(track.dataset.vehicle), startDay, endDay: startDay, x0: e.clientX, moved: false, el: document.createElement('div') };
-    drag.el.className = 'pl-sel';
-    track.appendChild(drag.el);
-    track.setPointerCapture(e.pointerId);
-    paint();
+    if (e.pointerType === 'mouse') return start(track, e.pointerId, e.clientX);
+    hold = { track, id: e.pointerId, x: e.clientX, y: e.clientY, timer: setTimeout(() => {
+      start(track, hold.id, hold.x);
+      drag.moved = true; // ya eligió: al soltar se reserva aunque no deslice
+      hold = null;
+      navigator.vibrate?.(15);
+    }, 450) };
   });
 
   container.addEventListener('pointermove', (e) => {
+    if (hold && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 10) {
+      clearTimeout(hold.timer); // se está moviendo el calendario
+      hold = null;
+    }
     if (!drag) return;
     if (Math.abs(e.clientX - drag.x0) > 6) drag.moved = true;
     const d = dayAt(drag.track, e.clientX);
@@ -2355,15 +2473,28 @@ function enableDragToBook(container, p, days) {
       paint();
     }
   });
+  // Mientras se eligen días con el dedo, el calendario no se mueve.
+  container.addEventListener('touchmove', (e) => drag && e.cancelable && e.preventDefault(), { passive: false });
 
+  const go = (d) => {
+    if (d.bad) return toast(d.past ? 'No se puede reservar en días que ya pasaron' : 'Ese auto ya está ocupado (o en taller) en esas fechas', true);
+    location.hash = `#/reservas/nueva?vehiculo=${d.vehicleId}&desde=${d.from.slice(0, 10)}&hasta=${d.to.slice(0, 10)}`;
+  };
   const finish = (e) => {
+    if (hold) {
+      // Toque corto: reserva de un día desde ese día.
+      clearTimeout(hold.timer);
+      const h = hold;
+      hold = null;
+      if (e.type === 'pointercancel') return;
+      start(h.track, h.id, h.x);
+    }
     if (!drag) return;
     const d = drag;
     drag = null;
     d.el.remove();
-    if (e.type === 'pointercancel' || !d.moved) return;
-    if (d.bad) return toast(d.past ? 'No se puede reservar en días que ya pasaron' : 'Ese auto ya está ocupado (o en taller) en esas fechas', true);
-    location.hash = `#/reservas/nueva?vehiculo=${d.vehicleId}&desde=${d.from.slice(0, 10)}&hasta=${d.to.slice(0, 10)}`;
+    if (e.type === 'pointercancel') return;
+    go(d);
   };
   container.addEventListener('pointerup', finish);
   container.addEventListener('pointercancel', finish);
@@ -2496,6 +2627,23 @@ const MAINT_KINDS = [
 ];
 const maintKind = (k) => (MAINT_KINDS.find(([v]) => v === k) || [k, k])[1];
 
+/** "hoy 10:00", "mañana 09:30" o "03/11 10:00": cuándo pasa algo, para leer de un vistazo. */
+const whenShort = (s) => {
+  const day = String(s).slice(0, 10);
+  const today = localISO(new Date()).slice(0, 10);
+  const label = day === today ? 'hoy' : day === localISO(addDays(new Date(), 1)).slice(0, 10) ? 'mañana' : day < today ? `el ${fmtD(s)} (atrasada)` : `el ${fmtD(s)}`;
+  return `${label} ${esc(String(s).slice(11, 16))}`;
+};
+// Tarjeta del auto: además del estado de ahora, qué le toca después (sale, vuelve) y qué se le hace en el taller.
+const nextMove = (v) => {
+  const lines = [];
+  if (v.status === 'mantenimiento' && v.shop_kind) lines.push(`${ICON.wrench}<span><b>${esc(maintKind(v.shop_kind))}</b> desde el ${fmtD(v.shop_since)}</span>`);
+  if (v.back_at) lines.push(`${ICON.in}<span>Vuelve <b>${whenShort(v.back_at)}</b></span>`);
+  if (v.next_out) lines.push(`${ICON.out}<span>Próxima salida <b>${whenShort(v.next_out)}</b></span>`);
+  const soon = v.next_out && v.next_out.slice(0, 10) <= localISO(new Date()).slice(0, 10);
+  return lines.length ? `<div class="vcard-next${soon ? ' soon' : ''}">${lines.map((l) => `<p>${l}</p>`).join('')}</div>` : '';
+};
+
 on(
   /^\/flota(?:\?estado=(\w+))?$/,
   async (view, estado) => {
@@ -2512,6 +2660,7 @@ on(
           ${badge(v.status)}
         </div>
         <div class="vcard-id"><span class="plate">${esc(v.plate)}</span><span class="muted">${esc(v.branch_name || '')}</span></div>
+        ${nextMove(v)}
         <dl class="vcard-facts">
           <div><dt>Km</dt><dd>${num(v.km || 0)}</dd></div>
           <div><dt>Combustible</dt><dd>${fuel(v.fuel) || '—'}</dd></div>
@@ -2520,7 +2669,7 @@ on(
         <div class="vcard-actions">
           <button class="btn pill small" type="button" data-hist>${ICON.list}Historial</button>
           <button class="btn pill small" type="button" data-edit>Editar</button>
-          ${v.status === 'alquilado' ? '' : `<button class="btn pill small${v.status === 'mantenimiento' ? ' warm' : ''}" type="button" data-shop>${ICON.wrench}${v.status === 'mantenimiento' ? 'Sacar del taller' : 'Taller'}</button>`}
+          ${v.status === 'alquilado' ? '' : `<button class="btn pill small${v.status === 'mantenimiento' ? ' warm' : ''}" type="button" data-shop>${ICON.wrench}${v.status === 'mantenimiento' ? 'Sacar del taller' : 'Mandar al taller'}</button>`}
           ${isAdmin() ? `<button class="btn icon danger" type="button" data-del aria-label="Borrar ${esc(v.plate)}" title="Borrar">${ICON.trash}</button>` : ''}
         </div>
       </article>`;
@@ -2613,8 +2762,28 @@ on(
               'Mandar al taller',
             ) + '<p class="muted">Mientras esté en el taller no se puede reservar ni entregar. Cuando vuelva, tocá <b>Sacar del taller</b>.</p>',
             async (d) => {
+              // Reservas que todavía no salieron y tenían este auto: avisar antes de sacarlo de circulación.
+              const ahead = (await GET(`/reservations?vehicle_id=${v.id}&status=pendiente,confirmada&from=${d.start_date}`)).sort((a, b) => a.pickup_at.localeCompare(b.pickup_at));
+              if (
+                ahead.length &&
+                !(await confirmModal({
+                  title: `${v.plate} tiene ${plural(ahead.length, 'reserva', 'reservas')} por delante`,
+                  text: `${ahead.map((r) => `${r.code} · ${r.customer_name} · retira el ${fmtD(r.pickup_at)}`).join(' — ')}. Si lo mandás al taller, a cada una se le asigna otro auto libre de la misma categoría; si no hay, queda sin auto para que la resuelvas.`,
+                  ok: 'Mandar y reasignar',
+                }))
+              )
+                return false;
               await POST('/maintenance', { ...d, vehicle_id: v.id, status: 'abierto' });
-              toast(`${v.plate} quedó en el taller`);
+              if (ahead.length) {
+                const moved = await POST(`/vehicles/${v.id}/release`, { reservation_ids: ahead.map((r) => r.id) });
+                const lost = moved.filter((m) => !m.plate);
+                toast(
+                  lost.length
+                    ? `${v.plate} quedó en el taller. ${plural(lost.length, 'reserva quedó', 'reservas quedaron')} sin auto: ${lost.map((m) => m.code).join(', ')}`
+                    : `${v.plate} quedó en el taller y sus reservas pasaron a ${moved.map((m) => m.plate).join(', ')}`,
+                  lost.length > 0,
+                );
+              } else toast(`${v.plate} quedó en el taller`);
               load();
             },
           );
@@ -3248,15 +3417,16 @@ on(/^\/usuarios$/, async (view) => {
 }, 'usuarios');
 
 /* ---------- Estadísticas: qué autos se piden, por categoría, seguros, rendimiento, daños y taller (administradores) ---------- */
+// Períodos cerrados (desde, hasta): por defecto el mes en curso, sin mezclar lo pasado con lo que viene.
+const ymd = (d) => localISO(d).slice(0, 10);
 const STATS_PERIODS = [
-  ['90', 'Últimos 90 días y próximos 30', () => [-89, 30]],
-  ['30', 'Últimos 30 días', () => [-29, 0]],
-  ['next', 'Próximos 30 días', () => [0, 30]],
-  ['year', 'Este año', () => {
-    const t = new Date();
-    return [-Math.round((t - new Date(t.getFullYear(), 0, 1)) / 86400000), 0];
-  }],
+  ['month', 'Este mes', (t) => [ymd(new Date(t.getFullYear(), t.getMonth(), 1)), ymd(new Date(t.getFullYear(), t.getMonth() + 1, 0))]],
+  ['prev', 'Mes pasado', (t) => [ymd(new Date(t.getFullYear(), t.getMonth() - 1, 1)), ymd(new Date(t.getFullYear(), t.getMonth(), 0))]],
+  ['next', 'Próximos 30 días', (t) => [ymd(t), ymd(addDays(t, 30))]],
+  ['year', 'Este año', (t) => [ymd(new Date(t.getFullYear(), 0, 1)), ymd(new Date(t.getFullYear(), 11, 31))]],
 ];
+// Importes grandes sin centavos: en las tarjetas se leen completos.
+const moneyRound = (n) => money(Math.round(n || 0)).replace(/[.,]00(?=\D*$)/, '');
 const SOURCE_TEXT = { manual: 'Mostrador', web: 'Por internet', cotizador: 'Cotizador', importado: 'Importadas' };
 
 on(
@@ -3276,22 +3446,21 @@ on(/^\/empresas\/(\d+)\/estadisticas$/, (view, id) => statsView(view, `/platform
 
 /** Pantalla de estadísticas: la de la agencia o, con owner, la de una agencia vista desde el Panel de Floty. */
 async function statsView(view, url, { owner = false } = {}) {
-  const key = state.statsPeriod || '90';
-  const [a, b] = STATS_PERIODS.find(([k]) => k === key)[2]();
-  const day = (n) => localISO(addDays(new Date(), n)).slice(0, 10);
-  const s = await GET(`${url}?from=${day(a)}&to=${day(b)}`);
+  const key = STATS_PERIODS.some(([k]) => k === state.statsPeriod) ? state.statsPeriod : 'month';
+  const [from, to] = STATS_PERIODS.find(([k]) => k === key)[2](new Date());
+  const s = await GET(`${url}?from=${from}&to=${to}`);
   // Desde el panel del dueño no hay pantallas de la agencia a las que saltar: el texto va sin enlace.
   const link = (href, text) => (owner ? text : `<a href="${href}">${text}</a>`);
   const t = s.totals;
   const pct = (n, d) => (d ? Math.round((n / d) * 100) : 0);
-  // Barras: una fila por ítem, el largo relativo al más alto.
-  const bars = (rows, value, label, sub) => {
-    const max = Math.max(1, ...rows.map(value));
+  // Barras: una fila por ítem, el largo relativo al más alto. Un resultado negativo (pierde plata) va en rojo.
+  const bars = (rows, value, label, sub, fmt = num) => {
+    const max = Math.max(1, ...rows.map((r) => Math.abs(value(r))));
     return rows.length
       ? `<div class="bars">${rows
           .map(
-            (r) => `<div class="bar-row"><div class="bar-label"><b>${label(r)}</b>${sub ? `<small>${sub(r)}</small>` : ''}</div>
-              <div class="bar"><i style="width:${Math.max(2, (value(r) / max) * 100)}%"></i></div><b class="bar-value">${value(r)}</b></div>`,
+            (r) => `<div class="bar-row${value(r) < 0 ? ' neg' : ''}"><div class="bar-label"><b>${label(r)}</b>${sub ? `<small>${sub(r)}</small>` : ''}</div>
+              <div class="bar"><i style="width:${Math.max(2, (Math.abs(value(r)) / max) * 100)}%"></i></div><b class="bar-value">${fmt(value(r))}</b></div>`,
           )
           .join('')}</div>`
       : '<p class="muted">Todavía no hay datos en este período.</p>';
@@ -3301,22 +3470,28 @@ async function statsView(view, url, { owner = false } = {}) {
     <div class="page-head">${owner ? `<a class="btn link" href="#/empresas">← ${L('Tus agencias', 'Your agencies')}</a>` : ''}<h1>${owner ? `Estadísticas · ${esc(s.company.name)}` : 'Estadísticas'}</h1></div>
     <div class="chips" role="group" aria-label="Período">${STATS_PERIODS.map(([k, l]) => `<button type="button" class="chip${k === key ? ' on' : ''}" data-period="${k}" aria-pressed="${k === key}">${l}</button>`).join('')}</div>
     <p class="muted stats-range">Reservas que se retiran entre el ${fmtD(s.from)} y el ${fmtD(s.to)}.</p>
+    <h2 class="stats-sub">Plata</h2>
     <div class="stat-tiles">
-      ${tile(t.requested, 'reservas pedidas')}
-      ${tile(t.rentals, 'alquileres (sin canceladas)')}
-      ${tile(money(t.revenue), 'ingresos', 'good')}
-      ${tile(money(t.avg_ticket), 'por alquiler, en promedio')}
-      ${tile(`${t.avg_days} días`, 'duración promedio')}
-      ${tile(`${pct(t.cancelled, t.requested)} %`, `canceladas o no show (${t.cancelled})`, pct(t.cancelled, t.requested) > 20 ? 'warn' : '')}
+      ${tile(moneyRound(t.collected), 'cobrado', 'good')}
+      ${tile(moneyRound(t.to_collect), `por cobrar${t.booked_ahead ? ` (${moneyRound(t.booked_ahead)} de reservas que todavía no salieron)` : ''}`)}
+      ${tile(moneyRound(t.shop_cost), 'gastos de taller')}
+      ${tile(moneyRound(t.net), 'resultado: cobrado menos taller', t.net < 0 ? 'bad' : 'good')}
+    </div>
+    <h2 class="stats-sub">Alquileres</h2>
+    <div class="stat-tiles">
+      ${tile(num(t.rentals), `alquileres (de ${plural(t.requested, 'reserva pedida', 'reservas pedidas')})`)}
+      ${tile(moneyRound(t.avg_ticket), 'por alquiler, en promedio')}
+      ${tile(plural(t.avg_days, 'día', 'días'), 'duración promedio')}
+      ${tile(`${pct(t.cancelled, t.requested)} %`, `canceladas o no show (${num(t.cancelled)})`, pct(t.cancelled, t.requested) > 20 ? 'warn' : '')}
     </div>
     <div class="stats-grid">
       <section class="card">
-        <h2>Qué categorías se piden más</h2>
-        ${bars(s.categories.filter((c) => c.requested), (c) => c.requested, (c) => `${esc(c.code)} · ${esc(c.name)}`, (c) => `${c.days} días alquilados · ${money(c.revenue)}${c.occupancy !== null ? ` · ocupación ${c.occupancy} %` : ''}`)}
+        <h2>Qué categorías dejan más</h2>
+        ${bars(s.categories.filter((c) => c.requested || c.shop_cost), (c) => c.net, (c) => `${esc(c.code)} · ${esc(c.name)}`, (c) => `${plural(c.requested, 'reserva', 'reservas')} · ${plural(c.days, 'día alquilado', 'días alquilados')} · cobrado ${moneyRound(c.collected)}${c.shop_cost ? ` · taller ${moneyRound(c.shop_cost)}` : ''}${c.occupancy !== null ? ` · ocupación ${c.occupancy} %` : ''}`, moneyRound)}
       </section>
       <section class="card">
-        <h2>Modelos más alquilados</h2>
-        ${bars(s.models, (m) => m.rentals, (m) => esc([m.brand, m.model].filter(Boolean).join(' ')), (m) => `${m.days} días · ${money(m.revenue)}`)}
+        <h2>Modelos que más facturan</h2>
+        ${bars(s.models, (m) => m.revenue, (m) => esc([m.brand, m.model].filter(Boolean).join(' ')), (m) => `${plural(m.rentals, 'alquiler', 'alquileres')} · ${plural(m.days, 'día', 'días')}`, moneyRound)}
       </section>
       <section class="card">
         <h2>Seguros que llevan</h2>
@@ -3335,8 +3510,8 @@ async function statsView(view, url, { owner = false } = {}) {
         <h2>Daños y accidentes</h2>
         ${
           s.damages.length
-            ? `<p><b>${s.damages.length}</b> devolución(es) con daños · <b>${money(s.damages.reduce((x, d) => x + d.amount, 0))}</b> cobrados</p>
-               <ul class="stats-list">${s.damages.map((d) => `<li>${link(`#/reservas/${d.id}`, esc(d.code))} ·<span class="plate">${esc(d.plate || '—')}</span> ${esc(d.vehicle)} · ${fmtD(d.at)} · ${d.amount ? money(d.amount) : `${d.noted} daño(s) anotado(s)`}</li>`).join('')}</ul>`
+            ? `<p><b>${plural(s.damages.length, 'devolución', 'devoluciones')}</b> con daños · <b>${money(s.damages.reduce((x, d) => x + d.amount, 0))}</b> cobrados</p>
+               <ul class="stats-list">${s.damages.map((d) => `<li>${link(`#/reservas/${d.id}`, esc(d.code))} ·<span class="plate">${esc(d.plate || '—')}</span> ${esc(d.vehicle)} · ${fmtD(d.at)} · ${d.amount ? money(d.amount) : plural(d.noted, 'daño anotado', 'daños anotados')}</li>`).join('')}</ul>`
             : '<p class="muted">Ninguna devolución con daños en este período. Los daños se cargan al recibir el auto.</p>'
         }
       </section>
@@ -3346,18 +3521,34 @@ async function statsView(view, url, { owner = false } = {}) {
       </section>
     </div>
     <section class="card" style="margin-top:16px">
-      <h2>Cada auto: cuánto rinde</h2>
-      <div class="table-scroll"><table class="mini"><thead><tr><th>Auto</th><th class="right">Alquileres</th><th class="right">Días</th><th class="right">Ocupación</th><th class="right">Ingresos</th><th class="right">Taller</th></tr></thead><tbody>
-      ${s.vehicles
-        .map(
-          (v) => `<tr><td><span class="plate">${esc(v.plate)}</span> ${esc([v.brand, v.model].filter(Boolean).join(' '))} <small class="muted">${esc(v.category_code)}</small></td>
-            <td class="right">${v.rentals}</td><td class="right">${v.days}</td>
-            <td class="right"><span class="occ ${v.occupancy >= 60 ? 'hi' : v.occupancy >= 25 ? 'mid' : 'lo'}">${v.occupancy} %</span></td>
-            <td class="right nowrap">${money(v.revenue)}</td><td class="right nowrap">${v.shop_cost ? money(v.shop_cost) : '—'}</td></tr>`,
-        )
-        .join('')}
-      </tbody></table></div>
+      <h2>Cada auto: cuánto deja</h2>
+      <p class="muted">Tocá el título de una columna para ordenar.</p>
+      <div class="table-scroll"><table class="mini sortable"><thead><tr>${VEHICLE_COLS.map(([k, l]) => `<th${k === 'plate' ? '' : ' class="right"'}><button type="button" class="th-sort" data-sort="${k}">${l}</button></th>`).join('')}</tr></thead><tbody data-rows></tbody></table></div>
     </section>`;
+  // La tabla por auto se ordena por cualquier columna (por defecto, por resultado: del que más deja al que menos).
+  let sort = ['net', -1];
+  const paintRows = () => {
+    const [k, dir] = sort;
+    const rows = [...s.vehicles].sort((x, y) => (k === 'plate' ? x.plate.localeCompare(y.plate) : x[k] - y[k]) * dir);
+    $('[data-rows]', view).innerHTML = rows
+      .map(
+        (v) => `<tr><td><span class="plate">${esc(v.plate)}</span> ${esc([v.brand, v.model].filter(Boolean).join(' '))} <small class="muted">${esc(v.category_code)}</small></td>
+          <td class="right">${num(v.rentals)}</td><td class="right">${num(v.days)}</td>
+          <td class="right"><span class="occ ${v.occupancy >= 60 ? 'hi' : v.occupancy >= 25 ? 'mid' : 'lo'}">${v.occupancy} %</span></td>
+          <td class="right nowrap">${moneyRound(v.collected)}</td><td class="right nowrap">${v.shop_cost ? moneyRound(v.shop_cost) : '—'}</td>
+          <td class="right nowrap"><b class="${v.net < 0 ? 'neg-text' : ''}">${moneyRound(v.net)}</b></td></tr>`,
+      )
+      .join('');
+    $$('[data-sort]', view).forEach((b) => b.closest('th').setAttribute('aria-sort', b.dataset.sort === k ? (dir > 0 ? 'ascending' : 'descending') : 'none'));
+  };
+  paintRows();
+  $$('[data-sort]', view).forEach((b) =>
+    b.addEventListener('click', () => {
+      const k = b.dataset.sort;
+      sort = [k, sort[0] === k ? -sort[1] : k === 'plate' ? 1 : -1];
+      paintRows();
+    }),
+  );
   $$('[data-period]', view).forEach((btn) =>
     btn.addEventListener('click', () => {
       state.statsPeriod = btn.dataset.period;
@@ -3365,6 +3556,15 @@ async function statsView(view, url, { owner = false } = {}) {
     }),
   );
 }
+const VEHICLE_COLS = [
+  ['plate', 'Auto'],
+  ['rentals', 'Alquileres'],
+  ['days', 'Días'],
+  ['occupancy', 'Ocupación'],
+  ['collected', 'Cobrado'],
+  ['shop_cost', 'Taller'],
+  ['net', 'Resultado'],
+];
 
 /* ---------- Panel de Floty: las agencias, sus direcciones y si todo funciona (sólo el dueño de Floty) ---------- */
 /** "hace 3 días", "hoy", "nunca": para leer de un vistazo cuándo pasó algo. */
@@ -3387,7 +3587,7 @@ function dueText(s) {
   if (n === null) return L('sin fecha', 'no date');
   if (n === 0) return L('vence hoy', 'due today');
   if (n > 0) return n === 1 ? L('vence mañana', 'due tomorrow') : L(`en ${n} días`, `in ${n} days`);
-  return L(`venció hace ${-n} día(s)`, `${-n} day(s) overdue`);
+  return L(`venció hace ${plural(-n, 'día', 'días')}`, `${plural(-n, 'day', 'days')} overdue`);
 }
 /** Tono de un vencimiento: rojo vencido, ámbar a 7 días, celeste a 30, gris lejos o sin fecha. */
 const dueTone = (s, soon = 30) => {
@@ -3804,7 +4004,7 @@ on(/^\/importar$/, async (view) => {
     const needsCategory = st.kind !== 'clientes';
     $('#imp-step2').innerHTML = `<div class="card" style="margin-top:16px">
       <h2>¿Qué es cada columna?</h2>
-      <p class="muted">${esc(st.fileName)} · ${a.total_rows} fila(s). Revisá lo que reconoció el sistema y corregí lo que haga falta.</p>
+      <p class="muted">${esc(st.fileName)} · ${plural(a.total_rows, 'fila', 'filas')}. Revisá lo que reconoció el sistema y corregí lo que haga falta.</p>
       <div class="form-grid">${a.fields
         .map((f) => `<label>${esc(f.label)}${f.required ? ' *' : ''}<select data-map="${f.key}">${opt(a.mapping[f.key])}</select></label>`)
         .join('')}</div>
@@ -3849,7 +4049,7 @@ on(/^\/importar$/, async (view) => {
       default_category_id: $('#imp-cat') ? $('#imp-cat').value || null : null,
       keep_extra: $('#imp-extra').checked,
     };
-    if (!dryRun && !(await confirmModal({ title: 'Importar los datos', text: `Se cargan ${st.analysis.total_rows} fila(s) de ${IMPORT_KINDS.find((k) => k.key === st.kind).label.slice(4)}. Revisá antes la prueba: lo que se importa no se deshace solo.`, ok: 'Importar', danger: true }))) return;
+    if (!dryRun && !(await confirmModal({ title: 'Importar los datos', text: `Se cargan ${plural(st.analysis.total_rows, 'fila', 'filas')} de ${IMPORT_KINDS.find((k) => k.key === st.kind).label.slice(4)}. Revisá antes la prueba: lo que se importa no se deshace solo.`, ok: 'Importar', danger: true }))) return;
     const buttons = $$('#imp-test, #imp-run', view);
     buttons.forEach((b) => (b.disabled = true));
     try {

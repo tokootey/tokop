@@ -154,7 +154,7 @@ function buildContractPdf(r) {
   y = ensure(section('Precio, pagos y garantía', y + 2), 50);
   const q = r.pricing || {};
   const priceRows = [
-    q.base !== undefined ? [`Alquiler ${r.days} día(s)${q.per_day ? ` × ${money(q.per_day)}` : ''}`, money(q.base)] : null,
+    q.base !== undefined ? [`Alquiler ${r.days} ${Number(r.days) === 1 ? 'día' : 'días'}${q.per_day ? ` × ${money(q.per_day)}` : ''}`, money(q.base)] : null,
     q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
     ...(q.extras || []).map((x) => [`${x.name}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,

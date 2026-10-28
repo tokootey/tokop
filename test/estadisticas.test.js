@@ -70,10 +70,23 @@ test('estadísticas: demanda por categoría y por auto, seguros y daños; solo a
   assert.equal((await call('POST', `/api/reservations/${r.data.id}/checkout`, { vehicle_id: v.id, out_km: v.km, out_fuel: 8, out_at: d(-3) })).status, 200);
   assert.equal((await call('POST', `/api/reservations/${r.data.id}/checkin`, { in_km: v.km + 100, in_fuel: 8, in_at: d(-1), damage_charge: 50000 })).status, 200);
 
-  const s = await call('GET', '/api/stats');
+  // Por defecto, el mes en curso.
+  const month = (await call('GET', '/api/stats')).data;
+  assert.equal(month.from.slice(8), '01');
+  assert.equal(month.from.slice(0, 7), month.to.slice(0, 7));
+
+  const s = await call('GET', `/api/stats?from=${d(-89).slice(0, 10)}&to=${d(30).slice(0, 10)}`);
   assert.equal(s.status, 200, JSON.stringify(s.data));
   assert.ok(s.data.totals.requested >= 5);
   assert.ok(s.data.totals.revenue > 0);
+  // Cobrado aparte de lo facturado; el resultado resta el taller.
+  const T = s.data.totals;
+  assert.ok(T.collected >= 0 && T.collected <= T.revenue);
+  assert.equal(T.to_collect, Math.max(0, T.revenue - T.collected));
+  assert.equal(T.net, T.collected - T.shop_cost);
+  assert.ok(T.shop_cost > 0, 'el service de ejemplo es un costo');
+  const nets = s.data.vehicles.map((x) => x.net);
+  assert.deepEqual(nets, [...nets].sort((a, b) => b - a), 'los autos van del que más deja al que menos');
   const c = s.data.categories.find((x) => x.code === 'C');
   assert.ok(c.requested >= 2 && c.fleet === 2 && c.occupancy >= 0);
   assert.ok(s.data.vehicles.some((x) => x.id === v.id && x.rentals >= 1));
