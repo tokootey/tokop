@@ -4,10 +4,13 @@ const path = require('node:path');
 const { openDb } = require('./db');
 const { createApp, ensureAdmin } = require('./app');
 const { openPlatform } = require('./platform');
+const { seedDemo } = require('./seed');
 
 const dbFile = process.env.DB_FILE || path.join(__dirname, '..', 'data', 'rentacar.db');
 const db = openDb(dbFile);
 const created = ensureAdmin(db);
+// DEMO_DATA=1: una base vacía arranca con datos de muestra y un usuario de prueba, para mostrarla a clientes.
+if (process.env.DEMO_DATA === '1') seedDemo(db, { email: process.env.DEMO_EMAIL, password: process.env.DEMO_PASSWORD });
 // La base de siempre es la empresa principal; las demás empresas se agregan desde Ajustes → Empresas.
 const platform = openPlatform(db, dbFile);
 const port = Number(process.env.PORT) || 3000;

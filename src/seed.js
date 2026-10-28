@@ -6,7 +6,8 @@
  */
 const { openDb } = require('./db');
 const { ensureAdmin } = require('./app');
-const { createReservation, checkout, addPayment } = require('./reservations');
+const { createReservation, checkout, checkin, addPayment } = require('./reservations');
+const { hashPassword } = require('./auth');
 const { fmtLocal } = require('./util');
 
 function seed(db) {
@@ -123,6 +124,75 @@ function seed(db) {
   return true;
 }
 
+/**
+ * Demo para mostrar a clientes (DEMO_DATA=1): los datos de ejemplo más un mes de movimiento
+ * (alquileres terminados y cobrados, autos en la calle y reservas por venir) y un usuario de prueba
+ * DEMO_EMAIL / DEMO_PASSWORD. Sólo carga la primera vez, sobre una base sin datos.
+ */
+function seedDemo(db, { email, password } = {}) {
+  if (email && password && !db.prepare('SELECT 1 FROM users WHERE email = ?').get(email.toLowerCase())) {
+    db.prepare("INSERT INTO users (name, email, password_hash, role, must_change_password) VALUES ('Demo', ?, ?, 'admin', 0)").run(email.toLowerCase(), hashPassword(password));
+  }
+  if (!seed(db)) return false;
+
+  const id = (sql, v) => db.prepare(sql).get(v).id;
+  const car = (plate) => db.prepare('SELECT id, category_id, km FROM vehicles WHERE plate = ?').get(plate);
+  const branch = (code) => id('SELECT id FROM branches WHERE code = ?', code);
+  const extra = (code) => ({ extra_id: id('SELECT id FROM extras WHERE code = ?', code), quantity: 1 });
+  const y = new Date().getFullYear();
+  const people = [
+    ['Sofía Martínez', '+54 9 11 6123-4567'], ['Diego López', '+54 9 351 612-3456'], ['Valentina Gómez', '+54 9 261 555-1290'],
+    ['Martín Díaz', '+54 9 11 4789-3321'], ['Camila Romero', '+54 9 2901 44-7788'], ['Thiago Sánchez', '+54 9 341 677-2210'],
+    ['Florencia Torres', '+54 9 11 3344-5566'], ['Joaquín Álvarez', '+54 9 223 512-8899'], ['Emma Ruiz', '+1 305 555 0142'],
+    ['Lucas Benítez', '+54 9 381 455-6677'], ['Paula Castro', '+56 9 8765 4321'], ['Mateo Herrera', '+54 9 11 2233-4455'],
+  ].map(([name, phone], i) =>
+    Number(db.prepare("INSERT INTO customers (full_name, doc_type, doc_number, phone, license_number, license_expiry) VALUES (?, 'DNI', ?, ?, ?, ?)")
+      .run(name, String(31000000 + i * 734211), phone, `LIC-${i + 100}`, `${y + 3}-06-30`).lastInsertRowid),
+  );
+  const at = (days, hour = 10) => {
+    const d = new Date();
+    d.setHours(hour, 0, 0, 0);
+    d.setDate(d.getDate() + days);
+    return fmtLocal(d);
+  };
+  let p = 0;
+  const book = (plate, from, to, status, opts = {}) => {
+    const v = car(plate);
+    const pickup = branch(opts.at || 'USH');
+    return createReservation(db, {
+      customer_id: people[p++ % people.length], category_id: v.category_id, vehicle_id: v.id, pickup_branch_id: pickup, return_branch_id: pickup,
+      pickup_at: at(from, opts.hour), return_at: at(to, opts.hour), status, extras: opts.extras || [], source: opts.source || 'manual',
+    });
+  };
+  // Terminados y cobrados (en orden, para que los km de cada auto vayan subiendo).
+  for (const [plate, from, to, opts] of [
+    ['AG444TU', -26, -21, { extras: [extra('FULL')] }], ['AF123BC', -25, -20, {}], ['AF654JK', -22, -15, { at: 'CEN', extras: [extra('GPS')] }],
+    ['AG222PQ', -20, -16, { at: 'CEN' }], ['AG789FG', -18, -14, { extras: [extra('SILLA')] }], ['AF333RS', -15, -9, { extras: [extra('MEDIO'), extra('CAD')] }],
+    ['AG987LM', -12, -8, {}], ['AF456DE', -10, -6, { at: 'CEN' }], ['AF111NO', -9, -3, { extras: [extra('FULL')] }],
+  ]) {
+    const r = book(plate, from, to, 'confirmada', opts);
+    const km = car(plate).km;
+    checkout(db, r.id, { out_km: km, out_fuel: 8, out_at: at(from, opts.hour) });
+    checkin(db, r.id, { in_km: km + 180 * (to - from), in_fuel: 8, in_at: at(to, opts.hour) });
+    addPayment(db, r.id, { amount: r.total, method: p % 3 ? 'tarjeta' : 'transferencia' });
+  }
+  // En la calle ahora.
+  const now = book('AG789FG', -1, 2, 'confirmada');
+  checkout(db, now.id, { out_km: car('AG789FG').km, out_fuel: 8, out_at: at(-1) });
+  addPayment(db, now.id, { amount: Math.round(now.total / 2), method: 'efectivo' });
+  // Por venir: confirmadas, con seña, y pedidos de la web para confirmar.
+  for (const [plate, from, to, status, opts] of [
+    ['AG444TU', 0, 7, 'confirmada', { hour: 12, extras: [extra('FULL')] }], ['AF123BC', 1, 4, 'confirmada', {}],
+    ['AG222PQ', 2, 6, 'confirmada', { at: 'CEN', extras: [extra('GPS')] }], ['AG987LM', 3, 8, 'confirmada', {}],
+    ['AF654JK', 6, 10, 'pendiente', { at: 'CEN', source: 'web' }], ['AF456DE', 8, 11, 'pendiente', { source: 'web' }],
+    ['AF333RS', 10, 13, 'confirmada', { extras: [extra('MEDIO')] }],
+  ]) {
+    const r = book(plate, from, to, status, opts);
+    if (status === 'confirmada') addPayment(db, r.id, { amount: Math.round(r.total * 0.3), method: 'transferencia', reference: 'Seña' });
+  }
+  return true;
+}
+
 if (require.main === module) {
   const db = openDb();
   const admin = ensureAdmin(db);
@@ -130,4 +200,4 @@ if (require.main === module) {
   if (admin) console.log(`Usuario inicial: ${admin.email} / ${admin.password}`);
 }
 
-module.exports = { seed };
+module.exports = { seed, seedDemo };
