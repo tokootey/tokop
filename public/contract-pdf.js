@@ -158,7 +158,7 @@ function buildContractPdf(r) {
     q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
     ...(q.extras || []).map((x) => [`${x.name}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
-    q.discount ? [`Descuento ${q.discount_pct}%`, `- ${money(q.discount)}`] : null,
+    q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct}%` : ''}`, `- ${money(q.discount)}`] : null,
     q.tax_rate ? [`${taxName()} ${q.tax_rate}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
     [{ content: 'Total del alquiler', styles: { fontStyle: 'bold' } }, { content: money(r.total), styles: { fontStyle: 'bold' } }],
     ...(c && c.charges ? c.charges.lines.map((l) => [l.concept, money(l.amount)]) : []),

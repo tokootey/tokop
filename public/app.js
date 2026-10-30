@@ -848,6 +848,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
           .join('')}</div>
         <div class="form-grid" style="margin-top:12px">
           <label>Descuento %<input type="number" name="discount_pct" min="0" max="100" step="any" value="0"/></label>
+          <label>Descuento en $ <small class="muted">(para redondear, ej. 10.000)</small><input type="number" name="discount_amount" min="0" step="any" value="0"/></label>
           <label>Vuelo / referencia<input name="flight"/></label>
         </div>
         </details>
@@ -935,6 +936,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       pickup_branch_id: f.pickup_branch_id || '',
       return_branch_id: f.return_branch_id || '',
       discount_pct: f.discount_pct || 0,
+      discount_amount: f.discount_amount || 0,
       extras: f.extras.join(','),
     });
     try {
@@ -1053,6 +1055,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       pickup_at: f.pickup_at,
       return_at: f.return_at,
       discount_pct: f.discount_pct || 0,
+      discount_amount: f.discount_amount || 0,
       flight: f.flight,
       notes: f.notes,
       extras: f.extras.map((id) => ({ extra_id: id, quantity: 1 })),
@@ -1175,6 +1178,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         <div class="cars" id="qr-cars"><p class="muted">Cargando…</p></div>
         <p class="field-error hidden" data-err="car"></p>
         ${insurances().length ? `<div style="margin-top:10px">${insuranceSelect('qr-field')}</div>` : ''}
+        <label class="qr-field" style="margin-top:10px">Descuento en $ <small class="muted">(opcional, para redondear: 10.000, 20.000…)</small><input name="discount" type="number" inputmode="numeric" min="0" step="any" placeholder="0"></label>
       </section>
       <section>
         <h2>¿Quién lo alquila?</h2>
@@ -1217,11 +1221,15 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
     location.hash = `#/reservas/completa?${q}`;
   });
   const days = () => Math.max(1, Math.round((to - from) / 86400000));
+  const discount = () => Math.max(0, Number(form.discount.value) || 0);
   const summary = () => {
     const c = cars.find((x) => x.id === sel.vehicle);
     $('#qr-what', form).textContent = c ? `${days()} ${days() === 1 ? L('día', 'day') : L('días', 'days')} · ${[c.brand, c.model].filter(Boolean).join(' ') || c.plate}` : 'Elegí un auto';
     const ins = form.insurance && insurances().find((x) => x.id === Number(form.insurance.value));
-    $('#qr-sum', form).textContent = c ? money(c.quote.total + (sel.hotel ? hotelFee() : 0) + (ins ? insurancePrice(ins, days()) : 0)) : '';
+    const gross = c ? c.quote.total + (sel.hotel ? hotelFee() : 0) + (ins ? insurancePrice(ins, days()) : 0) : 0;
+    // El descuento se resta antes del impuesto (como lo calcula el sistema): si el precio no lo incluye, el total baja un poco más.
+    const off = c ? Math.min(gross, discount() * (c.quote.tax_included || !c.quote.tax_rate ? 1 : 1 + c.quote.tax_rate / 100)) : 0;
+    $('#qr-sum', form).textContent = c ? money(gross - off) : '';
     // En el celular el resumen queda fijo abajo recién cuando hay auto elegido: antes ocupaba un tercio de la pantalla.
     $('.qr-total', form).classList.toggle('ready', Boolean(c));
   };
@@ -1271,6 +1279,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
       paint();
     }
   });
+  form.addEventListener('input', (e) => e.target.name === 'discount' && summary());
   form.addEventListener('change', (e) => {
     if (e.target.name === 'insurance') return summary();
     // El WhatsApp se revisa al salir del campo: así el voucher no se manda a un número mal cargado.
@@ -1331,6 +1340,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         status: 'confirmada',
         hotel: sel.hotel ? { ...hotelFrom(form), deliver: true, return: form.h_return.checked } : undefined,
         extras: form.insurance ? [{ extra_id: Number(form.insurance.value), quantity: 1 }] : undefined,
+        discount_amount: discount(),
       });
     }, 'Reserva guardada');
     // Hotel sin datos: primero la reserva, donde está el botón para pedírselos al cliente.
@@ -1405,7 +1415,7 @@ function breakdownHtml(q) {
     ${q.season_extra ? row('Recargo de temporada', money(q.season_extra)) : ''}
     ${(q.extras || []).map((x) => row(`${esc(x.name)}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount))).join('')}
     ${q.one_way_fee ? row('Devolución en otra sucursal', money(q.one_way_fee)) : ''}
-    ${q.discount ? row(`Descuento ${q.discount_pct}%`, '−' + money(q.discount)) : ''}
+    ${q.discount ? row(`Descuento${q.discount_pct ? ` ${q.discount_pct}%` : ''}`, '−' + money(q.discount)) : ''}
     ${q.tax_rate ? row(`${esc(taxName())} ${q.tax_rate}% ${q.tax_included ? '(incluido)' : ''}`, money(q.tax)) : ''}
     ${q.calculated_total !== undefined ? row('<span class="muted">Precio según tarifas del sistema</span>', `<span class="muted">${money(q.calculated_total)}</span>`) : ''}
     ${row(q.calculated_total !== undefined ? `Total (precio del ${STATUS_LABEL[q.source] || q.source})` : 'Total', money(q.total), 'total')}
@@ -1714,6 +1724,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'return_branch_id', label: 'Lugar de devolución', type: 'select', options: branchOptions },
             { name: 'category_id', label: 'Categoría', type: 'select', options: () => state.categories.map((x) => [x.id, `${x.code} · ${x.name}`]), required: true },
             { name: 'discount_pct', label: 'Descuento %', type: 'number' },
+            { name: 'discount_amount', label: 'Descuento en $', type: 'number' },
             { name: 'flight', label: 'Vuelo / referencia' },
             { name: 'notes', label: 'Notas', type: 'textarea', full: true },
             ...(r.pricing && r.pricing.calculated_total !== undefined
@@ -1818,7 +1829,7 @@ function voucherLines(r) {
     q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
     ...(q.extras || []).map((x) => [`${x.name}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
-    q.discount ? [`Descuento ${q.discount_pct} %`, `−${money(q.discount)}`] : null,
+    q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct} %` : ''}`, `−${money(q.discount)}`] : null,
     q.tax_rate ? [`${taxName()} ${q.tax_rate} %${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
     ['Total', money(r.balance.due)],
     ['Pagado', money(r.balance.paid)],
@@ -2183,7 +2194,7 @@ function printContract(r) {
     q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
     ...(q.extras || []).map((x) => [esc(x.name) + (x.quantity > 1 ? ` ×${esc(x.quantity)}` : ''), money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
-    q.discount ? [`Descuento ${esc(q.discount_pct)}%`, '−' + money(q.discount)] : null,
+    q.discount ? [`Descuento${q.discount_pct ? ` ${esc(q.discount_pct)}%` : ''}`, '−' + money(q.discount)] : null,
     q.tax_rate ? [`${esc(taxName())} ${esc(q.tax_rate)}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
   ].filter(Boolean);
   const charges = c && c.charges && c.charges.lines.length ? c.charges.lines : [];

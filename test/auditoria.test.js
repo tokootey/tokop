@@ -98,3 +98,20 @@ test('H-002: los pedidos para confirmar traen sus notas, el auto y si falta la l
   assert.equal(p.vehicle_plate, null);
   assert.equal(p.customer_license, null);
 });
+
+test('descuento en pesos: se resta al total (además del porcentaje) y queda guardado al modificar', async () => {
+  const cat = db.prepare("SELECT id FROM categories WHERE code = 'D'").get().id;
+  const base = { category_id: cat, pickup_at: '2027-04-10T10:00', return_at: '2027-04-13T10:00' };
+  const plain = (await call('POST', '/api/quote', base)).data;
+  const q = (await call('POST', '/api/quote', { ...base, discount_pct: 10, discount_amount: 10000 })).data;
+  assert.equal(q.discount_amount, 10000);
+  assert.equal(q.discount, Math.round(plain.subtotal * 0.1) + 10000);
+  // Nunca más que el subtotal.
+  assert.equal((await call('POST', '/api/quote', { ...base, discount_amount: 99999999 })).data.discount, plain.subtotal);
+  const cust = (await call('POST', '/api/customers', { full_name: 'Cliente Redondo' })).data;
+  const r = (await call('POST', '/api/reservations', { ...base, customer_id: cust.id, pickup_branch_id: 1, return_branch_id: 1, discount_amount: 20000 })).data;
+  assert.equal(r.total, plain.total - 20000);
+  const moved = (await call('PUT', `/api/reservations/${r.id}`, { return_at: '2027-04-14T10:00' })).data;
+  assert.equal(moved.discount_amount, 20000);
+  assert.equal(moved.pricing.discount, 20000);
+});

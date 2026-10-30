@@ -140,8 +140,8 @@ function createReservation(db, input, userId) {
     const res = db
       .prepare(
         `INSERT INTO reservations (code, customer_id, category_id, vehicle_id, pickup_branch_id, return_branch_id, pickup_at, return_at,
-          status, source, external_id, days, pricing, total, deposit, discount_pct, flight, notes, created_by, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          status, source, external_id, days, pricing, total, deposit, discount_pct, discount_amount, flight, notes, created_by, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         code,
@@ -160,6 +160,7 @@ function createReservation(db, input, userId) {
         total,
         quote.deposit,
         quote.discount_pct,
+        quote.discount_amount,
         data.flight || null,
         data.notes || null,
         userId || null,
@@ -190,6 +191,7 @@ function updateReservation(db, id, input, userId) {
     pickup_at: current.pickup_at,
     return_at: current.return_at,
     discount_pct: current.discount_pct,
+    discount_amount: current.discount_amount,
     flight: current.flight,
     notes: current.notes,
     extras: current.extras,
@@ -204,7 +206,7 @@ function updateReservation(db, id, input, userId) {
     const pricing = keepExternalPrice ? { ...quote, source: current.pricing.source, calculated_total: quote.total, total } : quote;
     db.prepare(
       `UPDATE reservations SET customer_id=?, category_id=?, vehicle_id=?, pickup_branch_id=?, return_branch_id=?, pickup_at=?, return_at=?,
-        days=?, pricing=?, total=?, deposit=?, discount_pct=?, flight=?, notes=?, updated_at=? WHERE id=?`,
+        days=?, pricing=?, total=?, deposit=?, discount_pct=?, discount_amount=?, flight=?, notes=?, updated_at=? WHERE id=?`,
     ).run(
       data.customer_id,
       data.category_id,
@@ -218,6 +220,7 @@ function updateReservation(db, id, input, userId) {
       total,
       quote.deposit,
       quote.discount_pct,
+      quote.discount_amount,
       data.flight || null,
       data.notes || null,
       nowLocal(),

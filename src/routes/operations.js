@@ -48,6 +48,7 @@ function operationsRoutes(db) {
         return_branch_id: req.query.return_branch_id,
         extras,
         discount_pct: req.query.discount_pct,
+        discount_amount: req.query.discount_amount,
       }),
     }));
     res.json(result);
