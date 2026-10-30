@@ -69,7 +69,9 @@ function computeQuote(db, input) {
 
   const subtotal = base + seasonExtra + extrasTotal + oneWay;
   const discountPct = Math.min(100, Math.max(0, Number(input.discount_pct) || 0));
-  const discount = (subtotal * discountPct) / 100;
+  // El porcentaje y el monto fijo (por ejemplo 10.000 para redondear) se suman; nunca más que el subtotal.
+  const discountAmount = Math.max(0, Number(input.discount_amount) || 0);
+  const discount = Math.min(subtotal, (subtotal * discountPct) / 100 + discountAmount);
   const afterDiscount = subtotal - discount;
 
   const taxRate = Number(settings.tax_rate) || 0;
@@ -88,6 +90,7 @@ function computeQuote(db, input) {
     one_way_fee: round2(oneWay),
     subtotal: round2(subtotal),
     discount_pct: discountPct,
+    discount_amount: round2(discountAmount),
     discount: round2(discount),
     tax_rate: taxRate,
     tax_included: included,
