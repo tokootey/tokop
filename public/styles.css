@@ -191,7 +191,7 @@ h1 .badge { font-size: 12.5px; }
 .cat-card { border: 1.5px solid var(--border); border-radius: var(--radius); padding: 14px 16px; cursor: pointer; background: #fff; display: flex; flex-direction: column; gap: 4px; transition: border-color 0.12s, box-shadow 0.12s; }
 .cat-card:hover { border-color: #9cbcf5; }
 .cat-card.selected { border-color: var(--primary); background: var(--primary-soft); box-shadow: 0 0 0 3px #d6e5ff; }
-.cat-card.none { opacity: 0.55; }
+.cat-card.none { opacity: 0.55; cursor: not-allowed; }
 .cat-name { font-weight: 600; display: flex; gap: 8px; align-items: flex-start; }
 .cat-code { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 22px; padding: 0 6px; border-radius: 6px; background: var(--primary-soft); color: var(--primary-dark); font-size: 12px; font-weight: 700; }
 .cat-card .price { font-size: 20px; font-weight: 700; margin-top: auto; padding-top: 6px; font-variant-numeric: tabular-nums; }
