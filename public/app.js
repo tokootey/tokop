@@ -945,6 +945,13 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       $('#cats').innerHTML = `<p class="error">${esc(e.message)}</p>`;
       return;
     }
+    // Si con las fechas nuevas la categoría elegida se quedó sin autos, se saca (no se cotiza sin disponibilidad).
+    if (sel.category_id && !quotes.some((x) => x.id === sel.category_id && x.available)) {
+      if (quotes.some((x) => x.id === sel.category_id)) toast('No quedan autos libres en esa categoría para esas fechas. Elegí otra.', true);
+      sel.category_id = null;
+      $('#summary').classList.add('muted');
+      $('#summary').textContent = 'Elegí una categoría con autos libres.';
+    }
     $('#cats').innerHTML = quotes
       .map(
         (c) => `<div class="cat-card ${c.available ? '' : 'none'} ${sel.category_id === c.id ? 'selected' : ''}" data-cat="${c.id}">
@@ -963,7 +970,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
     const c = quotes.find((x) => x.id === sel.category_id);
     if (!c) return;
     $('#summary').classList.remove('muted');
-    $('#summary').innerHTML = breakdownHtml(c.quote) + (c.available ? '' : '<p class="error">Sin disponibilidad: se guardará igual como sobreventa si confirmás.</p>');
+    $('#summary').innerHTML = breakdownHtml(c.quote);
   };
 
   const loadVehicles = async () => {
@@ -982,6 +989,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
   $('#cats').addEventListener('click', (e) => {
     const card = e.target.closest('[data-cat]');
     if (!card) return;
+    if (card.classList.contains('none')) return toast('No hay autos libres en esa categoría para esas fechas.', true);
     sel.category_id = Number(card.dataset.cat);
     $$('.cat-card').forEach((c) => c.classList.toggle('selected', c === card));
     renderSummary();
@@ -1044,7 +1052,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
     const f = params();
     if (isPast(new Date(f.pickup_at)) && !(await confirmModal({ title: 'El retiro es en el pasado', text: `La reserva se retira el ${fmtDT(f.pickup_at)}, que ya pasó. ¿La guardás igual?`, ok: 'Guardar igual' }))) return;
     const c = quotes.find((x) => x.id === sel.category_id);
-    if (c && !c.available && !(await confirmModal({ title: 'No hay autos libres en esa categoría', text: 'Si la guardás igual queda una sobreventa: vas a tener que conseguir un auto para esas fechas.', ok: 'Guardar igual' }))) return;
+    if (!c || !c.available) return toast('No hay autos libres en esa categoría para esas fechas. Elegí otra.', true);
     if (!sel.customer_id) sel.customer_id = (await run(() => POST('/customers', { full_name: preName, phone: prePhone }))).id;
     const body = {
       customer_id: sel.customer_id,
@@ -1060,7 +1068,6 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       notes: f.notes,
       extras: f.extras.map((id) => ({ extra_id: id, quantity: 1 })),
       status,
-      allow_overbooking: c && !c.available,
       hotel: f.hotel.deliver || f.hotel.return ? { ...hotelFrom(form), ...f.hotel } : undefined,
     };
     const r = await run(() => POST('/reservations', body), 'Reserva creada');
