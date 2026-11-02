@@ -430,14 +430,15 @@ const SUBNAV = {
     ['tarifas', '#/tarifas', 'Tarifas y sucursales'],
     ['config', '#/config', 'Empresa y contrato', true],
     ['usuarios', '#/usuarios', 'Usuarios', true],
-    ['cotizador', '#/cotizador', 'Cotizador web', true],
-    ['asistente', '#/asistente', 'Link de reservas', true],
+    ['cotizador', '#/cotizador', 'Cotizador web', true, true],
+    ['asistente', '#/asistente', 'Link de reservas', true, true],
     ['importar', '#/importar', 'Importar datos', true],
   ],
 };
 function renderSubnav(group, current) {
   const nav = $('#subnav');
-  const items = (SUBNAV[group] || []).filter(([, , , only]) => !only || (only === 'platform' ? state.user.platform_admin : isAdmin()));
+  // tourism: solo para alquiler turístico (en el modo autos para trabajo no aparece).
+  const items = (SUBNAV[group] || []).filter(([, , , only, tourism]) => (!only || (only === 'platform' ? state.user.platform_admin : isAdmin())) && !(tourism && choferesMode()));
   nav.classList.toggle('hidden', items.length < 2);
   nav.innerHTML = items.map(([key, href, label]) => `<a href="${href}" class="${key === current ? 'active' : ''}">${esc(label)}</a>`).join('');
 }
@@ -790,7 +791,7 @@ on(/^\/reservas$/, async (view) => {
    ============================================================ */
 const branchOptions = () => state.branches.filter((b) => b.active).map((b) => [b.id, b.name]);
 // Lugares de retiro y devolución: las sucursales y, al final, el hotel del cliente.
-const placeOptions = () => [...branchOptions(), ['hotel', 'Hotel (se lo llevamos)']];
+const placeOptions = () => [...branchOptions(), ...(choferesMode() ? [] : [['hotel', 'Hotel (se lo llevamos)']])];
 
 on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
   const now = new Date();
@@ -832,12 +833,12 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
           <label>Retiro <span class="req">*</span><input type="datetime-local" name="pickup_at" value="${localISO(p0)}" required/></label>
           <label>Devolución <span class="req">*</span><input type="datetime-local" name="return_at" value="${localISO(r0)}" required/></label>
           <p class="field-warn full hidden" id="nr-past">${ICON.alert}El retiro es en el pasado. Revisá la fecha antes de guardar.</p>
-          <div class="full actions" id="durations"><small class="muted">Duración rápida:</small>${[1, 2, 3, 5, 7, 14]
-            .map((n) => `<button type="button" class="btn small" data-days="${n}">${n === 7 ? '1 semana' : n === 14 ? '2 semanas' : `${n} día${n > 1 ? 's' : ''}`}</button>`)
+          <div class="full actions" id="durations"><small class="muted">Duración rápida:</small>${(choferesMode() ? [7, 14, 30] : [1, 2, 3, 5, 7, 14])
+            .map((n) => `<button type="button" class="btn small" data-days="${n}">${n === 7 ? '1 semana' : n === 14 ? '2 semanas' : n === 30 ? '1 mes' : `${n} día${n > 1 ? 's' : ''}`}</button>`)
             .join('')}</div>
           ${field({ name: 'pickup_branch_id', label: 'Lugar de retiro', type: 'select', options: placeOptions, required: true })}
           ${field({ name: 'return_branch_id', label: 'Lugar de devolución', type: 'select', options: placeOptions, required: true })}
-          ${insurances().length ? `<div class="full">${insuranceSelect()}</div>` : ''}
+          ${insurances().length && !choferesMode() ? `<div class="full">${insuranceSelect()}</div>` : ''}
         </div>
         <div class="qr-hotel hidden" id="nr-hotel">
           ${hotelFee() ? `<p class="hotel-fee">${ICON.money}<span>La entrega en hotel tiene un costo extra de <b>${money(hotelFee())}</b>. Ya está sumado en los precios de abajo.</span></p>` : ''}
@@ -846,9 +847,9 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
           ${branchOptions().length > 1 ? `<label class="hidden" data-from>El auto sale de<select name="branch_from">${branchOptions().map(([id, n]) => `<option value="${id}">${esc(n)}</option>`).join('')}</select></label>` : ''}
         </div>
         <details class="more-opts">
-        <summary>Más opciones: adicionales, descuento y vuelo</summary>
+        <summary>${choferesMode() ? 'Más opciones: descuento y notas' : 'Más opciones: adicionales, descuento y vuelo'}</summary>
         <div class="actions" style="margin-top:12px">${state.extras
-          .filter((x) => x.active && x.kind !== 'seguro' && String(x.code).toUpperCase() !== 'HOTEL') // el hotel se suma solo; el seguro se elige arriba
+          .filter((x) => !choferesMode() && x.active && x.kind !== 'seguro' && String(x.code).toUpperCase() !== 'HOTEL') // el hotel se suma solo; el seguro se elige arriba
           .map(
             (x) =>
               `<label class="check"><input type="checkbox" name="extra_${x.id}"/> ${esc(x.name)} <small class="muted">(${money(x.price)}${x.charge_type === 'dia' ? '/día' : ''})</small></label>`,
@@ -1147,16 +1148,22 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   const start = new Date();
   start.setHours(10, 0, 0, 0);
   let from = dayAt10(pre.get('desde')) || addDays(start, 1);
-  let to = dayAt10(pre.get('hasta')) || addDays(from, 3);
+  let to = dayAt10(pre.get('hasta')) || addDays(from, choferesMode() ? 7 : 3);
   const sel = { vehicle: Number(pre.get('vehiculo')) || null };
   let cars = [];
   const branches = state.branches.filter((b) => b.active);
-  const QUICK = [
-    [1, '1 día'],
-    [3, '3 días'],
-    [7, '1 semana'],
-    [14, '2 semanas'],
-  ];
+  const QUICK = choferesMode()
+    ? [
+        [7, '1 semana'],
+        [14, '2 semanas'],
+        [30, '1 mes'],
+      ]
+    : [
+        [1, '1 día'],
+        [3, '3 días'],
+        [7, '1 semana'],
+        [14, '2 semanas'],
+      ];
 
   view.innerHTML = `
     <form class="qr" id="qr" novalidate>
@@ -1170,7 +1177,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         </div>
         <p class="field-warn hidden" id="qr-past">${ICON.alert}El retiro es en el pasado. Revisá la fecha antes de guardar.</p>
         <div class="chips">${QUICK.map(([n, label]) => `<button type="button" class="chip" data-days="${n}">${label}</button>`).join('')}</div>
-        <label class="qr-field" style="margin-top:8px">Lugar de retiro<select name="place">${branches.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('')}<option value="hotel">Hotel (se lo llevamos)</option></select></label>
+        <label class="qr-field" style="margin-top:8px">Lugar de retiro<select name="place">${branches.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('')}${choferesMode() ? '' : '<option value="hotel">Hotel (se lo llevamos)</option>'}</select></label>
         <div class="qr-hotel hidden" id="qr-hotel">
           ${
             hotelFee()
@@ -1192,7 +1199,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         <h2>¿Qué auto? <span class="req">*</span> <span class="muted" style="font-weight:400">(libres en esas fechas)</span></h2>
         <div class="cars" id="qr-cars"><p class="muted">Cargando…</p></div>
         <p class="field-error hidden" data-err="car"></p>
-        ${insurances().length ? `<div style="margin-top:10px">${insuranceSelect('qr-field')}</div>` : ''}
+        ${insurances().length && !choferesMode() ? `<div style="margin-top:10px">${insuranceSelect('qr-field')}</div>` : ''}
         <label class="qr-field" style="margin-top:10px">Descuento en $ <small class="muted">(opcional, para redondear: 10.000, 20.000…)</small><input name="discount" type="number" inputmode="numeric" min="0" step="any" placeholder="0"></label>
       </section>
       <section>
@@ -1395,8 +1402,8 @@ on(/^\/mas$/, async (view) => {
       ${tile('#/tarifas', 'Precios y lugares', 'Categorías, tarifas, temporadas, adicionales y lugares', ICON.tag)}
       ${admin ? tile('#/config', 'Empresa y contrato', 'Datos de la empresa, contrato, cancelaciones y factura', ICON.building) : ''}
       ${admin ? tile('#/usuarios', 'Usuarios', 'Quién entra al sistema y qué hizo', ICON.users) : ''}
-      ${admin ? tile('#/cotizador', 'Página web: formulario', 'Que las cotizaciones de tu página entren solas', ICON.globe) : ''}
-      ${admin ? tile('#/asistente', 'Link de reservas (opcional)', '¿No tenés reservas por internet? Un link para Instagram y WhatsApp', ICON.link) : ''}
+      ${admin && !choferesMode() ? tile('#/cotizador', 'Página web: formulario', 'Que las cotizaciones de tu página entren solas', ICON.globe) : ''}
+      ${admin && !choferesMode() ? tile('#/asistente', 'Link de reservas (opcional)', '¿No tenés reservas por internet? Un link para Instagram y WhatsApp', ICON.link) : ''}
       ${admin ? tile('#/importar', 'Pasar datos de una planilla', 'Autos, clientes y reservas desde Excel o Drive', ICON.sheet) : ''}
     </div>
     <div class="mas-group">Tu cuenta</div>
@@ -1456,14 +1463,14 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
     more.push('<button data-act="edit">Modificar fechas o datos</button>');
   }
   const hotelOpen = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
-  if (hotelOpen && !r.hotel) more.push('<button data-act="hotel">Entregar o retirar en un hotel</button>');
+  if (hotelOpen && !r.hotel && !choferesMode()) more.push('<button data-act="hotel">Entregar o retirar en un hotel</button>');
   if (r.status === 'en_curso') actions.push(`<button class="btn ok" data-act="checkin">${ICON.in}Registrar devolución</button>`);
   // Saldo a cobrar a la vista, con el importe: un toque abre el cobro ya completado.
   if (['confirmada', 'en_curso', 'finalizada'].includes(r.status) && r.balance.pending > 0)
     actions.push(`<button class="btn ${r.status === 'finalizada' ? 'primary' : ''}" data-act="pay">${ICON.money}Cobrar ${money(r.balance.pending)}</button>`);
   if (['cancelada', 'no_show'].includes(r.status)) actions.push('<button class="btn" data-act="reopen">Reabrir</button>');
   if (!['cancelada', 'no_show'].includes(r.status)) {
-    if (r.status !== 'finalizada') actions.push(`<button class="btn" data-act="voucher">${ICON.send}Enviar voucher</button>`);
+    if (r.status !== 'finalizada' && !choferesMode()) actions.push(`<button class="btn" data-act="voucher">${ICON.send}Enviar voucher</button>`);
     actions.push(`<button class="btn" data-act="pdf">${ICON.doc}Contrato PDF</button>`);
     more.push('<button data-act="print">Imprimir contrato</button>');
   }
@@ -1471,7 +1478,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   if (state.settings.invoice_provider && ['confirmada', 'en_curso', 'finalizada'].includes(r.status) && !invoiced) more.unshift('<button data-act="invoice">Facturar (prueba)</button>');
   if (canEdit) {
     // Recién cuando pasó la hora de retiro (antes de eso, es una cancelación).
-    if (new Date(String(r.pickup_at).replace(' ', 'T')) <= new Date()) more.push('<button class="danger" data-act="noshow">El cliente no se presentó</button>');
+    if (!choferesMode() && new Date(String(r.pickup_at).replace(' ', 'T')) <= new Date()) more.push('<button class="danger" data-act="noshow">El cliente no se presentó</button>');
     more.push('<button class="danger" data-act="cancel">Cancelar reserva</button>');
   }
   if (more.length) actions.push(`<details class="menu"><summary class="btn">Más acciones</summary><div class="menu-list">${more.join('')}</div></details>`);
@@ -1492,8 +1499,12 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           <dt>Devolución</dt><dd>${fmtDT(r.return_at)} · ${esc(r.return_branch_name || '')}</dd>
           <dt>Categoría</dt><dd>${esc(r.category_code)} · ${esc(r.category_name)}</dd>
           <dt>Vehículo</dt><dd>${r.vehicle_plate ? `<b>${esc(r.vehicle_plate)}</b> ${esc(r.vehicle_brand)} ${esc(r.vehicle_model)}` : '<span class="badge b-pendiente">Sin asignar</span>'}</dd>
-          <dt>Seguro</dt><dd>${resInsurance(r) ? `<b>${esc(resInsurance(r).name)}</b> · ${resInsurance(r).deductible ? `franquicia ${money(resInsurance(r).deductible)}` : 'sin franquicia'}` : '<span class="muted">Sin elegir</span>'}</dd>
-          <dt>Adicionales</dt><dd>${resAddons(r).map((x) => esc(x.name)).join(', ') || '—'}</dd>
+          ${
+            choferesMode()
+              ? ''
+              : `<dt>Seguro</dt><dd>${resInsurance(r) ? `<b>${esc(resInsurance(r).name)}</b> · ${resInsurance(r).deductible ? `franquicia ${money(resInsurance(r).deductible)}` : 'sin franquicia'}` : '<span class="muted">Sin elegir</span>'}</dd>
+          <dt>Adicionales</dt><dd>${resAddons(r).map((x) => esc(x.name)).join(', ') || '—'}</dd>`
+          }
           ${r.flight ? `<dt>Vuelo</dt><dd>${esc(r.flight)}</dd>` : ''}
           <dt>Notas</dt><dd>${esc(r.notes || '—')}</dd>
         </dl>
@@ -1742,7 +1753,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'category_id', label: 'Categoría', type: 'select', options: () => state.categories.map((x) => [x.id, `${x.code} · ${x.name}`]), required: true },
             { name: 'discount_pct', label: 'Descuento %', type: 'number' },
             { name: 'discount_amount', label: 'Descuento en $', type: 'number' },
-            { name: 'flight', label: 'Vuelo / referencia' },
+            { name: 'flight', label: 'Vuelo / referencia', when: () => !choferesMode() },
             { name: 'notes', label: 'Notas', type: 'textarea', full: true },
             ...(r.pricing && r.pricing.calculated_total !== undefined
               ? [{ name: 'recalculate', label: 'Recalcular el precio con las tarifas del sistema (descarta el precio del cotizador)', type: 'checkbox', full: true }]
@@ -2711,17 +2722,19 @@ const VEHICLE_FIELDS = [
 
 /** Pantalla de listado + alta/edición/baja genérica. */
 // rowFilter: qué filas mostrar (p. ej. solo los seguros); defaults: valores que se agregan al crear.
-function crudPage({ title, endpoint, fields, columns, searchable, after, before, extraActions, canWrite = () => true, canDelete, nav, rowFilter, defaults }) {
+// summary(rows): una línea arriba de la tabla (p. ej. el total de los gastos que se ven).
+function crudPage({ title, endpoint, fields, columns, searchable, after, before, extraActions, canWrite = () => true, canDelete, nav, rowFilter, defaults, summary }) {
   const mayDelete = () => (canDelete ? canDelete() : canWrite());
   return async (view) => {
     if (before) await before();
     view.innerHTML = `<div class="page-head"><h1>${esc(title)}</h1>${canWrite() ? '<button class="btn primary" data-new>+ Agregar</button>' : ''}</div>
       ${searchable ? '<div class="toolbar"><input id="crud-q" placeholder="Buscar…"/></div>' : ''}
-      <div class="table-wrap" id="crud-table"></div>`;
+      ${summary ? '<div id="crud-summary"></div>' : ''}<div class="table-wrap" id="crud-table"></div>`;
     const load = async () => {
       const q = searchable ? $('#crud-q').value.trim() : '';
       const all = await GET(`/${endpoint}${q ? `?q=${encodeURIComponent(q)}` : ''}`);
       const rows = rowFilter ? all.filter(rowFilter) : all;
+      if (summary) $('#crud-summary').innerHTML = summary(rows);
       $('#crud-table').innerHTML = rows.length
         ? `<table><thead><tr>${columns.map((c) => `<th>${esc(c.label)}</th>`).join('')}<th></th></tr></thead><tbody>
           ${rows
@@ -3077,6 +3090,15 @@ on(
     ],
     searchable: true,
     canDelete: () => isAdmin(),
+    // Total de lo que se ve (con la búsqueda aplicada) y lo de este mes.
+    summary: (rows) => {
+      const month = localISO(new Date()).slice(0, 7);
+      const sum = (list) => list.reduce((a, e) => a + Number(e.amount || 0), 0);
+      return `<div class="stat-tiles" style="margin-bottom:12px">
+        <div class="stat-tile"><b>${money(sum(rows))}</b><span>gasto total (${plural(rows.length, 'gasto', 'gastos')})</span></div>
+        <div class="stat-tile"><b>${money(sum(rows.filter((e) => String(e.date).startsWith(month))))}</b><span>gastado este mes</span></div>
+      </div>`;
+    },
     columns: [
       { label: 'Fecha', render: (e) => fmtD(e.date) },
       { label: 'Auto', render: (e) => (e.plate ? `<b>${esc(e.plate)}</b>` : '<span class="muted">General</span>') },
@@ -3208,7 +3230,8 @@ on(/^\/tarifas$/, async (view) => {
       ],
     },
   ];
-  const current = state.tarifasTab || 'categories';
+  if (choferesMode()) tabs.splice(0, tabs.length, ...tabs.filter((t) => !['extras', 'seguros', 'seasons'].includes(t.key)));
+  const current = tabs.some((t) => t.key === state.tarifasTab) ? state.tarifasTab : 'categories';
   view.innerHTML = `<div class="tabs">${tabs.map((t) => `<button data-tab="${t.key}" class="${t.key === current ? 'active' : ''}">${t.label}</button>`).join('')}</div><div id="tab-body"></div>
     ${isAdmin() ? '' : '<p class="muted">Sólo los administradores pueden modificar tarifas.</p>'}`;
   $$('[data-tab]', view).forEach((b) =>
@@ -3487,13 +3510,13 @@ on(/^\/config$/, async (view) => {
       { name: 'tax_id_label', label: 'Nombre de la identificación fiscal (CUIT, RUT, RFC, NIF…)' },
       { name: 'locale', label: 'Formato de números y fechas', type: 'select', options: LOCALES },
       { name: 'grace_hours', label: 'Tolerancia (horas) antes de cobrar un día más', type: 'number' },
-      { name: 'one_way_fee', label: 'Recargo por devolver en otro lugar', type: 'number' },
+      { name: 'one_way_fee', label: 'Recargo por devolver en otro lugar', type: 'number', when: () => !choferesMode() },
       { name: 'fuel_charge_per_eighth', label: 'Cargo por cada 1/8 de combustible faltante', type: 'number' },
       { name: 'min_driver_age', label: 'Edad mínima del conductor', type: 'number' },
       { name: 'deductible_amount', label: 'Franquicia del seguro (vacío = la de la póliza)', type: 'number' },
       { name: 'jurisdiction', label: 'Jurisdicción del contrato (tribunales de...)', full: true },
       { name: 'contract_terms_choferes', label: 'Contrato para choferes (un párrafo por cláusula; {periodo}, {precio_periodo}, {recargo_atraso}, {garante} y las demás se completan solas)', type: 'textarea', full: true, rows: 16, when: () => choferesMode() },
-      { name: 'contract_terms', label: 'Condiciones generales del contrato (un párrafo por cláusula, separadas por una línea en blanco)', type: 'textarea', full: true, rows: 16 },
+      { name: 'contract_terms', label: 'Condiciones generales del contrato (un párrafo por cláusula, separadas por una línea en blanco)', type: 'textarea', full: true, rows: 16, when: () => !choferesMode() },
       // Factura electrónica: por ahora sólo de prueba (ver src/invoicing).
       { name: 'invoice_provider', label: 'Factura electrónica (sólo prueba)', type: 'select', options: [['arca', 'ARCA · Argentina'], ['sii', 'SII · Chile']] },
       { name: 'invoice_mode', label: 'Modo', type: 'select', required: true, options: [['simulado', 'Simulado (no se envía a ningún lado)'], ['homologacion', 'Homologación (servidor de prueba, necesita certificado)']] },
@@ -3501,14 +3524,14 @@ on(/^\/config$/, async (view) => {
       { name: 'invoice_point_of_sale', label: 'Punto de venta (Argentina)', type: 'number' },
       { name: 'invoice_tax_condition', label: 'Condición frente al IVA (Argentina)', type: 'select', required: true, options: [['RI', 'Responsable Inscripto (Factura A o B)'], ['MONO', 'Monotributo (Factura C)']] },
       // Política de devolución de dinero al cancelar (src/refunds.js).
-      { name: 'refund_full_hours', label: 'Devolución del 100 % si cancela con esta anticipación o más (horas)', type: 'number', attrs: 'min="0"' },
-      { name: 'refund_partial_hours', label: 'Devolución parcial si cancela con esta anticipación o más (horas)', type: 'number', attrs: 'min="0"' },
-      { name: 'refund_partial_pct', label: 'Porcentaje de la devolución parcial (%)', type: 'number', attrs: 'min="0" max="100"' },
-      { name: 'refund_terms', label: 'Condiciones extra de cancelación y devoluciones', type: 'textarea', full: true, rows: 3 },
+      { name: 'refund_full_hours', label: 'Devolución del 100 % si cancela con esta anticipación o más (horas)', type: 'number', attrs: 'min="0"', when: () => !choferesMode() },
+      { name: 'refund_partial_hours', label: 'Devolución parcial si cancela con esta anticipación o más (horas)', type: 'number', attrs: 'min="0"', when: () => !choferesMode() },
+      { name: 'refund_partial_pct', label: 'Porcentaje de la devolución parcial (%)', type: 'number', attrs: 'min="0" max="100"', when: () => !choferesMode() },
+      { name: 'refund_terms', label: 'Condiciones extra de cancelación y devoluciones', type: 'textarea', full: true, rows: 3, when: () => !choferesMode() },
       // Versión en inglés: contrato, voucher y política cuando la app está en inglés (i18n.js).
-      { name: 'jurisdiction_en', label: 'Jurisdicción del contrato en inglés (courts of...)', full: true },
-      { name: 'contract_terms_en', label: 'Condiciones generales del contrato en inglés (se usan cuando la app está en inglés)', type: 'textarea', full: true, rows: 12 },
-      { name: 'refund_terms_en', label: 'Condiciones extra de cancelación y devoluciones en inglés', type: 'textarea', full: true, rows: 3 },
+      { name: 'jurisdiction_en', label: 'Jurisdicción del contrato en inglés (courts of...)', full: true, when: () => !choferesMode() },
+      { name: 'contract_terms_en', label: 'Condiciones generales del contrato en inglés (se usan cuando la app está en inglés)', type: 'textarea', full: true, rows: 12, when: () => !choferesMode() },
+      { name: 'refund_terms_en', label: 'Condiciones extra de cancelación y devoluciones en inglés', type: 'textarea', full: true, rows: 3, when: () => !choferesMode() },
     ],
     s,
   )}</div>`;
@@ -3530,11 +3553,17 @@ on(/^\/config$/, async (view) => {
     for (const k of ['currency', 'tax_name', 'tax_rate', 'tax_id_label', 'locale']) if (form[k]) form[k].value = p[k];
     toast(`Datos de ${p.name} cargados: revisalos y tocá Guardar`);
   });
-  const terms = $('[name=contract_terms]', view);
+  // En el modo autos para trabajo, la ayuda y "Restaurar" son del contrato para choferes.
+  const work = choferesMode();
+  const terms = $(work ? '[name=contract_terms_choferes]' : '[name=contract_terms]', view);
   const help = document.createElement('div');
   help.className = 'full';
-  help.innerHTML = `<p class="muted" style="margin:0 0 8px">Estas palabras se completan solas en cada contrato: <code>{empresa}</code> <code>{tolerancia}</code> <code>{edad_minima}</code>
-    <code>{cargo_combustible}</code> <code>{kilometraje}</code> <code>{franquicia}</code> <code>{garantia}</code> <code>{jurisdiccion}</code>.
+  help.innerHTML = `<p class="muted" style="margin:0 0 8px">Estas palabras se completan solas en cada contrato: <code>{empresa}</code> ${
+    work
+      ? '<code>{periodo}</code> <code>{precio_periodo}</code> <code>{recargo_atraso}</code> <code>{dias_gracia}</code> <code>{garante}</code> <code>{uso}</code>'
+      : '<code>{tolerancia}</code> <code>{edad_minima}</code> <code>{cargo_combustible}</code>'
+  }
+    <code>{kilometraje}</code> <code>{franquicia}</code> <code>{garantia}</code> <code>{jurisdiccion}</code>.
     Son condiciones de uso habitual: conviene que las revise un abogado antes de usarlas.</p>
     <button type="button" class="btn small" id="terms-reset">Restaurar condiciones sugeridas</button>`;
   terms.closest('label').after(help);
@@ -3545,11 +3574,12 @@ on(/^\/config$/, async (view) => {
   const refNote = document.createElement('div');
   refNote.className = 'full';
   refNote.innerHTML = `<h2 style="margin:12px 0 4px">Cancelaciones y devolución de dinero</h2><p class="muted" style="margin:0">Con menos horas que la devolución parcial, o si el cliente no se presenta, no hay devolución. Al cancelar una reserva, el sistema calcula cuánto corresponde devolver y lo deja registrado (no mueve dinero). Esta política sale en el voucher y en el contrato. <b>Los valores y el texto son un ejemplo: cada agencia los tiene que revisar según las leyes de su país</b> (por ejemplo, las de defensa del consumidor).</p>`;
-  $('[name=refund_full_hours]', view).closest('label').before(refNote);
   $('#terms-reset', view).addEventListener('click', async () => {
     if (!(await confirmModal({ title: 'Usar las condiciones sugeridas', text: 'Se reemplaza el texto actual. El cambio queda recién cuando tocás Guardar.', ok: 'Reemplazar' }))) return;
-    terms.value = s.contract_terms_default || '';
+    terms.value = (work ? s.contract_terms_choferes_default : s.contract_terms_default) || '';
   });
+  if (work) return; // lo que sigue (cancelaciones y textos en inglés) es del alquiler turístico
+  $('[name=refund_full_hours]', view).closest('label').before(refNote);
   const enNote = document.createElement('div');
   enNote.className = 'full';
   enNote.innerHTML = `<h2 style="margin:12px 0 4px">Textos en inglés</h2><p class="muted" style="margin:0">Cuando la app está en inglés, el contrato, el voucher y la política de devolución usan estos textos. Si quedan vacíos se usan los de arriba.</p>`;
@@ -3728,7 +3758,10 @@ async function statsView(view, url, { owner = false } = {}) {
         <h2>Modelos que más facturan</h2>
         ${bars(s.models, (m) => m.revenue, (m) => esc([m.brand, m.model].filter(Boolean).join(' ')), (m) => `${plural(m.rentals, 'alquiler', 'alquileres')} · ${plural(m.days, 'día', 'días')}`, moneyRound)}
       </section>
-      <section class="card">
+      ${
+        choferesMode()
+          ? ''
+          : `<section class="card">
         <h2>Seguros que llevan</h2>
         <p class="muted">${t.rentals ? `${pct(t.with_insurance, t.rentals)} % de los alquileres tiene un seguro elegido.` : ''} Los seguros se cargan en ${link('#/tarifas', 'Precios y lugares → Seguros')}.</p>
         ${bars(s.insurance, (x) => x.times, (x) => esc(x.name), (x) => (x.deductible ? `franquicia ${money(x.deductible)}` : 'sin franquicia'))}
@@ -3740,7 +3773,8 @@ async function statsView(view, url, { owner = false } = {}) {
       <section class="card">
         <h2>De dónde vienen las reservas</h2>
         ${bars(s.sources, (x) => x.requested, (x) => esc(SOURCE_TEXT[x.source] || x.source), (x) => `${x.rentals} concretadas · ${money(x.revenue)}`)}
-      </section>
+      </section>`
+      }
       <section class="card">
         <h2>Daños y accidentes</h2>
         ${
