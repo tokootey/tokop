@@ -4,11 +4,12 @@
  * Carga datos de ejemplo (sucursales, categorías, flota, adicionales, clientes y reservas)
  * para probar el sistema. Uso: npm run seed  (no hace nada si ya hay categorías cargadas).
  */
-const { openDb } = require('./db');
+const { openDb, setSetting } = require('./db');
 const { ensureAdmin } = require('./app');
-const { createReservation, checkout, checkin, addPayment } = require('./reservations');
+const { createReservation, checkout, checkin, addPayment, getReservation } = require('./reservations');
 const { hashPassword } = require('./auth');
 const { fmtLocal } = require('./util');
+const choferes = require('./choferes');
 
 function seed(db) {
   if (db.prepare('SELECT COUNT(*) AS n FROM categories').get().n > 0) return false;
@@ -193,6 +194,110 @@ function seedDemo(db, { email, password } = {}) {
   return true;
 }
 
+/**
+ * Demo de autos para trabajo (modo choferes): una flota chica alquilada por semana a choferes de apps,
+ * con pagos al día y atrasados, una multa, km de más, una licencia vencida, un auto en el taller y gastos.
+ */
+function seedChoferes(db) {
+  if (db.prepare('SELECT COUNT(*) AS n FROM categories').get().n > 0) return false;
+  for (const [k, v] of Object.entries({
+    company_name: 'Demo Flota para Choferes',
+    company_address: 'Av. Corrientes 5200, CABA',
+    business_mode: 'choferes',
+    rent_period: 'semana',
+    late_fee_per_day: '5000',
+    late_grace_days: '1',
+    deductible_amount: '500000',
+    jurisdiction: 'la Ciudad Autónoma de Buenos Aires',
+  }))
+    setSetting(db, k, v);
+  const ins = (sql, ...p) => Number(db.prepare(sql).run(...p).lastInsertRowid);
+  const base = ins("INSERT INTO branches (code, name, address) VALUES ('BASE', 'Base Villa Crespo', 'Av. Corrientes 5200, CABA')");
+  const category = (code, name, daily, weekly, monthly, deposit, km, extraKm) =>
+    ins(
+      "INSERT INTO categories (code, name, daily_rate, weekly_rate, monthly_rate, deposit, km_per_period, extra_km_rate, seats, transmission) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 5, 'Manual')",
+      code, name, daily, weekly, monthly, deposit, km, extraKm,
+    );
+  const cat = {
+    APP: category('APP', 'Sedán para apps (Etios, Prisma o similar)', 32000, 190000, 690000, 300000, 1800, 110),
+    GNC: category('GNC', 'Sedán con GNC (Cronos, Logan o similar)', 38000, 230000, 820000, 350000, 2200, 90),
+  };
+  const y = new Date().getFullYear();
+  const car = {};
+  for (const [plate, brand, model, year, c, km] of [
+    ['AB101CD', 'Toyota', 'Etios', 2021, 'APP', 112400], ['AC202EF', 'Chevrolet', 'Prisma', 2020, 'APP', 138900],
+    ['AD303GH', 'Fiat', 'Cronos GNC', 2022, 'GNC', 96300], ['AE404IJ', 'Renault', 'Logan GNC', 2021, 'GNC', 121700],
+    ['AF505KL', 'Toyota', 'Etios', 2019, 'APP', 159800], ['AG606MN', 'Chevrolet', 'Prisma', 2021, 'APP', 109200],
+  ])
+    car[plate] = ins(
+      'INSERT INTO vehicles (plate, brand, model, year, category_id, branch_id, km, service_every_km, insurance_expiry, vtv_expiry) VALUES (?, ?, ?, ?, ?, ?, ?, 10000, ?, ?)',
+      plate, brand, model, year, cat[c], base, km, `${y + 1}-03-31`, `${y + 1}-06-30`,
+    );
+  const who = {};
+  for (const [name, doc, phone, apps, guarantor, gDoc, gPhone] of [
+    ['Juan Pérez', '33456789', '+54 9 11 6123-4567', 'Uber, DiDi', 'Rosa Pérez', '14567890', '+54 9 11 4455-6677'],
+    ['Carla Gómez', '35987654', '+54 9 11 5234-8890', 'Cabify', 'Héctor Gómez', '12345678', '+54 9 11 4321-0099'],
+    ['Ramiro Díaz', '31222333', '+54 9 11 3876-1122', 'Uber, remis', null, null, null],
+    ['Lucía Fernández', '37111222', '+54 9 11 6789-3344', 'PedidosYa, DiDi', 'Marta Ríos', '16222333', '+54 9 11 4777-8899'],
+    ['Marcos Ruiz', '30555666', '+54 9 11 5566-7788', 'Uber', null, null, null],
+  ])
+    who[name] = ins(
+      "INSERT INTO customers (full_name, doc_type, doc_number, phone, license_number, license_expiry, license_class, work_apps, guarantor_name, guarantor_doc, guarantor_phone) VALUES (?, 'DNI', ?, ?, ?, ?, 'D1 (profesional)', ?, ?, ?, ?)",
+      name, doc, phone, `LP-${doc.slice(-5)}`, `${y + 2}-08-31`, apps, guarantor, gDoc, gPhone,
+    );
+  const day = (n) => {
+    const d = new Date();
+    d.setHours(9, 0, 0, 0);
+    d.setDate(d.getDate() + n);
+    return d;
+  };
+  const at = (n) => fmtLocal(day(n));
+  // Cada pago con su fecha (se guardan en UTC, como los del servidor): así el recargo por atraso sale como en la realidad.
+  const pay = (rid, amount, n, method = 'transferencia', kind = 'pago') => {
+    addPayment(db, rid, { amount, method, kind });
+    db.prepare('UPDATE payments SET created_at = ? WHERE id = (SELECT MAX(id) FROM payments)').run(day(n).toISOString().slice(0, 19).replace('T', ' '));
+  };
+  const rent = (plate, name, from) => {
+    const v = db.prepare('SELECT category_id, km FROM vehicles WHERE id = ?').get(car[plate]);
+    const r = createReservation(db, { customer_id: who[name], category_id: v.category_id, vehicle_id: car[plate], pickup_branch_id: base, pickup_at: at(from), return_at: at(from + 7), status: 'confirmada' });
+    checkout(db, r.id, { out_at: at(from), out_km: v.km, out_fuel: 8 }, null);
+    return r.id;
+  };
+  // Terminado: Marcos lo tuvo 5 semanas y lo devolvió hace 5 días con km de más (ya pagó todo y se le devolvió la garantía).
+  const done = rent('AG606MN', 'Marcos Ruiz', -40);
+  pay(done, 300000, -40, 'efectivo', 'garantia');
+  for (let w = 0; w < 5; w++) pay(done, 190000, -40 + 7 * w);
+  checkin(db, done, { in_at: at(-5), in_km: 119600, in_fuel: 8 }, null);
+  pay(done, getReservation(db, done).balance.pending, -5, 'efectivo');
+  pay(done, 300000, -5, 'efectivo', 'devolucion_garantia');
+  // En la calle: Juan al día; Carla debe la semana que empezó hace 2 días; Ramiro pagó una semana tarde,
+  // debe la última, una multa y km de más; Lucía está al día pero se le venció la licencia.
+  const juan = rent('AB101CD', 'Juan Pérez', -23);
+  for (let w = 0; w < 4; w++) pay(juan, 190000, -23 + 7 * w);
+  const carla = rent('AC202EF', 'Carla Gómez', -16);
+  pay(carla, 190000, -16);
+  pay(carla, 190000, -9, 'efectivo');
+  const ramiro = rent('AD303GH', 'Ramiro Díaz', -30);
+  for (const n of [-30, -23, -16, -6]) pay(ramiro, 230000, n);
+  const lucia = rent('AE404IJ', 'Lucía Fernández', -9);
+  pay(lucia, 230000, -9);
+  pay(lucia, 230000, -2, 'mercadopago');
+  for (const id of [juan, carla, ramiro, lucia]) choferes.renew(db, id);
+  choferes.addCharge(db, { id: ramiro }, { kind: 'multa', amount: 48000, reference: 'Fotomulta 112233', description: 'Exceso de velocidad', date: at(-12) }, null);
+  choferes.kmReading(db, getReservation(db, ramiro), 96300 + 5 * 2200 + 400, null);
+  db.prepare('UPDATE customers SET license_expiry = ? WHERE id = ?').run(at(-3).slice(0, 10), who['Lucía Fernández']);
+  // Un auto en el taller y los gastos de las últimas semanas.
+  ins("INSERT INTO maintenance (vehicle_id, kind, description, start_date, km, cost, status) VALUES (?, 'service', 'Service 160.000 km', ?, 159800, 210000, 'abierto')", car.AF505KL, at(-1).slice(0, 10));
+  db.prepare("UPDATE vehicles SET status = 'mantenimiento' WHERE id = ?").run(car.AF505KL);
+  for (const [plate, n, kind, description, amount] of [
+    ['AB101CD', -20, 'repuestos', 'Pastillas de freno', 68000], ['AD303GH', -14, 'taller', 'Revisión del equipo de GNC', 95000],
+    ['AC202EF', -10, 'lavado', 'Lavado completo', 18000], [null, -8, 'seguro', 'Cuota del seguro de la flota', 420000],
+    ['AE404IJ', -4, 'repuestos', 'Cubierta nueva', 125000], ['AG606MN', -3, 'combustible', 'Carga de GNC', 9000],
+  ])
+    ins('INSERT INTO expenses (vehicle_id, date, kind, description, amount) VALUES (?, ?, ?, ?, ?)', plate ? car[plate] : null, at(n).slice(0, 10), kind, description, amount);
+  return true;
+}
+
 if (require.main === module) {
   const db = openDb();
   const admin = ensureAdmin(db);
@@ -200,4 +305,4 @@ if (require.main === module) {
   if (admin) console.log(`Usuario inicial: ${admin.email} / ${admin.password}`);
 }
 
-module.exports = { seed, seedDemo };
+module.exports = { seed, seedDemo, seedChoferes };

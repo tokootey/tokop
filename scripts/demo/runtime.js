@@ -9,8 +9,19 @@
   'use strict';
   // Demo personalizada para una agencia (build-demo --perfil=<nombre>): sus datos se guardan aparte de la demo general.
   const PROFILE = __PROFILE__;
-  const STORE_KEY = `rentacar-demo-db-v1${PROFILE ? `-${PROFILE}` : ''}`;
-  const COOKIE_KEY = `rentacar-demo-cookies${PROFILE ? `-${PROFILE}` : ''}`;
+  // Demo general: al entrar se elige "alquiler turístico" o "autos para trabajo" (?tipo=trabajo); cada una guarda sus datos aparte.
+  let TIPO = 'turismo';
+  if (!PROFILE) {
+    try {
+      const pedido = new URLSearchParams(location.search).get('tipo');
+      if (pedido) localStorage.setItem('rentacar-demo-tipo', pedido);
+      TIPO = localStorage.getItem('rentacar-demo-tipo') === 'trabajo' ? 'trabajo' : 'turismo';
+    } catch {}
+    window.__demoTipo = TIPO;
+  }
+  const SUFFIX = PROFILE ? `-${PROFILE}` : TIPO === 'trabajo' ? '-trabajo' : '';
+  const STORE_KEY = `rentacar-demo-db-v1${SUFFIX}`;
+  const COOKIE_KEY = `rentacar-demo-cookies${SUFFIX}`;
 
   /* ---------- Cookies (la sesión de la app es una cookie; acá se guarda en el navegador) ---------- */
   let jar = {};
@@ -292,6 +303,7 @@
     if (!initialBytes) {
       ensureAdmin(db);
       if (PROFILE) req('./src/perfil.js').seed(db);
+      else if (TIPO === 'trabajo') req('./src/seed.js').seedChoferes(db);
       else {
         req('./src/seed.js').seed(db);
         setSetting(db, 'company_name', 'Demo Rent a Car');

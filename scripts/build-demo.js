@@ -88,21 +88,40 @@ const demoUi = `
     });
     var hint = document.createElement('p');
     hint.className = 'demo-hint';
-    hint.innerHTML = '<b>Demo de Floty.</b> No hace falta usuario ni contraseña. Los datos se guardan solo en este navegador.';
-    var go = document.createElement('button');
-    go.type = 'button';
-    go.className = 'btn primary big';
-    go.textContent = 'Entrar a la demo';
-    go.addEventListener('click', function () {
-      go.disabled = true;
-      enter().catch(function (err) {
-        go.disabled = false;
-        document.getElementById('login-error').textContent = err.message;
-      });
-    });
     var err = document.getElementById('login-error');
     form.insertBefore(hint, err);
-    form.insertBefore(go, err);
+    var button = function (label, onClick) {
+      var go = document.createElement('button');
+      go.type = 'button';
+      go.className = 'btn primary big';
+      go.textContent = label;
+      go.addEventListener('click', function () {
+        go.disabled = true;
+        onClick().catch(function (e) {
+          go.disabled = false;
+          err.textContent = e.message;
+        });
+      });
+      form.insertBefore(go, err);
+    };
+    if (window.__demoTipo) {
+      // Demo general: el mismo sistema, con datos de ejemplo de un rent a car turístico o de una flota para choferes.
+      hint.innerHTML = '<b>Demo de Floty.</b> Elegí qué tipo de alquiler tenés. No hace falta usuario ni contraseña: los datos se guardan solo en este navegador.';
+      [['turismo', 'Alquiler turístico'], ['trabajo', 'Autos para trabajo (choferes de apps)']].forEach(function (t) {
+        button(t[1], function () {
+          if (t[0] === window.__demoTipo) return enter();
+          // La otra demo tiene su propia base: se recarga con ese tipo y entra sola.
+          try {
+            localStorage.setItem('rentacar-demo-tipo', t[0]);
+          } catch (e) {}
+          location.search = '?entrar';
+          return new Promise(function () {});
+        });
+      });
+    } else {
+      hint.innerHTML = '<b>Demo de Floty.</b> No hace falta usuario ni contraseña. Los datos se guardan solo en este navegador.';
+      button('Entrar a la demo', enter);
+    }
     // Con ?entrar (el botón "Probar la demo" de flotyapp.com.ar) entra solo, una vez, y se ve directo la app.
     if (/[?&]entrar\\b/.test(location.search)) {
       history.replaceState(null, '', location.pathname + location.hash);

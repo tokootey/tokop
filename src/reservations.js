@@ -5,7 +5,7 @@ const { categoryAvailability, isVehicleFree } = require('./availability');
 const { emit } = require('./webhooks');
 const { getSettings } = require('./db');
 const { refundFor } = require('./refunds');
-const { fail, normDateTime, nowLocal, round2, tx } = require('./util');
+const { fail, normDateTime, nowLocal, round2, tx, parseLocal, fmtLocal } = require('./util');
 const { placeSql, saveHotel, hotelMissing, normalizeHotel, withHotelExtra } = require('./hotel');
 const choferes = require('./choferes');
 
@@ -338,7 +338,9 @@ function checkin(db, id, input, userId) {
   // Choferes: el período en que lo devuelve se cobra entero, y los km se controlan contra los de todos los períodos.
   const byPeriods = r.periods.length > 0;
   if (byPeriods) {
-    choferes.renew(db, r.id, inAt, userId);
+    // Con la misma tolerancia de horas que el alquiler por días: devolverlo un rato tarde no abre otra semana.
+    const grace = Number(getSettings(db).grace_hours) || 0;
+    choferes.renew(db, r.id, fmtLocal(new Date(parseLocal(inAt).getTime() - grace * 3600000)), userId);
     choferes.kmReading(db, r, inKm, userId);
     r = getReservation(db, r.id);
   }

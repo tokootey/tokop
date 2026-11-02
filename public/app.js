@@ -3887,7 +3887,7 @@ on(/^\/empresas$/, async (view) => {
   const card = (c) => `<article class="agency" data-id="${c.id}">
       <div class="agency-top">
         <span class="agency-ic" aria-hidden="true">${ICON.building}</span>
-        <div class="agency-name"><b>${esc(c.name)}</b><small>${L('Alta', 'Created')} ${fmtD(c.created_at)}</small></div>
+        <div class="agency-name"><b>${esc(c.name)}</b><small>${L('Alta', 'Created')} ${fmtD(c.created_at)}${c.business_mode === 'choferes' ? ` · ${L('Autos para trabajo', 'Work cars')}` : ''}</small></div>
         <span class="st wait" data-status>${c.address ? L('Revisando…', 'Checking…') : L('Sin dirección', 'No address')}</span>
       </div>
       <div class="agency-addr">${
@@ -4121,10 +4121,11 @@ on(/^\/empresas$/, async (view) => {
         [
           { name: 'name', label: 'Nombre de la agencia', required: true, full: true },
           { name: 'country', label: 'País', type: 'select', options: Object.entries(state.settings.country_presets || { AR: { name: 'Argentina' } }).map(([k, p]) => [k, p.name]), required: true },
+          { name: 'business_mode', label: 'Tipo de negocio', type: 'select', required: true, options: [['turismo', 'Alquiler turístico'], ['choferes', 'Autos para trabajo (choferes de apps)']] },
           { name: 'admin_name', label: 'Nombre del administrador', required: true },
           { name: 'admin_email', label: 'Email del administrador', type: 'email', required: true, full: true },
         ],
-        { country: 'AR' },
+        { country: 'AR', business_mode: 'turismo' },
         'Crear agencia',
       ) + '<p class="muted">Se crea vacía, con los datos del país elegido, y con su dirección propia. Te mostramos una contraseña inicial para pasarle al administrador: la cambia en su primer ingreso.</p>',
       async (f) => {

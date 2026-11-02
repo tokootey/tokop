@@ -121,6 +121,7 @@ function openPlatform(principalDb, principalFile) {
         vehicles: one('SELECT COUNT(*) n FROM vehicles').n,
         reservations: one('SELECT COUNT(*) n FROM reservations').n,
         reservations_30d: one("SELECT COUNT(*) n FROM reservations WHERE created_at >= datetime('now', '-30 days')").n,
+        business_mode: (one("SELECT value FROM settings WHERE key = 'business_mode'") || {}).value || 'turismo',
         last_login: one("SELECT MAX(at) at FROM audit_log WHERE action = 'login'").at || null,
       };
     },
@@ -151,7 +152,7 @@ function openPlatform(principalDb, principalFile) {
     },
 
     /** Alta de una empresa nueva con su primer administrador. Devuelve la contraseña inicial (se cambia al entrar). */
-    create({ name, country, admin_name, admin_email }) {
+    create({ name, country, admin_name, admin_email, business_mode }) {
       name = String(name || '').trim().slice(0, 120);
       const email = String(admin_email || '').trim().toLowerCase();
       if (!name) fail(400, 'Falta el nombre de la empresa');
@@ -181,6 +182,8 @@ function openPlatform(principalDb, principalFile) {
       setSetting(db, 'jurisdiction_en', '');
       setSetting(db, 'webform_allowed_origins', '');
       setSetting(db, 'webform_enabled', '0'); // se activa cuando la empresa carga su sitio web autorizado
+      // Tipo de negocio: alquiler turístico (por defecto) o autos de trabajo para choferes de apps (src/choferes.js).
+      if (business_mode === 'choferes') setSetting(db, 'business_mode', 'choferes');
 
       let password;
       do password = `Rc${crypto.randomBytes(6).toString('base64url')}${crypto.randomInt(10, 99)}`;
