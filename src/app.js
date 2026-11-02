@@ -49,7 +49,7 @@ function trustProxy(app) {
 }
 
 function errorHandler(err, _req, res, _next) {
-  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'El archivo es demasiado grande (máximo 20 MB)' });
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'El archivo es demasiado grande (máximo 10 MB)' });
   if (err instanceof SyntaxError) return res.status(400).json({ error: 'JSON inválido' });
   if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, details: err.details });
   if (err.status === 400 || err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Pedido inválido' });

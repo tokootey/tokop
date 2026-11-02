@@ -2077,13 +2077,16 @@ function invoicesCardHtml(r) {
 /* ---------- Fotos y documentación del alquiler ---------- */
 const STAGE_LABEL = { entrega: 'Entrega', devolucion: 'Devolución', contrato: 'Contratos', otro: 'Otros documentos' };
 
-/** Achica las fotos antes de subirlas (las del celular pesan varios MB); los PDF van tal cual. */
-async function shrinkImage(file, max = 1600, quality = 0.82) {
-  if (!/^image\/(jpeg|png|webp)$/.test(file.type) || !window.createImageBitmap) return file;
+/**
+ * Achica las fotos antes de subirlas: 1600 px en el lado largo, JPEG 0,75 (~250 KB, se sigue viendo un rayón).
+ * Las del celular pesan varios MB y el servidor no acepta fotos de más de 1 MB. Los PDF van tal cual.
+ */
+async function shrinkImage(file, max = 1600, quality = 0.75) {
+  if (!/^image\/(jpeg|png|webp|heic|heif)$/.test(file.type) || !window.createImageBitmap) return file;
   try {
     const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
     const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
-    if (scale === 1 && file.size < 1.5e6) return file;
+    if (scale === 1 && file.size < 400 * 1024) return file;
     const c = document.createElement('canvas');
     c.width = Math.round(bmp.width * scale);
     c.height = Math.round(bmp.height * scale);

@@ -76,7 +76,7 @@ Las versiones nuevas se publican solas cada vez que se acepta un cambio en `main
 
 ## Copias de seguridad
 
-La app hace sola **una copia por día** de todas las bases de datos (la de cada empresa y el registro de empresas) y guarda las **últimas 14**. En Render quedan en `/var/data/respaldos`, cada una en una carpeta con la fecha y hora, por ejemplo `2026-10-20_030000`. Las fotos no entran en la copia, porque ocupan mucho: quedan en el disco.
+La app hace sola **una copia por día** de todas las bases de datos (la de cada empresa y el registro de empresas) y guarda las **últimas 14**. En Render quedan en `/var/data/respaldos`, cada una en una carpeta con la fecha y hora, por ejemplo `2026-10-20_030000`. Las fotos no entran en la copia, porque ocupan mucho: quedan en el disco (y en Supabase, si está prendida la copia externa de abajo).
 
 **Volver a una copia en Render** (por ejemplo, si se borró algo por error):
 
@@ -96,6 +96,24 @@ npm run respaldo -- restaurar 2026-10-20_030000
 ```
 
 Variables: `BACKUP_DIR` (carpeta de las copias; por defecto, `respaldos` al lado de la base), `BACKUP_KEEP` (cuántas guardar, 14) y `BACKUP_DISABLED=1` (no hacer copias).
+
+**Copia en Supabase** (para que los datos no queden sólo en el disco de Render)
+
+Si están cargadas `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` y `SUPABASE_BUCKET`, después de cada copia diaria la app la sube a Supabase Storage (carpeta `respaldos/`, con las mismas 14 últimas) y también las fotos y contratos que todavía no estén (carpeta `archivos/`). Si falta alguna variable, todo funciona como antes. Si la subida falla, queda en **Logs** la línea `No se pudo subir la copia a Supabase` y la copia del disco no cambia; las fotos que faltaron se suben con la copia del otro día.
+
+Para prenderla:
+
+1. En [supabase.com](https://supabase.com) creá un proyecto (el plan gratis alcanza para empezar).
+2. En **Storage → New bucket** creá un bucket, por ejemplo `floty-respaldos`, **sin** marcar *Public bucket*.
+3. En **Project Settings → API Keys** copiá la clave **service_role** (o una *secret key*), y en **Project Settings → Data API** la **Project URL**. Esa clave abre todo el proyecto: no la compartas.
+4. En Render, en **Environment**, cargá `SUPABASE_URL` (la Project URL), `SUPABASE_SERVICE_KEY` (la clave) y `SUPABASE_BUCKET` (el nombre del bucket) y tocá **Save, rebuild and deploy**.
+5. Al otro día buscá en **Logs** la línea `Copia … subida a Supabase`, y fijate en el bucket que estén las carpetas `respaldos` y `archivos`.
+
+**Volver a una copia bajada de Supabase** (por ejemplo, si se perdió el disco de Render):
+
+1. En **Storage**, entrá al bucket y bajá todo lo de `respaldos/<copia>` (por ejemplo `2026-10-20_030000`), respetando la subcarpeta `empresas`.
+2. En una computadora, poné esa carpeta en `data/respaldos/` y corré `npm run respaldo -- restaurar 2026-10-20_030000`. En Render, subila a `/var/data/respaldos/` por SSH (**Connect → SSH** en el servicio, con `scp`) y seguí los pasos de `RESTAURAR_RESPALDO` de arriba.
+3. Las fotos y contratos están en `archivos/`: lo de `archivos/uploads/` va a `/var/data/uploads/` y lo de `archivos/empresas/` a `/var/data/empresas/`.
 
 ## Pasar los datos del sistema anterior (Drive, Excel u otra página)
 

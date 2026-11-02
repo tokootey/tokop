@@ -37,7 +37,9 @@ function looksLike(mime, b) {
       return false;
   }
 }
-const MAX_BYTES = 20 * 1024 * 1024;
+// El panel achica las fotos antes de mandarlas (~250 KB); 1 MB deja margen. Los PDF de contratos van aparte.
+const MAX_PHOTO = 1024 * 1024;
+const MAX_PDF = 10 * 1024 * 1024;
 
 /**
  * Fotos y documentación de cada alquiler (estado del auto en la entrega y en la devolución).
@@ -49,13 +51,16 @@ function fileRoutes(db, uploadsDir) {
   const logAction = (reservationId, userId, action, detail) =>
     db.prepare('INSERT INTO reservation_log (reservation_id, user_id, action, detail) VALUES (?, ?, ?, ?)').run(reservationId, userId || null, action, detail);
 
-  router.post('/reservations/:id/files', express.raw({ type: () => true, limit: MAX_BYTES }), (req, res) => {
+  router.post('/reservations/:id/files', express.raw({ type: () => true, limit: MAX_PDF }), (req, res) => {
     const r = db.prepare('SELECT id FROM reservations WHERE id = ?').get(Number(req.params.id));
     if (!r) fail(404, 'Reserva inexistente');
     const mime = String(req.get('content-type') || '').split(';')[0].trim().toLowerCase();
     if (!TYPES[mime]) fail(415, 'Formato no admitido: subí fotos (JPG, PNG, HEIC) o PDF');
     if (!Buffer.isBuffer(req.body) || !req.body.length) fail(400, 'El archivo está vacío');
     if (!looksLike(mime, req.body)) fail(415, 'El archivo no es una foto o un PDF válido');
+    if (mime !== 'application/pdf' && req.body.length > MAX_PHOTO) {
+      fail(413, 'La foto pesa más de 1 MB. Subila desde el panel, que la achica sola.');
+    }
     const stage = STAGES.includes(req.query.stage) ? req.query.stage : 'otro';
     const name = String(req.query.name || `foto.${TYPES[mime]}`).replace(/[\\/\r\n]/g, '_').slice(0, 120);
 

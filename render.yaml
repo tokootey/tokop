@@ -29,6 +29,14 @@ services:
         value: /var/data/respaldos
       - key: BACKUP_KEEP
         value: "14"
+      # Copia externa en Supabase Storage (respaldos diarios + fotos y contratos). Las tres juntas; vacías = apagado.
+      # Ver README → Copias de seguridad → Copia en Supabase.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        sync: false
       - key: TRUST_PROXY
         value: "1"
       # Hora de la agencia: el servidor de Render está en hora universal y "hoy" se correría 3 horas.
