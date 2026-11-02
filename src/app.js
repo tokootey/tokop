@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
-const { DEFAULT_PASSWORD, login, logout, requireUser, requirePasswordChanged, changePassword, hashPassword, verifyPassword } = require('./auth');
+const { DEFAULT_PASSWORD, login, logout, requireUser, requirePasswordChanged, changePassword, hashPassword, verifyPassword, audit } = require('./auth');
 const { securityHeaders, httpsRedirect, sameOrigin } = require('./security');
 const { catalogRoutes } = require('./routes/catalog');
 const { operationsRoutes } = require('./routes/operations');
@@ -189,6 +189,17 @@ function platformRoutes(platform, company) {
   });
   router.post('/companies', (req, res) => res.status(201).json(platform.create(req.body || {})));
   router.put('/companies/:id/domain', (req, res) => res.json(platform.setDomain(req.params.id, (req.body || {}).domain)));
+  router.put('/companies/:id/profile', (req, res) => {
+    const r = platform.updateProfile(req.params.id, req.body || {});
+    audit(company.db, req, 'agencia_modificada', `empresa #${req.params.id}`);
+    res.json(r);
+  });
+  // La contraseña nueva se muestra una sola vez: no queda guardada en ningún lado.
+  router.post('/companies/:id/reset-password', (req, res) => {
+    const r = platform.resetAdminPassword(req.params.id);
+    audit(company.db, req, 'agencia_nueva_contrasena', `empresa #${req.params.id}`);
+    res.json(r);
+  });
   // Estadísticas de una agencia (las mismas que ve su administrador), sin entrar a su cuenta.
   router.get('/companies/:id/stats', (req, res) => {
     const c = platform.get(req.params.id);

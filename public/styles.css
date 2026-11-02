@@ -680,6 +680,10 @@ body.owner .user-box { margin-top: auto; }
 .agency { background: #fff; border: 1px solid #e4e8ef; border-radius: 18px; padding: 18px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 1px 2px rgba(11, 22, 38, 0.05), 0 8px 24px rgba(11, 22, 38, 0.06); min-width: 0; }
 .agency-top { display: flex; align-items: center; gap: 12px; }
 .agency-ic { flex-shrink: 0; width: 46px; height: 46px; border-radius: 14px; background: #eaf2ff; color: #1f6feb; display: flex; align-items: center; justify-content: center; }
+.agency-ic img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; background: #fff; }
+.agency-ic.big { width: 64px; height: 64px; }
+.agency-logo-edit { display: flex; gap: 14px; align-items: center; margin-bottom: 14px; }
+.brand img { object-fit: cover; background: #fff; }
 .agency-ic svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .agency-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .agency-name b { font-size: 17px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
