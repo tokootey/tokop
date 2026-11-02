@@ -16,7 +16,8 @@ const TYPES = {
   'application/pdf': 'pdf',
 };
 const STAGES = ['entrega', 'devolucion', 'contrato', 'otro'];
-const MAX_BYTES = 20 * 1024 * 1024;
+const MAX_PHOTO = 1024 * 1024; // los mismos topes que src/routes/files.js
+const MAX_PDF = 10 * 1024 * 1024;
 
 function fileRoutes(db) {
   db.exec('CREATE TABLE IF NOT EXISTS demo_blobs (file_id INTEGER PRIMARY KEY, data BLOB)');
@@ -32,7 +33,8 @@ function fileRoutes(db) {
       if (!TYPES[mime]) fail(415, 'Formato no admitido: subí fotos (JPG, PNG, HEIC) o PDF');
       const bytes = new Uint8Array(await req.body.arrayBuffer());
       if (!bytes.length) fail(400, 'El archivo está vacío');
-      if (bytes.length > MAX_BYTES) fail(413, 'El archivo es demasiado grande (máximo 20 MB)');
+      if (bytes.length > MAX_PDF) fail(413, 'El archivo es demasiado grande (máximo 10 MB)');
+      if (mime !== 'application/pdf' && bytes.length > MAX_PHOTO) fail(413, 'La foto pesa más de 1 MB. Subila desde el panel, que la achica sola.');
       const stage = STAGES.includes(req.query.stage) ? req.query.stage : 'otro';
       const name = String(req.query.name || `foto.${TYPES[mime]}`).slice(0, 120);
       const id = Number(

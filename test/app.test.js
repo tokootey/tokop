@@ -418,6 +418,17 @@ test('fotos de entrega y devolución: subir, listar, ver y borrar', async () => 
     assert.equal(f.size, png.length);
 
     assert.equal((await up(Buffer.from('hola'), 'text/plain')).status, 415);
+    // Topes: fotos hasta 1 MB (el panel las achica antes), PDF de contratos hasta 10 MB.
+    const pad = (head, size) => Buffer.concat([head, Buffer.alloc(size - head.length)]);
+    const bigPhoto = await up(pad(png, 1024 * 1024 + 1), 'image/png');
+    assert.equal(bigPhoto.status, 413);
+    assert.match((await bigPhoto.json()).error, /La foto pesa más de 1 MB/);
+    const pdf = await up(pad(Buffer.from('%PDF-1.4\n'), 3 * 1024 * 1024), 'application/pdf');
+    assert.equal(pdf.status, 201);
+    await fetch(`${b2}/api/files/${(await pdf.json()).id}`, { method: 'DELETE', headers: { Cookie: token } });
+    const hugePdf = await up(pad(Buffer.from('%PDF-1.4\n'), 10 * 1024 * 1024 + 1), 'application/pdf');
+    assert.equal(hugePdf.status, 413);
+    assert.match((await hugePdf.json()).error, /máximo 10 MB/);
     const noAuth = await fetch(`${b2}/api/reservations/1/files`, { method: 'POST', headers: { 'Content-Type': 'image/png' }, body: png });
     assert.equal(noAuth.status, 401);
 
