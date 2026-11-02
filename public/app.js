@@ -278,6 +278,9 @@ async function loadCatalogs() {
   const [settings, branches, categories, extras] = await Promise.all([GET('/settings'), GET('/branches'), GET('/categories'), GET('/extras')]);
   Object.assign(state, { settings, branches, categories, extras });
   $('#brand').textContent = settings.company_name || 'Floty';
+  const logo = $('.brand img');
+  logo.dataset.floty ??= logo.getAttribute('src'); // el de Floty, para volver a él si la agencia no tiene logo
+  logo.src = settings.company_logo || logo.dataset.floty;
   $('.brand small').classList.toggle('hidden', !settings.company_name); // "Floty con Floty" no
   document.title = settings.company_name ? `${settings.company_name} · Floty` : 'Floty · Gestión para rent a car';
 }
@@ -3923,7 +3926,7 @@ on(/^\/empresas$/, async (view) => {
   const host = (a) => esc(String(a || '').replace(/^https:\/\//, ''));
   const card = (c) => `<article class="agency" data-id="${c.id}">
       <div class="agency-top">
-        <span class="agency-ic" aria-hidden="true">${ICON.building}</span>
+        <span class="agency-ic" aria-hidden="true">${c.logo ? `<img src="${esc(c.logo)}" alt="">` : ICON.building}</span>
         <div class="agency-name"><b>${esc(c.name)}</b><small>${L('Alta', 'Created')} ${fmtD(c.created_at)}${c.business_mode === 'choferes' ? ` · ${L('Autos para trabajo', 'Work cars')}` : ''}</small></div>
         <span class="st wait" data-status>${c.address ? L('Revisando…', 'Checking…') : L('Sin dirección', 'No address')}</span>
       </div>
@@ -3952,7 +3955,8 @@ on(/^\/empresas$/, async (view) => {
         ${c.next_charge || c.plan_price ? `<button class="btn pill small" type="button" data-charge>${ICON.check}Marcar pagado</button>` : ''}
       </div>
       <div class="agency-actions">
-        <button class="btn primary pill" type="button" data-account>${ICON.user}Ficha y abono</button>
+        <button class="btn primary pill" type="button" data-profile>${ICON.building}Datos de la agencia</button>
+        <button class="btn pill" type="button" data-account>${ICON.user}Ficha y abono</button>
         <a class="btn pill" href="#/empresas/${c.id}/estadisticas">${ICON.chart}Estadísticas</a>
         <div class="agency-actions-2">
           <button class="btn pill" type="button" data-check>${ICON.reset}Probar dirección</button>
@@ -4084,6 +4088,54 @@ on(/^\/empresas$/, async (view) => {
     { name: 'domain_expires', label: 'Su dominio propio vence el', type: 'date' },
     { name: 'cert_expires', label: 'Su certificado de factura (ARCA o SII) vence el', type: 'date' },
   ];
+  // Datos de la agencia: nombre, tipo de negocio, logo y su administrador; y una contraseña nueva si la perdió.
+  const openProfile = (c) => {
+    let logo; // undefined = no se toca; '' = se quita; data URL = el nuevo
+    openModal(
+      `Datos de la agencia · ${c.name}`,
+      `<div class="agency-logo-edit"><span class="agency-ic big" data-logo-preview>${c.logo ? `<img src="${esc(c.logo)}" alt="">` : ICON.building}</span>
+        <div><label class="btn small">Elegir logo o foto<input type="file" accept="image/png,image/jpeg,image/webp" data-logo-file hidden></label>
+        ${c.logo ? '<button type="button" class="btn small link" data-logo-remove>Quitar</button>' : ''}
+        <p class="muted" style="margin:6px 0 0">Aparece en tu panel y arriba a la izquierda en el sistema de la agencia.</p></div></div>` +
+        formHtml(
+          [
+            { name: 'name', label: 'Nombre de la agencia', required: true, full: true },
+            { name: 'business_mode', label: 'Tipo de negocio', type: 'select', required: true, options: [['turismo', 'Alquiler turístico'], ['choferes', 'Autos para trabajo (choferes de apps)']] },
+            { name: 'admin_name', label: 'Nombre del administrador' },
+            { name: 'admin_email', label: 'Email del administrador (con el que entra)', type: 'email', required: true, full: true },
+          ],
+          { name: c.name, business_mode: c.business_mode || 'turismo', admin_name: c.admin_name || '', admin_email: c.admin_email || '' },
+          'Guardar',
+        ) +
+        `<div class="card" style="margin-top:14px"><b>¿El administrador no puede entrar?</b>
+          <p class="muted" style="margin:4px 0 8px">Le damos una contraseña inicial nueva. La anterior deja de servir y, al entrar, elige una propia.</p>
+          <button type="button" class="btn small" data-reset-pw>Darle una contraseña nueva</button></div>`,
+      async (f) => {
+        await run(() => PUT(`/platform/companies/${c.id}/profile`, { ...f, ...(logo !== undefined ? { logo } : {}) }), 'Datos de la agencia guardados');
+        route();
+      },
+    );
+    const preview = $('#modal [data-logo-preview]');
+    $('#modal [data-logo-file]').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        logo = await logoDataUrl(file);
+        preview.innerHTML = `<img src="${logo}" alt="">`;
+      } catch {
+        toast('No se pudo leer esa imagen. Probá con un PNG o un JPG.', true);
+      }
+    });
+    $('#modal [data-logo-remove]')?.addEventListener('click', () => {
+      logo = '';
+      preview.innerHTML = ICON.building;
+    });
+    $('#modal [data-reset-pw]').addEventListener('click', async () => {
+      if (!(await confirmModal({ title: `Contraseña nueva · ${c.name}`, text: `El administrador (${c.admin_email}) va a tener que entrar con la contraseña nueva. La anterior deja de servir.`, ok: 'Darle una nueva' }))) return;
+      const r = await run(() => POST(`/platform/companies/${c.id}/reset-password`));
+      if (r) setTimeout(() => showCredentials('Contraseña nueva', `Pasale estos datos al administrador de <b>${esc(c.name)}</b>.`, r.address, r.email, r.password));
+    });
+  };
   const openAccount = (c) =>
     openModal(
       `Ficha y abono · ${c.name}`,
@@ -4133,6 +4185,7 @@ on(/^\/empresas$/, async (view) => {
   $$('.agency', view).forEach((box) => {
     const c = agencies.find((x) => x.id === Number(box.dataset.id));
     $('[data-account]', box).addEventListener('click', () => openAccount(c));
+    $('[data-profile]', box).addEventListener('click', () => openProfile(c));
     $('[data-charge]', box)?.addEventListener('click', () => payDialog(`Abono pagado · ${c.name}`, c.plan_price, `/platform/companies/${c.id}/paid`, 'Cobro anotado'));
     $('[data-check]', box).addEventListener('click', () => (c.address ? check(c) : toast(L('Esta agencia todavía no tiene dirección.', 'This agency has no address yet.'), true)));
     $('[data-copy]', box)?.addEventListener('click', (e) =>
@@ -4168,20 +4221,39 @@ on(/^\/empresas$/, async (view) => {
       async (f) => {
         const r = await POST('/platform/companies', f);
         // La contraseña se muestra una sola vez: no queda guardada en ningún lado.
-        setTimeout(() =>
-          openModal(
-            'Agencia creada',
-            `<p><b>${esc(r.company.name)}</b> ya está lista. Pasale estos datos al administrador. La contraseña mandala aparte (en persona, por llamada o en otro mensaje).</p>
-             <dl class="info"><dt>Dirección</dt><dd data-notr>${esc(r.company.address || location.origin)}</dd><dt>Usuario</dt><dd><b>${esc(r.admin.email)}</b></dd><dt>Contraseña inicial</dt><dd><code style="font-size:16px">${esc(r.admin.password)}</code></dd></dl>
-             <p class="muted">Esta contraseña no se vuelve a mostrar. Al entrar, la app le pide elegir una propia y le muestra los primeros pasos para cargar su agencia.</p>
-             <div class="actions"><button class="btn primary" data-close>Listo</button></div>`,
-          ),
-        );
+        setTimeout(() => showCredentials('Agencia creada', `<b>${esc(r.company.name)}</b> ya está lista. Pasale estos datos al administrador.`, r.company.address, r.admin.email, r.admin.password));
         route();
       },
     ),
   );
 }, 'empresas');
+
+/** Usuario y contraseña inicial de una agencia, con botón para copiar (se muestran una sola vez). */
+function showCredentials(title, intro, address, email, password) {
+  openModal(
+    title,
+    `<p>${intro} La contraseña mandala aparte (en persona, por llamada o en otro mensaje).</p>
+     <dl class="info"><dt>Dirección</dt><dd data-notr>${esc(address || location.origin)}</dd><dt>Usuario</dt><dd data-notr><b>${esc(email)}</b></dd>
+       <dt>Contraseña inicial</dt><dd data-notr><code style="font-size:18px;letter-spacing:.06em">${esc(password)}</code> <button type="button" class="btn small" data-copy-pw>Copiar</button></dd></dl>
+     <p class="muted">No tiene letras que se confundan (como I y l, u O y 0). Esta contraseña no se vuelve a mostrar: al entrar, la app le pide elegir una propia.</p>
+     <div class="actions"><button class="btn primary" data-close>Listo</button></div>`,
+  );
+  $('#modal [data-copy-pw]').addEventListener('click', () =>
+    (navigator.clipboard ? navigator.clipboard.writeText(password) : Promise.reject()).then(() => toast('Contraseña copiada'), () => toast('Seleccioná la contraseña y copiala', true)),
+  );
+}
+
+/** Logo de una agencia: se achica a 256 px en el navegador y se guarda como imagen dentro de su configuración. */
+async function logoDataUrl(file) {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, 256 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(bmp.width * scale);
+  c.height = Math.round(bmp.height * scale);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  // PNG mantiene el fondo transparente de los logos; las fotos van en JPG, que pesa menos.
+  return file.type === 'image/png' ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.85);
+}
 
 /* ============================================================
    Importar datos de sistemas anteriores (sólo administradores)

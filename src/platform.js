@@ -36,6 +36,21 @@ const normHost = (h) =>
     .replace(/[/:].*$/, '')
     .replace(/\.$/, '');
 
+/**
+ * Contraseña inicial para pasarle a una agencia: sin letras ni números que se confunden al leerla
+ * (I, l, 1, O, 0) ni símbolos que cortan la selección al copiarla con doble clic.
+ */
+const CLEAR = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function initialPassword(email) {
+  let p;
+  do p = Array.from({ length: 12 }, () => CLEAR[crypto.randomInt(CLEAR.length)]).join('');
+  while (passwordProblem(p, email));
+  return p;
+}
+// Logo de la agencia: una imagen chica, ya achicada en el navegador (se guarda en su configuración).
+const LOGO = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+const LOGO_MAX = 300 * 1024;
+
 function openPlatform(principalDb, principalFile) {
   const dir = path.dirname(path.resolve(principalFile));
   const reg = new DatabaseSync(path.join(dir, 'empresas.db'));
@@ -122,6 +137,8 @@ function openPlatform(principalDb, principalFile) {
         reservations: one('SELECT COUNT(*) n FROM reservations').n,
         reservations_30d: one("SELECT COUNT(*) n FROM reservations WHERE created_at >= datetime('now', '-30 days')").n,
         business_mode: (one("SELECT value FROM settings WHERE key = 'business_mode'") || {}).value || 'turismo',
+        logo: (one("SELECT value FROM settings WHERE key = 'company_logo'") || {}).value || null,
+        admin_name: (one("SELECT name FROM users WHERE role = 'admin' AND active = 1 ORDER BY id LIMIT 1") || {}).name || null,
         last_login: one("SELECT MAX(at) at FROM audit_log WHERE action = 'login'").at || null,
       };
     },
@@ -185,9 +202,7 @@ function openPlatform(principalDb, principalFile) {
       // Tipo de negocio: alquiler turístico (por defecto) o autos de trabajo para choferes de apps (src/choferes.js).
       if (business_mode === 'choferes') setSetting(db, 'business_mode', 'choferes');
 
-      let password;
-      do password = `Rc${crypto.randomBytes(6).toString('base64url')}${crypto.randomInt(10, 99)}`;
-      while (passwordProblem(password, email));
+      const password = initialPassword(email);
       db.prepare("INSERT INTO users (name, email, password_hash, role, must_change_password) VALUES (?, ?, ?, 'admin', 1)").run(
         String(admin_name || 'Administrador').slice(0, 120),
         email,
@@ -196,6 +211,51 @@ function openPlatform(principalDb, principalFile) {
       const r = reg.prepare('INSERT INTO companies (slug, name, db_file) VALUES (?, ?, ?)').run(slug, name, dbFile.split(path.sep).join('/'));
       open.set(Number(r.lastInsertRowid), db);
       return { company: { id: Number(r.lastInsertRowid), slug, name, address: addressOf({ slug }) }, admin: { email, password } };
+    },
+
+    /**
+     * Datos de una agencia que cambia el dueño de Floty: nombre, tipo de negocio, logo y su administrador
+     * (el primero: nombre y email). La dirección (subdominio) no cambia, para no romper los links ya mandados.
+     */
+    updateProfile(id, { name, business_mode, logo, admin_name, admin_email } = {}) {
+      const c = platform.get(id);
+      if (!c) fail(404, 'Empresa inexistente');
+      const admin = c.db.prepare("SELECT * FROM users WHERE role = 'admin' AND active = 1 ORDER BY id LIMIT 1").get();
+      if (name !== undefined) {
+        name = String(name || '').trim().slice(0, 120);
+        if (!name) fail(400, 'Falta el nombre de la empresa');
+      }
+      if (business_mode !== undefined && !['turismo', 'choferes'].includes(business_mode)) fail(400, 'Tipo de negocio inválido');
+      if (logo !== undefined && logo !== null && logo !== '' && (!LOGO.test(logo) || logo.length > LOGO_MAX)) fail(400, 'El logo tiene que ser una imagen PNG, JPG o WEBP chica');
+      let email;
+      if (admin_email !== undefined && admin) {
+        email = String(admin_email || '').trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, 'El email del administrador no es válido');
+        if (email !== admin.email && (platform.emailTaken(email) || c.db.prepare('SELECT 1 FROM users WHERE email = ? AND id <> ?').get(email, admin.id))) {
+          fail(409, 'Ese email ya lo usa otro usuario');
+        }
+      }
+      if (name !== undefined) {
+        reg.prepare('UPDATE companies SET name = ? WHERE id = ?').run(name, c.id);
+        setSetting(c.db, 'company_name', name);
+      }
+      if (business_mode !== undefined) setSetting(c.db, 'business_mode', business_mode);
+      if (logo !== undefined) setSetting(c.db, 'company_logo', logo || '');
+      if (admin && admin_name !== undefined) c.db.prepare('UPDATE users SET name = ? WHERE id = ?').run(String(admin_name || 'Administrador').trim().slice(0, 120) || 'Administrador', admin.id);
+      if (admin && email && email !== admin.email) c.db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, admin.id);
+      return { id: c.id, ...platform.stats(c.id), name: name ?? c.name };
+    },
+
+    /** Contraseña inicial nueva para el administrador de una agencia (la cambia al entrar). Cierra sus sesiones abiertas. */
+    resetAdminPassword(id) {
+      const c = platform.get(id);
+      if (!c) fail(404, 'Empresa inexistente');
+      const admin = c.db.prepare("SELECT * FROM users WHERE role = 'admin' AND active = 1 ORDER BY id LIMIT 1").get();
+      if (!admin) fail(404, 'La agencia no tiene un administrador activo');
+      const password = initialPassword(admin.email);
+      c.db.prepare('UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?').run(hashPassword(password), admin.id);
+      c.db.prepare('DELETE FROM sessions WHERE user_id = ?').run(admin.id);
+      return { email: admin.email, password, address: addressOf(c) };
     },
 
     close() {
@@ -209,4 +269,4 @@ function openPlatform(principalDb, principalFile) {
   return platform;
 }
 
-module.exports = { openPlatform, PRINCIPAL_ID };
+module.exports = { openPlatform, PRINCIPAL_ID, initialPassword };
