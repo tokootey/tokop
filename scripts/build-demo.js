@@ -68,6 +68,13 @@ const demoCss = `
 .demo-contract { position: fixed; inset: 0; z-index: 80; background: rgba(15,23,42,.55); overflow-y: auto; padding: 24px 12px; }
 .demo-contract .demo-close { display: block; margin: 0 auto 12px; background: #fff; }
 .demo-paper { background: #fff; max-width: 820px; margin: 0 auto; padding: 8px 16px; border-radius: 8px; }
+/* Pantalla de elegir el tipo: al pasar por cada opción, el fondo muestra de qué se trata (viaje o trabajo). */
+.login { position: relative; overflow: hidden; }
+.login-card { position: relative; z-index: 1; }
+.demo-escena { position: absolute; inset: 0; opacity: 0; transition: opacity .45s ease; pointer-events: none; }
+.demo-escena svg { width: 100%; height: 100%; display: block; }
+.login[data-escena=turismo] .demo-escena-turismo, .login[data-escena=trabajo] .demo-escena-trabajo { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .demo-escena { transition: none; } }
 `;
 
 // Corre enseguida: el HTML de la app ya está arriba de este script.
@@ -103,12 +110,95 @@ const demoUi = `
         });
       });
       form.insertBefore(go, err);
+      return go;
     };
     if (window.__demoTipo) {
       // Demo general: el mismo sistema, con datos de ejemplo de un rent a car turístico o de una flota para choferes.
       hint.innerHTML = '<b>Demo de Floty.</b> Elegí qué tipo de alquiler tenés. No hace falta usuario ni contraseña: los datos se guardan solo en este navegador.';
+      var login = document.getElementById('login');
+      // Fondos dibujados (sin fotos: la demo es un solo archivo que anda sin internet).
+      // Paisajes con capas y luz, no íconos sueltos: cordillera y canal al atardecer, y una calle de ciudad al anochecer.
+      var semilla = 7;
+      var azar = function () { semilla = (semilla * 9301 + 49297) % 233280; return semilla / 233280; };
+      var cordon = function (y, alto, paso, color) {
+        var d = 'M0 900 L0 ' + y;
+        for (var x = 0; x <= 1440; x += paso) d += ' L' + x + ' ' + Math.round(y - azar() * alto);
+        return '<path d="' + d + ' L1440 900 Z" fill="' + color + '"/>';
+      };
+      var bosque = '';
+      for (var bx = -10; bx < 1450; bx += 13) {
+        var bh = 16 + Math.round(azar() * 26);
+        bosque += 'M' + bx + ' 742 L' + (bx + 8) + ' ' + (742 - bh) + ' L' + (bx + 16) + ' 742 Z ';
+      }
+      var turismo = '<svg viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><defs>' +
+        '<linearGradient id="dcielo" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7d9fc4"/><stop offset=".45" stop-color="#d9c7b4"/><stop offset=".72" stop-color="#f0ad82"/></linearGradient>' +
+        '<radialGradient id="dsol" cx="1040" cy="560" r="420" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#fff3dc" stop-opacity=".95"/><stop offset=".25" stop-color="#ffd6a3" stop-opacity=".5"/><stop offset="1" stop-color="#ffd6a3" stop-opacity="0"/></radialGradient>' +
+        '<linearGradient id="dbruma" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4dcc4" stop-opacity="0"/><stop offset="1" stop-color="#f4dcc4" stop-opacity=".45"/></linearGradient>' +
+        '<linearGradient id="dagua" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8d9fb8"/><stop offset="1" stop-color="#2f4663"/></linearGradient>' +
+        '</defs>' +
+        '<rect width="1440" height="900" fill="url(#dcielo)"/><rect width="1440" height="900" fill="url(#dsol)"/>' +
+        cordon(560, 170, 40, '#a9b3c6') +
+        '<path d="M800 560 L880 352 L902 384 L928 300 L958 372 L986 340 L1080 560 Z" fill="#9ca8bf"/>' +
+        '<path d="M928 300 L914 336 L926 330 L934 348 L944 334 L952 344 Z" fill="#eef2f7" opacity=".8"/>' +
+        '<rect y="460" width="1440" height="200" fill="url(#dbruma)"/>' +
+        cordon(640, 130, 30, '#75859e') +
+        cordon(705, 80, 22, '#4b5b72') +
+        '<rect y="735" width="1440" height="165" fill="url(#dagua)"/>' +
+        '<g stroke="#ffe2bd" stroke-linecap="round" opacity=".35" stroke-width="3"><path d="M930 780 h120 M990 806 h150 M900 836 h90 M1060 860 h140 M260 800 h80 M420 850 h110"/></g>' +
+        '<path d="' + bosque + '" fill="#223529"/>' +
+        '<path d="M0 860 C 240 830, 420 880, 640 900 H0 Z" fill="#1b2a22"/>' +
+        '</svg>';
+      var ciudad = '';
+      [[560, 120, 300, '#2b3150'], [610, 80, 250, '#1d2238']].forEach(function (capa, n) {
+        for (var cx = -20; cx < 1460;) {
+          var ancho = 40 + Math.round(azar() * 80), alto = capa[1] + Math.round(azar() * capa[2]);
+          ciudad += '<rect x="' + cx + '" y="' + (capa[0] - alto) + '" width="' + ancho + '" height="' + (alto + 300) + '" fill="' + capa[3] + '"/>';
+          if (n === 1) {
+            for (var wy = capa[0] - alto + 16; wy < capa[0] - 10; wy += 22) {
+              for (var wx = cx + 10; wx < cx + ancho - 12; wx += 18) {
+                if (azar() < .28) ciudad += '<rect x="' + wx + '" y="' + wy + '" width="7" height="10" fill="#f4c27a" opacity=".55"/>';
+              }
+            }
+          }
+          cx += ancho + 4;
+        }
+      });
+      var luces = '';
+      var tonos = ['#ffcf7a', '#ff8a5b', '#fff1c9', '#ff5d5d'];
+      for (var k = 0; k < 28; k++) {
+        luces += '<circle cx="' + Math.round(azar() * 1440) + '" cy="' + Math.round(380 + azar() * 250) + '" r="' + Math.round(10 + azar() * 26) + '" fill="' + tonos[k % 4] + '" opacity="' + (.22 + azar() * .35).toFixed(2) + '"/>';
+      }
+      var lineas = '';
+      for (var ly = 620, largo = 6; ly < 900; ly += largo * 2.4, largo *= 1.28) {
+        lineas += '<path d="M' + (720 - largo * .08) + ' ' + Math.round(ly) + ' L' + (720 + largo * .08) + ' ' + Math.round(ly) + ' L' + (720 + largo * .1) + ' ' + Math.round(ly + largo) + ' L' + (720 - largo * .1) + ' ' + Math.round(ly + largo) + ' Z" fill="#d8c27a" opacity=".7"/>';
+      }
+      var trabajo = '<svg viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><defs>' +
+        '<linearGradient id="docaso" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#18213d"/><stop offset=".42" stop-color="#3a3f63"/><stop offset=".62" stop-color="#b5675a"/><stop offset=".7" stop-color="#e39a6b"/></linearGradient>' +
+        '<linearGradient id="dasfalto" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2f3442"/><stop offset="1" stop-color="#101219"/></linearGradient>' +
+        '<filter id="dbokeh" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="9"/></filter>' +
+        '<filter id="dtrazo" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="2.5"/></filter>' +
+        '</defs>' +
+        '<rect width="1440" height="900" fill="url(#docaso)"/>' +
+        ciudad +
+        '<rect y="610" width="1440" height="290" fill="#14161f"/>' +
+        '<path d="M0 900 L1440 900 L790 610 L650 610 Z" fill="url(#dasfalto)"/>' +
+        lineas +
+        '<g fill="none" stroke-linecap="round" filter="url(#dtrazo)">' +
+        '<path d="M705 612 C 600 700, 380 820, 90 900" stroke="#ff4d4d" stroke-width="7" opacity=".85"/>' +
+        '<path d="M695 614 C 560 724, 300 846, 0 884" stroke="#ff7b54" stroke-width="3" opacity=".7"/>' +
+        '<path d="M738 612 C 860 704, 1110 824, 1440 884" stroke="#ffe9b0" stroke-width="7" opacity=".85"/>' +
+        '<path d="M748 614 C 900 726, 1160 846, 1420 900" stroke="#fff6d8" stroke-width="3" opacity=".7"/>' +
+        '</g>' +
+        '<g filter="url(#dbokeh)">' + luces + '</g>' +
+        '</svg>';
+      [['turismo', turismo], ['trabajo', trabajo]].forEach(function (e) {
+        var capa = document.createElement('div');
+        capa.className = 'demo-escena demo-escena-' + e[0];
+        capa.innerHTML = e[1];
+        login.insertBefore(capa, login.firstChild);
+      });
       [['turismo', 'Alquiler turístico'], ['trabajo', 'Autos para trabajo (choferes de apps)']].forEach(function (t) {
-        button(t[1], function () {
+        var elegir = button(t[1], function () {
           if (t[0] === window.__demoTipo) return enter();
           // La otra demo tiene su propia base: se recarga con ese tipo y entra sola.
           try {
@@ -117,6 +207,12 @@ const demoUi = `
           location.search = '?elegido';
           return new Promise(function () {});
         });
+        var mostrar = function () { login.setAttribute('data-escena', t[0]); };
+        var quitar = function () { login.removeAttribute('data-escena'); };
+        elegir.addEventListener('mouseenter', mostrar);
+        elegir.addEventListener('focus', mostrar);
+        elegir.addEventListener('mouseleave', quitar);
+        elegir.addEventListener('blur', quitar);
       });
     } else {
       hint.innerHTML = '<b>Demo de Floty.</b> No hace falta usuario ni contraseña. Los datos se guardan solo en este navegador.';
