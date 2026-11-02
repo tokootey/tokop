@@ -298,6 +298,124 @@ function seedChoferes(db) {
   return true;
 }
 
+/**
+ * Demo: un año de movimiento anterior a los datos de ejemplo (alquileres terminados y cobrados, cancelaciones,
+ * taller y gastos), para que Estadísticas se vea como en una agencia que ya trabaja. Siempre sale igual
+ * (números al azar con semilla fija). Va después de seed() o seedChoferes(): termina antes del primer
+ * alquiler de cada auto y le deja a cada auto su km y su estado.
+ */
+function seedHistory(db, { months = 12 } = {}) {
+  let s = 20240611;
+  const rnd = () => ((s = (s * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const int = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+  const pickOne = (list) => list[Math.floor(rnd() * list.length)];
+  const work = (db.prepare("SELECT value FROM settings WHERE key = 'business_mode'").get() || {}).value === 'choferes';
+  const ins = (sql, ...p) => Number(db.prepare(sql).run(...p).lastInsertRowid);
+  const y = new Date().getFullYear();
+  const today = new Date();
+  today.setHours(10, 0, 0, 0);
+  const start = new Date(today);
+  start.setMonth(start.getMonth() - months);
+  const day = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n, 10);
+  const ymd = (d) => fmtLocal(d).slice(0, 10);
+  const stamp = (d) => d.toISOString().slice(0, 19).replace('T', ' ');
+  const pay = (rid, amount, d, method, kind = 'pago') => {
+    if (!(amount > 0)) return;
+    addPayment(db, rid, { amount, method, kind });
+    db.prepare('UPDATE payments SET created_at = ? WHERE id = (SELECT MAX(id) FROM payments)').run(stamp(d));
+  };
+
+  const names = work
+    ? ['Gustavo Acosta', 'Nicolás Medina', 'Brenda Sosa', 'Hernán Ojeda', 'Pablo Ibarra', 'Sergio Molina', 'Daniela Paz', 'Walter Quiroga', 'Ezequiel Vera', 'Fernando Godoy', 'Jorge Cabrera', 'Micaela Luna']
+    : ['Ana Silva', 'Pedro Ramírez', 'Laura Méndez', 'John Smith', 'Rocío Navarro', 'Federico Ríos', 'Julia Moreno', 'Andrés Castillo', 'Carolina Vega', 'Tomás Aguirre', 'Sarah Johnson',
+       'Ignacio Peralta', 'Victoria Ledesma', 'Gonzalo Figueroa', 'Agustina Rojas', 'Bruno Ferreyra', 'Natalia Correa', 'Luca Rossi', 'Milagros Ponce', 'Santiago Vidal', 'Marina Costa', 'Facundo Ortiz'];
+  const people = names.map((name, i) =>
+    ins(
+      "INSERT INTO customers (full_name, doc_type, doc_number, phone, license_number, license_expiry, license_class, work_apps) VALUES (?, 'DNI', ?, ?, ?, ?, ?, ?)",
+      name, String(26000000 + i * 517313), `+54 9 11 ${4000 + i * 137}-${1000 + i * 311}`, `LIC-H${i + 1}`, `${y + 3}-12-31`,
+      work ? 'D1 (profesional)' : null, work ? pickOne(['Uber', 'Uber, DiDi', 'Cabify', 'DiDi', 'PedidosYa', 'remis']) : null,
+    ),
+  );
+  const branches = db.prepare('SELECT id FROM branches ORDER BY id').all().map((b) => b.id);
+  const extras = db.prepare("SELECT id, code FROM extras WHERE code IN ('GPS', 'SILLA', 'COND', 'CAD', 'FULL', 'MEDIO')").all();
+  const extra = (code) => extras.filter((e) => e.code === code).map((e) => ({ extra_id: e.id, quantity: 1 }));
+  // Temporada: verano y vacaciones de invierno se llenan; abril, mayo y octubre son flojos.
+  const busy = [0.85, 0.85, 0.6, 0.45, 0.35, 0.45, 0.8, 0.75, 0.45, 0.4, 0.5, 0.75];
+
+  const cars = db.prepare('SELECT id, plate, category_id, km, status FROM vehicles ORDER BY id').all();
+  const firstUse = db.prepare('SELECT MIN(pickup_at) AS at FROM reservations WHERE vehicle_id = ?');
+  for (const car of cars) {
+    const until = firstUse.get(car.id).at ? day(new Date(firstUse.get(car.id).at.replace(' ', 'T')), -2) : day(today, -1);
+    const plan = [];
+    let d = day(start, int(0, work ? 20 : 6));
+    while (true) {
+      const len = work ? 7 * int(3, 10) : int(2, 8);
+      const end = day(d, len);
+      if (end > until) break;
+      plan.push([d, end, len]);
+      d = day(end, work ? int(2, 12) : Math.max(0, Math.round((1 - busy[end.getMonth()]) * int(4, 12)) - 1));
+    }
+    // Los km de antes: el auto termina el año con los que tiene hoy.
+    const kmPerDay = work ? 260 : int(150, 230);
+    let km = Math.max(0, car.km - plan.reduce((a, [, , len]) => a + len * kmPerDay, 0) - int(500, 3000));
+    db.prepare("UPDATE vehicles SET status = 'disponible', km = ? WHERE id = ?").run(km, car.id);
+    let nextService = Math.ceil((km + 1) / 10000) * 10000;
+    for (const [from, to, len] of plan) {
+      const branch = pickOne(branches);
+      const opts = work
+        ? {}
+        : { extras: [...(rnd() < 0.35 ? extra(pickOne(['FULL', 'MEDIO'])) : []), ...(rnd() < 0.25 ? extra(pickOne(['GPS', 'SILLA', 'COND'])) : []), ...([5, 6, 7].includes(from.getMonth()) && rnd() < 0.4 ? extra('CAD') : [])] };
+      const r = createReservation(db, {
+        customer_id: pickOne(people), category_id: car.category_id, vehicle_id: car.id, pickup_branch_id: branch, return_branch_id: branch,
+        pickup_at: fmtLocal(from), return_at: fmtLocal(to), status: 'confirmada', source: work ? 'manual' : pickOne(['manual', 'manual', 'web', 'web', 'web', 'cotizador']),
+        allow_overbooking: true, ...opts,
+      });
+      db.prepare('UPDATE reservations SET created_at = ? WHERE id = ?').run(fmtLocal(day(from, -int(1, 25))), r.id);
+      // Algunas se caen: cancelaciones y clientes que no vinieron (el auto queda libre esos días).
+      if (!work && rnd() < 0.08) {
+        db.prepare('UPDATE reservations SET status = ? WHERE id = ?').run(rnd() < 0.7 ? 'cancelada' : 'no_show', r.id);
+        continue;
+      }
+      checkout(db, r.id, { out_at: fmtLocal(from), out_km: km, out_fuel: 8 }, null);
+      const method = () => pickOne(['transferencia', 'transferencia', 'tarjeta', 'efectivo', 'mercadopago']);
+      if (work) {
+        pay(r.id, r.deposit || 300000, from, 'efectivo', 'garantia');
+        for (let w = 0; w < len / 7; w++) pay(r.id, Math.round(r.total / (len / 7)), day(from, 7 * w + (rnd() < 0.15 ? int(1, 3) : 0)), method());
+      }
+      km += len * kmPerDay + int(-300, 300);
+      const damage = !work && rnd() < 0.05 ? int(4, 30) * 10000 : 0;
+      checkin(db, r.id, { in_at: fmtLocal(to), in_km: km, in_fuel: 8, ...(damage ? { damage_charge: damage, in_notes: 'Raspón en el paragolpes' } : {}) }, null);
+      const pending = getReservation(db, r.id).balance.pending;
+      pay(r.id, pending, to, work ? 'efectivo' : method());
+      if (work) pay(r.id, r.deposit || 300000, to, 'efectivo', 'devolucion_garantia');
+      if (km >= nextService) {
+        ins("INSERT INTO maintenance (vehicle_id, kind, description, start_date, end_date, km, cost, status) VALUES (?, 'service', ?, ?, ?, ?, ?, 'cerrado')",
+          car.id, `Service ${nextService.toLocaleString('es-AR')} km`, ymd(to), ymd(day(to, 1)), km, int(14, 24) * 10000);
+        nextService += 10000;
+      }
+    }
+    db.prepare('UPDATE vehicles SET status = ?, km = ? WHERE id = ?').run(car.status, car.km, car.id);
+  }
+
+  // Gastos de todos los meses: seguro de la flota, patentes, lavados y, en los autos de trabajo, GNC y repuestos.
+  for (let m = 0; m < months; m++) {
+    const first = new Date(start.getFullYear(), start.getMonth() + m, 1, 10);
+    const at = (n) => ymd(day(first, n));
+    if (day(first, 27) > today) break;
+    ins('INSERT INTO expenses (vehicle_id, date, kind, description, amount) VALUES (NULL, ?, ?, ?, ?)', at(9), 'seguro', 'Cuota del seguro de la flota', cars.length * (work ? 70000 : 85000));
+    if (m % 2 === 0) ins('INSERT INTO expenses (vehicle_id, date, kind, description, amount) VALUES (NULL, ?, ?, ?, ?)', at(14), 'patente', 'Patentes', cars.length * 38000);
+    for (let i = 0; i < (work ? 4 : 3); i++) {
+      const [kind, description, a, b] = pickOne(
+        work
+          ? [['combustible', 'Carga de GNC', 6, 12], ['repuestos', 'Pastillas de freno', 50, 80], ['repuestos', 'Cubierta nueva', 100, 140], ['lavado', 'Lavado completo', 15, 22], ['taller', 'Alineación y balanceo', 30, 45]]
+          : [['lavado', 'Lavado completo', 15, 22], ['repuestos', 'Escobillas y lámparas', 20, 35], ['repuestos', 'Cubierta nueva', 110, 150], ['taller', 'Alineación y balanceo', 30, 45]],
+      );
+      ins('INSERT INTO expenses (vehicle_id, date, kind, description, amount) VALUES (?, ?, ?, ?, ?)', pickOne(cars).id, at(int(1, 27)), kind, description, int(a, b) * 1000);
+    }
+  }
+  return true;
+}
+
 if (require.main === module) {
   const db = openDb();
   const admin = ensureAdmin(db);
@@ -305,4 +423,4 @@ if (require.main === module) {
   if (admin) console.log(`Usuario inicial: ${admin.email} / ${admin.password}`);
 }
 
-module.exports = { seed, seedDemo, seedChoferes };
+module.exports = { seed, seedDemo, seedChoferes, seedHistory };

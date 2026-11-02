@@ -3707,7 +3707,7 @@ on(/^\/empresas\/(\d+)\/estadisticas$/, (view, id) => statsView(view, `/platform
 
 /** Pantalla de estadísticas: la de la agencia o, con owner, la de una agencia vista desde el Panel de Floty. */
 async function statsView(view, url, { owner = false } = {}) {
-  const key = STATS_PERIODS.some(([k]) => k === state.statsPeriod) ? state.statsPeriod : 'month';
+  const key = STATS_PERIODS.some(([k]) => k === state.statsPeriod) ? state.statsPeriod : window.__demoReset ? 'prev' : 'month'; // la demo abre en un mes entero ya cerrado
   const [from, to] = STATS_PERIODS.find(([k]) => k === key)[2](new Date());
   const s = await GET(`${url}?from=${from}&to=${to}`);
   // Desde el panel del dueño no hay pantallas de la agencia a las que saltar: el texto va sin enlace.
