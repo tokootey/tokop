@@ -3955,12 +3955,13 @@ on(/^\/empresas$/, async (view) => {
         ${c.next_charge || c.plan_price ? `<button class="btn pill small" type="button" data-charge>${ICON.check}Marcar pagado</button>` : ''}
       </div>
       <div class="agency-actions">
-        <button class="btn primary pill" type="button" data-profile>${ICON.building}Datos de la agencia</button>
+        <button class="btn primary pill" type="button" data-profile>${ICON.building}Editar agencia</button>
         <button class="btn pill" type="button" data-account>${ICON.user}Ficha y abono</button>
         <a class="btn pill" href="#/empresas/${c.id}/estadisticas">${ICON.chart}Estadísticas</a>
         <div class="agency-actions-2">
           <button class="btn pill" type="button" data-check>${ICON.reset}Probar dirección</button>
           <button class="btn pill" type="button" data-domain>${ICON.globe}Dominio propio</button>
+          <button class="btn pill danger" type="button" data-remove>Eliminar</button>
         </div>
       </div>
     </article>`;
@@ -4186,6 +4187,11 @@ on(/^\/empresas$/, async (view) => {
     const c = agencies.find((x) => x.id === Number(box.dataset.id));
     $('[data-account]', box).addEventListener('click', () => openAccount(c));
     $('[data-profile]', box).addEventListener('click', () => openProfile(c));
+    $('[data-remove]', box).addEventListener('click', async () => {
+      const text = `${c.name} deja de poder entrar al sistema y sale de tu panel. Sus datos no se borran: quedan guardados en el servidor.`;
+      if (!(await confirmModal({ title: `Eliminar · ${c.name}`, text, ok: 'Eliminar agencia', danger: true }))) return;
+      if (await run(() => DEL(`/platform/companies/${c.id}`), 'Agencia eliminada')) route();
+    });
     $('[data-charge]', box)?.addEventListener('click', () => payDialog(`Abono pagado · ${c.name}`, c.plan_price, `/platform/companies/${c.id}/paid`, 'Cobro anotado'));
     $('[data-check]', box).addEventListener('click', () => (c.address ? check(c) : toast(L('Esta agencia todavía no tiene dirección.', 'This agency has no address yet.'), true)));
     $('[data-copy]', box)?.addEventListener('click', (e) =>
