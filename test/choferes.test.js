@@ -167,3 +167,54 @@ test('API: tipo de negocio, multas, lectura de km, Hoy y gastos en las estadíst
     server.close();
   }
 });
+
+test('devolverlo justo al terminar la semana, o dentro de la tolerancia de horas, no abre otra semana', () => {
+  const { db, cat, vehicle, customer } = fleet();
+  setSetting(db, 'grace_hours', '2');
+  const start = daysAgo(14);
+  const r = R.createReservation(db, { customer_id: customer, category_id: cat, vehicle_id: vehicle, pickup_at: start, return_at: C.addPeriod(start, 'semana'), status: 'confirmada' });
+  R.checkout(db, r.id, { out_at: start, out_km: 50000, out_fuel: 8 }, 1);
+  const end2 = C.addPeriod(C.addPeriod(start, 'semana'), 'semana'); // fin de la 2.ª semana
+  const later = (at, min) => fmtLocal(new Date(new Date(at.replace('T', ' ')).getTime() + min * 60000));
+  const x = R.checkin(db, r.id, { in_at: later(end2, 90), in_km: 51000, in_fuel: 8 }, 1);
+  assert.equal(x.periods.length, 2);
+  assert.equal(x.contract.final_total, 200000);
+});
+
+test('demo de autos para trabajo: flota, choferes que deben, licencia vencida, service y gastos', () => {
+  const { seedChoferes } = require('../src/seed');
+  const db = openDb(':memory:');
+  ensureAdmin(db);
+  assert.equal(seedChoferes(db), true);
+  assert.equal(seedChoferes(db), false, 'no se carga dos veces');
+  const hoy = C.dashboardChoferes(db, R.getReservation, fmtLocal(new Date()).slice(0, 10));
+  assert.deepEqual(
+    hoy.owing.map((o) => [o.customer_name, o.pending, o.late_fee]),
+    [
+      ['Ramiro Díaz', 230000 + 15000 + 48000 + 400 * 90, 15000], // semana, recargo, multa y km de más
+      ['Carla Gómez', 190000 + 5000, 5000],
+    ],
+  );
+  assert.deepEqual(hoy.license_expired.map((x) => x.customer_name), ['Lucía Fernández']);
+  assert.deepEqual(hoy.service_due.map((v) => v.plate), ['AG606MN']);
+  const done = R.getReservation(db, db.prepare("SELECT id FROM reservations WHERE status = 'finalizada'").get().id);
+  assert.equal(done.balance.pending, 0);
+  assert.equal(done.balance.deposit_held, 0);
+  assert.ok(db.prepare('SELECT COUNT(*) AS n FROM expenses').get().n >= 6);
+});
+
+test('Panel de Floty: una agencia nueva puede arrancar como "autos para trabajo"', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { openPlatform } = require('../src/platform');
+  const { getSetting } = require('../src/db');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rc-choferes-'));
+  const file = path.join(dir, 'rentacar.db');
+  const platform = openPlatform(openDb(file), file);
+  const trabajo = platform.create({ name: 'Flota Norte', country: 'AR', admin_name: 'Ana', admin_email: 'ana@flota-norte.test', business_mode: 'choferes' });
+  const turismo = platform.create({ name: 'Rent Sur', country: 'AR', admin_name: 'Beto', admin_email: 'beto@rent-sur.test' });
+  assert.equal(getSetting(platform.get(trabajo.company.id).db, 'business_mode'), 'choferes');
+  assert.equal(getSetting(platform.get(turismo.company.id).db, 'business_mode'), 'turismo');
+  assert.equal(platform.stats(trabajo.company.id).business_mode, 'choferes');
+});

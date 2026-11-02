@@ -105,13 +105,14 @@ function syncReservation(db, id) {
 /** Renovación automática: mientras el auto siga con el chofer, cada período vencido abre el siguiente al mismo precio. */
 function renew(db, reservationId, now = nowLocal(), userId = null) {
   let last = db.prepare('SELECT * FROM rental_periods WHERE reservation_id = ? ORDER BY n DESC LIMIT 1').get(reservationId);
-  if (!last || last.end_at > now) return 0;
+  // El período siguiente arranca recién pasado el fin del actual (devolverlo justo al terminar no abre otro).
+  if (!last || last.end_at >= now) return 0;
   const period = periodOf(getSettings(db));
   const ins = db.prepare('INSERT INTO rental_periods (reservation_id, n, start_at, end_at, amount) VALUES (?, ?, ?, ?, ?)');
   const logIns = db.prepare("INSERT INTO reservation_log (reservation_id, user_id, action, detail) VALUES (?, ?, 'renovado', ?)");
   let added = 0;
   tx(db, () => {
-    while (last.end_at <= now) {
+    while (last.end_at < now) {
       const next = { n: last.n + 1, start_at: last.end_at, end_at: addPeriod(last.end_at, period), amount: last.amount };
       ins.run(reservationId, next.n, next.start_at, next.end_at, next.amount);
       logIns.run(reservationId, userId, JSON.stringify({ periodo: next.n, desde: next.start_at, hasta: next.end_at, importe: next.amount }));
