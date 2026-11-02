@@ -4,7 +4,7 @@
  * Contrato de alquiler en PDF (A4), generado en el navegador con jsPDF + jsPDF-AutoTable.
  * Tiene los mismos datos que el contrato impreso: sirve antes de entregar el auto (pre-contrato)
  * y después, con los km, el combustible y los cargos reales.
- * Usa de app.js: state, money(), num(), locale(), taxName(), taxIdLabel() y contractTermsList().
+ * Usa de app.js: state, money(), num(), locale(), taxName(), taxIdLabel(), contractTermsList(), choferesMode() y baseLabel().
  */
 /** Con la app en inglés, todo lo que se escribe en el PDF pasa por tr() (i18n.js); en español no cambia nada. */
 function localizePdf(doc) {
@@ -94,11 +94,20 @@ function buildContractPdf(r) {
     ['Licencia N°', txt(r.customer_license), 'Vence', d(r.customer_license_expiry)],
   ]);
 
-  y = section('Conductor adicional', lastY() + 6);
-  kv(y, [
-    ['Nombre y apellido', '', 'Documento', ''],
-    ['Licencia N°', '', 'Vence', ''],
-  ]);
+  if (choferesMode()) {
+    y = section('Licencia profesional y garante', lastY() + 6);
+    kv(y, [
+      ['Clase de licencia', txt(r.customer_license_class), 'Trabaja con', txt(r.customer_work_apps)],
+      ['Garante', txt(r.guarantor_name), 'Documento', txt(r.guarantor_doc)],
+      ['Domicilio', txt(r.guarantor_address), 'Teléfono', txt(r.guarantor_phone)],
+    ]);
+  } else {
+    y = section('Conductor adicional', lastY() + 6);
+    kv(y, [
+      ['Nombre y apellido', '', 'Documento', ''],
+      ['Licencia N°', '', 'Vence', ''],
+    ]);
+  }
 
   y = section('Vehículo y período', lastY() + 6);
   kv(y, [
@@ -154,7 +163,7 @@ function buildContractPdf(r) {
   y = ensure(section('Precio, pagos y garantía', y + 2), 50);
   const q = r.pricing || {};
   const priceRows = [
-    q.base !== undefined ? [`Alquiler ${r.days} ${Number(r.days) === 1 ? 'día' : 'días'}${q.per_day ? ` × ${money(q.per_day)}` : ''}`, money(q.base)] : null,
+    q.base !== undefined ? [`Alquiler ${baseLabel(q, r.days)}`, money(q.base)] : null,
     q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
     ...(q.extras || []).map((x) => [`${x.name}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
@@ -198,7 +207,7 @@ function buildContractPdf(r) {
     M,
     y,
   );
-  signatures(y + 22, ['Firma del cliente', 'Conductor adicional', `Por ${company}`]);
+  signatures(y + 22, ['Firma del cliente', choferesMode() ? 'Garante' : 'Conductor adicional', `Por ${company}`]);
 
   /* ---------- Hoja 2: condiciones generales ---------- */
   doc.addPage();

@@ -103,7 +103,8 @@ function catalogRoutes(db) {
     if (!c) fail(404, 'Cliente inexistente');
     db.prepare(
       `UPDATE customers SET full_name = ?, doc_type = NULL, doc_number = NULL, email = NULL, phone = NULL, address = NULL,
-        birth_date = NULL, license_number = NULL, license_expiry = NULL, notes = NULL, anonymized_at = ? WHERE id = ?`,
+        birth_date = NULL, license_number = NULL, license_expiry = NULL, notes = NULL, license_class = NULL, work_apps = NULL,
+        guarantor_name = NULL, guarantor_doc = NULL, guarantor_phone = NULL, guarantor_address = NULL, anonymized_at = ? WHERE id = ?`,
     ).run(`Cliente anonimizado #${c.id}`, new Date().toISOString(), c.id);
     db.prepare("UPDATE reservations SET notes = NULL, flight = NULL WHERE customer_id = ?").run(c.id);
     // Las solicitudes del sitio web guardan el formulario original, que también tiene sus datos.
@@ -122,7 +123,7 @@ function catalogRoutes(db) {
     '/categories',
     crud(db, {
       table: 'categories',
-      fields: ['code', 'name', 'description', 'daily_rate', 'weekly_rate', 'deposit', 'km_per_day', 'extra_km_rate', 'seats', 'transmission', 'aliases', 'active'],
+      fields: ['code', 'name', 'description', 'daily_rate', 'weekly_rate', 'monthly_rate', 'deposit', 'km_per_day', 'km_per_period', 'extra_km_rate', 'seats', 'transmission', 'aliases', 'active'],
       required: ['code', 'name'],
       order: 'daily_rate',
       adminWrite: true,
@@ -159,7 +160,7 @@ function catalogRoutes(db) {
     '/vehicles',
     crud(db, {
       table: 'vehicles',
-      fields: ['plate', 'brand', 'model', 'year', 'color', 'category_id', 'branch_id', 'status', 'km', 'fuel', 'insurance_expiry', 'vtv_expiry', 'notes'],
+      fields: ['plate', 'brand', 'model', 'year', 'color', 'category_id', 'branch_id', 'status', 'km', 'fuel', 'insurance_expiry', 'vtv_expiry', 'service_every_km', 'notes'],
       required: ['plate', 'category_id'],
       order: 'plate',
       search: ['plate', 'brand', 'model'],
@@ -186,7 +187,8 @@ function catalogRoutes(db) {
     '/customers',
     crud(db, {
       table: 'customers',
-      fields: ['full_name', 'doc_type', 'doc_number', 'email', 'phone', 'address', 'birth_date', 'license_number', 'license_expiry', 'notes'],
+      fields: ['full_name', 'doc_type', 'doc_number', 'email', 'phone', 'address', 'birth_date', 'license_number', 'license_expiry', 'notes',
+        'license_class', 'work_apps', 'guarantor_name', 'guarantor_doc', 'guarantor_phone', 'guarantor_address'],
       required: ['full_name'],
       order: 'full_name',
       search: ['full_name', 'doc_number', 'email', 'phone'],
@@ -205,6 +207,20 @@ function catalogRoutes(db) {
       dateFields: ['start_date', 'end_date'],
       listSql: `SELECT m.*, v.plate, v.brand, v.model FROM maintenance m JOIN vehicles v ON v.id = m.vehicle_id`,
       afterWrite: (m) => syncVehicleMaintenance(db, m.vehicle_id),
+      adminDelete: true,
+    }),
+  );
+  // Gastos de cada auto (taller, repuestos, combustible, seguro…): entran en las ganancias y gastos del mes.
+  router.use(
+    '/expenses',
+    crud(db, {
+      table: 'expenses',
+      fields: ['vehicle_id', 'date', 'kind', 'description', 'amount'],
+      required: ['date', 'amount'],
+      order: 'date DESC, id DESC',
+      search: ['plate', 'description', 'kind'],
+      dateFields: ['date'],
+      listSql: `SELECT e.*, v.plate, v.brand, v.model FROM expenses e LEFT JOIN vehicles v ON v.id = e.vehicle_id`,
       adminDelete: true,
     }),
   );

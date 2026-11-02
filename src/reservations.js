@@ -7,6 +7,7 @@ const { getSettings } = require('./db');
 const { refundFor } = require('./refunds');
 const { fail, normDateTime, nowLocal, round2, tx } = require('./util');
 const { placeSql, saveHotel, hotelMissing, normalizeHotel, withHotelExtra } = require('./hotel');
+const choferes = require('./choferes');
 
 const STATUSES = ['pendiente', 'confirmada', 'en_curso', 'finalizada', 'cancelada', 'no_show'];
 // Para los mensajes de error: "Una reserva cancelada no puede pasar a confirmada".
@@ -26,8 +27,9 @@ function getReservation(db, id) {
     .prepare(
       `SELECT r.*, c.full_name AS customer_name, c.doc_number AS customer_doc, c.email AS customer_email, c.phone AS customer_phone,
               c.doc_type AS customer_doc_type, c.address AS customer_address, c.birth_date AS customer_birth_date,
-              c.license_number AS customer_license, c.license_expiry AS customer_license_expiry,
-              cat.code AS category_code, cat.name AS category_name, cat.km_per_day AS category_km_per_day, cat.extra_km_rate AS category_extra_km_rate,
+              c.license_number AS customer_license, c.license_expiry AS customer_license_expiry, c.license_class AS customer_license_class,
+              c.work_apps AS customer_work_apps, c.guarantor_name, c.guarantor_doc, c.guarantor_phone, c.guarantor_address,
+              cat.code AS category_code, cat.name AS category_name, cat.km_per_day AS category_km_per_day, cat.extra_km_rate AS category_extra_km_rate, cat.km_per_period AS category_km_per_period,
               v.plate AS vehicle_plate, v.brand AS vehicle_brand, v.model AS vehicle_model, v.color AS vehicle_color, v.year AS vehicle_year,
               v.km AS vehicle_km, v.fuel AS vehicle_fuel,
               ${placeSql('deliver', 'pb')} AS pickup_branch_name, ${placeSql('return', 'rb')} AS return_branch_name
@@ -59,6 +61,7 @@ function getReservation(db, id) {
        FROM reservation_files f LEFT JOIN users u ON u.id = f.created_by WHERE f.reservation_id = ? ORDER BY f.id`,
     )
     .all(r.id);
+  Object.assign(r, choferes.rentalExtras(db, r));
   r.balance = balance(r);
   r.log = db
     .prepare('SELECT l.*, u.name AS user_name FROM reservation_log l LEFT JOIN users u ON u.id = l.user_id WHERE reservation_id = ? ORDER BY l.id')
@@ -66,9 +69,13 @@ function getReservation(db, id) {
   return r;
 }
 
-/** Saldo pendiente: total final (o total de la reserva) menos pagos netos. Los depósitos en garantía van aparte. */
+/**
+ * Saldo pendiente: total final (o total de la reserva) menos pagos netos. Los depósitos en garantía van aparte.
+ * Modo choferes: se suman las multas, los km extra y el recargo por atraso (en turismo no hay).
+ */
 function balance(r) {
-  const due = r.contract && r.contract.final_total !== null && r.contract.final_total !== undefined ? r.contract.final_total : r.total;
+  const extra = (r.charges || []).reduce((a, c) => a + c.amount, 0) + (r.late_fee ? r.late_fee.total : 0);
+  const due = (r.contract && r.contract.final_total !== null && r.contract.final_total !== undefined ? r.contract.final_total : r.total) + extra;
   let paid = 0;
   let deposit = 0;
   for (const p of r.payments) {
@@ -309,6 +316,7 @@ function checkout(db, id, input, userId) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(r.id, number, normDateTime(input.out_at) || nowLocal(), outKm, outFuel, input.out_notes || null, userId || null, JSON.stringify({ out: input.damages || [] }));
     db.prepare("UPDATE reservations SET status = 'en_curso', vehicle_id = ?, updated_at = ? WHERE id = ?").run(vehicleId, nowLocal(), r.id);
+    if (choferes.isChoferes(getSettings(db))) choferes.openPeriods(db, r, normDateTime(input.out_at) || nowLocal());
     db.prepare("UPDATE vehicles SET status = 'alquilado', km = ?, fuel = ? WHERE id = ?").run(outKm, outFuel, vehicleId);
     log(db, r.id, userId, 'entregado', { contrato: number, km: outKm, combustible: outFuel });
   });
@@ -319,7 +327,7 @@ function checkout(db, id, input, userId) {
 
 /** Devolución del vehículo (check-in): cierra el contrato y calcula cargos adicionales. */
 function checkin(db, id, input, userId) {
-  const r = getReservation(db, id);
+  let r = getReservation(db, id);
   if (!r) fail(404, 'Reserva inexistente');
   if (r.status !== 'en_curso' || !r.contract) fail(409, 'La reserva no tiene un contrato abierto');
   const inKm = Number(input.in_km);
@@ -327,7 +335,14 @@ function checkin(db, id, input, userId) {
   const inFuel = Number(input.in_fuel);
   if (!(inFuel >= 0 && inFuel <= 8)) fail(400, 'Combustible: valor entre 0 y 8 (octavos)');
   const inAt = normDateTime(input.in_at) || nowLocal();
-  const charges = computeReturnCharges(db, r, r.contract, { ...input, in_km: inKm, in_fuel: inFuel, in_at: inAt });
+  // Choferes: el período en que lo devuelve se cobra entero, y los km se controlan contra los de todos los períodos.
+  const byPeriods = r.periods.length > 0;
+  if (byPeriods) {
+    choferes.renew(db, r.id, inAt, userId);
+    choferes.kmReading(db, r, inKm, userId);
+    r = getReservation(db, r.id);
+  }
+  const charges = computeReturnCharges(db, r, r.contract, { ...input, in_km: inKm, in_fuel: inFuel, in_at: inAt }, { byPeriods });
   const finalTotal = round2(r.total + charges.total);
   const returnBranch = input.return_branch_id || r.return_branch_id || r.pickup_branch_id;
 

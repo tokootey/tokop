@@ -2,7 +2,7 @@
 
 const express = require('express');
 const crypto = require('node:crypto');
-const { getSettings, setSetting, newApiKey, DEFAULT_SETTINGS, CONTRACT_TERMS, CONTRACT_TERMS_EN, COUNTRY_PRESETS } = require('../db');
+const { getSettings, setSetting, newApiKey, DEFAULT_SETTINGS, CONTRACT_TERMS, CONTRACT_TERMS_EN, CONTRACT_TERMS_CHOFERES, COUNTRY_PRESETS } = require('../db');
 const { hashPassword, requireAdmin, assertPassword, audit } = require('../auth');
 const { getMapping, getWebformMapping, interpret, ingestQuote, reprocessInbox } = require('../integration');
 const { emit } = require('../webhooks');
@@ -50,6 +50,7 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
     for (const k of [...SECRET_KEYS, ...INTEGRATION_KEYS]) delete s[k];
     s.contract_terms_default = CONTRACT_TERMS; // para "Restaurar condiciones sugeridas"
     s.contract_terms_en_default = CONTRACT_TERMS_EN;
+    s.contract_terms_choferes_default = CONTRACT_TERMS_CHOFERES;
     s.country_presets = COUNTRY_PRESETS;
     s.chat_faq_default = FAQ_DEFAULT;
     res.json(s);
@@ -61,6 +62,9 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
     if (body.locale !== undefined && !validLocale(body.locale)) fail(400, 'Formato de números y fechas inválido');
     if (body.currency !== undefined && !validCurrency(body.currency)) fail(400, 'Moneda inválida');
     if (body.country !== undefined && !COUNTRY_PRESETS[body.country]) fail(400, 'País inválido');
+    if (body.business_mode !== undefined && !['turismo', 'choferes'].includes(body.business_mode)) fail(400, 'Tipo de negocio inválido');
+    if (body.rent_period !== undefined && !['dia', 'semana', 'mes'].includes(body.rent_period)) fail(400, 'Período de alquiler inválido');
+    for (const k of ['late_fee_per_day', 'late_grace_days']) if (body[k] !== undefined && !(Number(body[k]) >= 0)) fail(400, 'El recargo y la tolerancia tienen que ser números positivos');
     const hrs = (k) => (body[k] !== undefined ? Number(body[k]) : Number(getSettings(db)[k]));
     for (const k of ['refund_full_hours', 'refund_partial_hours', 'refund_partial_pct']) {
       if (body[k] !== undefined && !(Number(body[k]) >= 0)) fail(400, 'Los valores de la política de devolución tienen que ser números positivos');

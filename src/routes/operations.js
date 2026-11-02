@@ -8,6 +8,8 @@ const { placeSql, saveHotel, withHotelExtra } = require('../hotel');
 const invoicing = require('../invoicing/index');
 const { getSettings } = require('../db');
 const { refundFor } = require('../refunds');
+const choferes = require('../choferes');
+const { requireAdmin } = require('../auth');
 const { fail, normDateTime, nowLocal, parseLocal, fmtLocal } = require('../util');
 
 /**
@@ -30,6 +32,12 @@ function setupSteps(db) {
 
 function operationsRoutes(db) {
   const router = express.Router();
+
+  // Modo choferes: antes de mostrar reservas, el panel o el calendario se renuevan los alquileres vencidos.
+  router.use((req, _res, next) => {
+    if (req.method === 'GET' && /^\/(reservations|dashboard|planning)/.test(req.path)) choferes.renewDue(db);
+    next();
+  });
 
   // --- Cotización y disponibilidad (uso interno, mostrador) ---
   router.get('/availability', (req, res) => {
@@ -162,6 +170,34 @@ function operationsRoutes(db) {
   router.post('/reservations/:id/checkin', (req, res) => res.json(R.checkin(db, req.params.id, req.body, req.user.id)));
   router.post('/reservations/:id/payments', (req, res) => res.json(R.addPayment(db, req.params.id, req.body, req.user.id)));
 
+  // Choferes: multas u otros cargos a cuenta del chofer, y lectura de km (cobra los km extra del período).
+  const rentalOf = (id) => {
+    const r = R.getReservation(db, id);
+    if (!r) fail(404, 'Reserva inexistente');
+    return r;
+  };
+  router.post('/reservations/:id/charges', (req, res) => {
+    const r = rentalOf(req.params.id);
+    choferes.addCharge(db, r, req.body || {}, req.user.id);
+    R.log(db, r.id, req.user.id, 'cargo', `${(req.body || {}).kind === 'otro' ? 'Cargo' : 'Multa'} ${Number(req.body.amount)}`);
+    res.json(R.getReservation(db, r.id));
+  });
+  // Borrar una multa le baja la deuda al chofer: solo administradores.
+  router.delete('/reservations/:id/charges/:charge', requireAdmin, (req, res) => {
+    const r = rentalOf(req.params.id);
+    const c = db.prepare('DELETE FROM rental_charges WHERE id = ? AND reservation_id = ?').run(Number(req.params.charge), r.id);
+    if (!c.changes) fail(404, 'Cargo inexistente');
+    R.log(db, r.id, req.user.id, 'cargo_borrado', `#${req.params.charge}`);
+    res.json(R.getReservation(db, r.id));
+  });
+  router.post('/reservations/:id/km', (req, res) => {
+    const r = rentalOf(req.params.id);
+    if (r.status !== 'en_curso') fail(409, 'El auto no está alquilado');
+    const charge = choferes.kmReading(db, r, (req.body || {}).km, req.user.id);
+    R.log(db, r.id, req.user.id, 'lectura_km', { km: Number(req.body.km), excedente: charge ? charge.km : 0 });
+    res.json({ ...R.getReservation(db, r.id), km_charge: charge });
+  });
+
   router.get('/reservations/:id/available-vehicles', (req, res) => {
     const r = R.getReservation(db, req.params.id);
     if (!r) fail(404, 'Reserva inexistente');
@@ -277,6 +313,7 @@ function operationsRoutes(db) {
         maintenance_open: db.prepare(`SELECT COUNT(*) AS n FROM maintenance WHERE status = 'abierto'`).get().n,
       },
       setup: setupSteps(db),
+      choferes: choferes.isChoferes(getSettings(db)) ? choferes.dashboardChoferes(db, R.getReservation, today) : null,
     });
   });
 

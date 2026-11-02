@@ -42,6 +42,9 @@ function computeStats(db, query = {}) {
     FROM reservations r LEFT JOIN contracts c ON c.reservation_id = r.id WHERE ${inPeriod}`);
   // Taller del período (por fecha de entrada): lo que se resta para ver el resultado.
   const shopTotal = db.prepare('SELECT COALESCE(SUM(cost), 0) AS cost FROM maintenance WHERE start_date BETWEEN ? AND ?').get(from, to).cost;
+  // Otros gastos cargados aparte (repuestos, combustible, seguro…), por fecha: también se restan.
+  const expenseTotal = db.prepare('SELECT COALESCE(SUM(amount), 0) AS n FROM expenses WHERE date BETWEEN ? AND ?').get(from, to).n;
+  const vehicleExpenses = db.prepare('SELECT COALESCE(SUM(amount), 0) AS n FROM expenses WHERE vehicle_id = ? AND date BETWEEN ? AND ?');
 
   const categoryShop = db.prepare(
     'SELECT COALESCE(SUM(m.cost), 0) AS cost FROM maintenance m JOIN vehicles v ON v.id = m.vehicle_id WHERE v.category_id = ? AND m.start_date BETWEEN ? AND ?',
@@ -82,7 +85,8 @@ function computeStats(db, query = {}) {
   )
     .map((v) => {
       const shop_cost = shopCost.get(v.id, from, to).cost;
-      return { ...v, shop_cost, net: v.collected - shop_cost, occupancy: Math.min(100, Math.round((v.days / periodDays) * 100)) };
+      const expenses = vehicleExpenses.get(v.id, from, to).n;
+      return { ...v, shop_cost, expenses, net: v.collected - shop_cost - expenses, occupancy: Math.min(100, Math.round((v.days / periodDays) * 100)) };
     })
     .sort((a, b) => b.net - a.net || a.plate.localeCompare(b.plate));
 
@@ -123,6 +127,12 @@ function computeStats(db, query = {}) {
        WHERE m.start_date BETWEEN ? AND ? GROUP BY m.kind ORDER BY cost DESC`,
     )
     .all(from, to);
+  const expenses = db.prepare('SELECT kind, COUNT(*) AS n, SUM(amount) AS amount FROM expenses WHERE date BETWEEN ? AND ? GROUP BY kind ORDER BY amount DESC').all(from, to);
+  // Caja del período: lo cobrado según la fecha del pago (no la del retiro), menos taller y gastos.
+  // Es la cuenta que sirve para alquileres largos a choferes, que pagan todas las semanas.
+  const income = db
+    .prepare("SELECT COALESCE(SUM(CASE WHEN kind = 'pago' THEN amount WHEN kind = 'devolucion' THEN -amount ELSE 0 END), 0) AS n FROM payments WHERE substr(created_at, 1, 10) BETWEEN ? AND ?")
+    .get(from, to).n;
 
   return {
     from,
@@ -132,7 +142,8 @@ function computeStats(db, query = {}) {
       ...totals,
       to_collect: Math.max(0, totals.revenue - totals.collected),
       shop_cost: shopTotal,
-      net: totals.collected - shopTotal,
+      expenses: expenseTotal,
+      net: totals.collected - shopTotal - expenseTotal,
       avg_ticket: totals.rentals ? Math.round(totals.revenue / totals.rentals) : 0,
       avg_days: totals.rentals ? Math.round((totals.days / totals.rentals) * 10) / 10 : 0,
       with_insurance: withInsurance,
@@ -145,6 +156,8 @@ function computeStats(db, query = {}) {
     sources,
     damages,
     shop,
+    expenses,
+    cash: { income, shop_cost: shopTotal, expenses: expenseTotal, net: income - shopTotal - expenseTotal },
   };
 }
 

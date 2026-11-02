@@ -17,6 +17,7 @@ Aplicación web para el día a día del rent a car (flota, reservas, contratos, 
 | **Mantenimiento** | Mientras hay un mantenimiento abierto, el auto sale de la flota disponible. Al cerrarlo, vuelve a la flota. |
 | **Tarifas y sucursales** | Categorías (tarifa diaria y semanal, garantía, km incluidos), adicionales (por día o por alquiler, con tope), temporadas (+%) y lugares de entrega. |
 | **Cotizador** | Conexión con el formulario web y con la API del cotizador, bandeja de solicitudes recibidas y avisos salientes. |
+| **Autos para choferes** | Opcional, por empresa (*Configuración → Tipo de negocio*): para flotas que alquilan autos de trabajo a choferes de Uber, DiDi, Cabify, PedidosYa o remis. El alquiler se cobra por adelantado por día, semana o mes y se renueva solo; recargo por día de atraso; km incluidos por período y cobro del excedente; multas a cargo del chofer; licencia profesional, apps y garante del chofer; aviso de service por km; gastos de cada auto y caja del mes (cobrado menos gastos); contrato propio editable. Con el modo turístico (el de siempre) nada de esto aparece. |
 | **Usuarios** | Perfil *operador* (mostrador) y perfil *administrador* (también configura tarifas, el cotizador y los usuarios). |
 
 El menú tiene cuatro secciones: **Hoy**, **Calendario**, **Autos** y **Más** (todas las reservas, clientes, taller y ajustes). En el celular queda abajo, como una app, con el botón **Nueva reserva** siempre a mano.

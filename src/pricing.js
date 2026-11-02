@@ -2,6 +2,7 @@
 
 const { getSettings } = require('./db');
 const { parseLocal, fmtLocal, round2, fail } = require('./util');
+const { isChoferes, periodOf, periodsBetween, periodRate } = require('./choferes');
 
 /**
  * Días a cobrar: bloques de 24 h. Las horas que excedan el último bloque
@@ -37,13 +38,21 @@ function computeQuote(db, input) {
   const days = rentalDays(input.pickup_at, input.return_at, graceHours);
 
   // Tarifa diaria: si es 7 días o más y la categoría tiene tarifa semanal, se prorratea.
-  const perDay = days >= 7 && category.weekly_rate > 0 ? category.weekly_rate / 7 : category.daily_rate;
+  let perDay = days >= 7 && category.weekly_rate > 0 ? category.weekly_rate / 7 : category.daily_rate;
 
   const seasons = db.prepare('SELECT * FROM seasons').all();
   let base = 0;
   let seasonExtra = 0;
   const start = parseLocal(input.pickup_at);
-  for (let i = 0; i < days; i++) {
+  // Choferes: se cobra por período entero (día, semana o mes), sin temporadas.
+  const choferes = isChoferes(settings);
+  const period = choferes ? periodOf(settings) : null;
+  const periods = choferes ? periodsBetween(input.pickup_at, input.return_at, period) : null;
+  if (choferes) {
+    perDay = periodRate(category, period);
+    base = perDay * periods;
+  }
+  for (let i = 0; i < (choferes ? 0 : days); i++) {
     const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
     const mult = seasonMultiplier(seasons, fmtLocal(d).slice(0, 10));
     base += perDay;
@@ -97,7 +106,8 @@ function computeQuote(db, input) {
     tax: round2(tax),
     total: round2(total),
     deposit: round2(category.deposit),
-    km_included: category.km_per_day > 0 ? category.km_per_day * days : null,
+    km_included: choferes ? (category.km_per_period > 0 ? category.km_per_period * periods : null) : category.km_per_day > 0 ? category.km_per_day * days : null,
+    ...(choferes ? { period, periods } : {}),
     currency: settings.currency,
   };
 }
@@ -105,13 +115,14 @@ function computeQuote(db, input) {
 /**
  * Cargos al devolver el vehículo: km excedentes, combustible faltante, días de demora y daños.
  */
-function computeReturnCharges(db, reservation, contract, input) {
+function computeReturnCharges(db, reservation, contract, input, { byPeriods = false } = {}) {
   const settings = getSettings(db);
   const category = db.prepare('SELECT * FROM categories WHERE id = ?').get(reservation.category_id);
   const lines = [];
 
   const kmDriven = Math.max(0, Number(input.in_km) - Number(contract.out_km));
-  if (category.km_per_day > 0) {
+  // Por períodos (choferes) los km y la demora ya se cobraron con la renovación y la lectura de km.
+  if (category.km_per_day > 0 && !byPeriods) {
     const allowed = category.km_per_day * reservation.days;
     const excess = kmDriven - allowed;
     if (excess > 0 && category.extra_km_rate > 0) {
@@ -129,7 +140,7 @@ function computeReturnCharges(db, reservation, contract, input) {
   const lateHours = (parseLocal(input.in_at) - parseLocal(reservation.return_at)) / 3600000;
   const grace = Number(settings.grace_hours) || 0;
   const lateDays = lateHours > grace ? Math.ceil((lateHours - grace) / 24) : 0;
-  if (lateDays > 0) {
+  if (lateDays > 0 && !byPeriods) {
     const perDay = reservation.days > 0 ? reservation.total / reservation.days : category.daily_rate;
     lines.push({ concept: `Días adicionales por demora (${lateDays})`, amount: round2(lateDays * perDay) });
   }
