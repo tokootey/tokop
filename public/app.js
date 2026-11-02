@@ -67,6 +67,12 @@ const STATUS_LABEL = {
 const badge = (s) => `<span class="badge b-${esc(s)}">${esc(STATUS_LABEL[s] || s)}</span>`;
 const sourceBadge = (s) => (s === 'manual' ? '' : ` <span class="badge b-cotizador">${esc(STATUS_LABEL[s] || s)}</span>`);
 const fuel = (n) => (n === null || n === undefined ? '' : `${n}/8`);
+// Modo "autos para choferes" (Configuración → Tipo de negocio): alquiler por período que se renueva solo.
+const choferesMode = () => state.settings.business_mode === 'choferes';
+const PERIOD_LABEL = { dia: ['día', 'días'], semana: ['semana', 'semanas'], mes: ['mes', 'meses'] };
+const periodWord = (n = 1) => (PERIOD_LABEL[state.settings.rent_period] || PERIOD_LABEL.semana)[Number(n) === 1 ? 0 : 1];
+/** Primera línea del precio: "3 días × $ 20.000" o, por períodos, "1 semana × $ 100.000". */
+const baseLabel = (q, days) => (q.periods ? `${plural(q.periods, periodWord(1), periodWord(2))} × ${money(q.per_day)}` : `${plural(days, 'día', 'días')}${q.per_day ? ` × ${money(q.per_day)}` : ''}`);
 
 async function api(method, path, body) {
   const res = await fetch(`/api${path}`, {
@@ -211,6 +217,7 @@ document.addEventListener('keydown', (e) => {
 
 /* ---------- Formularios genéricos ---------- */
 function field(f, value) {
+  if (f.when && !f.when()) return ''; // campos que solo van en un tipo de negocio
   const v = value === undefined || value === null ? (f.default ?? '') : value;
   const cls = f.full ? ' class="full"' : '';
   const req = f.required ? ' required' : '';
@@ -604,6 +611,7 @@ on(/^\/panel$/, async (view) => {
       ${column('Vuelven hoy', 'M19 12H5M11 6l-6 6 6 6', '#c2410c', back, 'back', 'Hoy no vuelve ningún auto.')}
     </div>
     <p class="hoy-next">Mañana: ${tomorrow.pickups === 1 ? 'sale 1 auto' : `salen ${tomorrow.pickups} autos`}, ${tomorrow.returns === 1 ? 'vuelve 1' : `vuelven ${tomorrow.returns}`}. <a href="#/planning">Ver calendario</a></p>
+    ${d.choferes ? choferesCards(d.choferes) : ''}
     ${/* Lo del día va primero; los primeros pasos de una empresa nueva, abajo. */ setupCard(d.setup)}
     ${
       d.alerts.documents.length
@@ -1375,6 +1383,7 @@ on(/^\/mas$/, async (view) => {
       ${tile('#/reservas/completa', 'Reserva con más opciones', 'Adicionales, descuento, vuelo, otro lugar de devolución', ICON.plus)}
       ${tile('#/clientes', 'Clientes', 'Datos, licencia y sus reservas', ICON.user)}
       ${tile('#/flota?estado=mantenimiento', 'Taller', 'Autos en el taller: mandar, sacar y su historial', ICON.wrench, 'warm')}
+      ${choferesMode() ? tile('#/gastos', 'Gastos de los autos', 'Taller, repuestos, combustible, seguro: lo que gasta cada auto', ICON.money, 'warm') : ''}
     </div>
     <div class="mas-group">Para explicar Floty</div>
     <div class="mas">
@@ -1418,7 +1427,7 @@ on(/^\/mas$/, async (view) => {
 function breakdownHtml(q) {
   const row = (l, v, cls = '') => `<tr class="${cls}"><td>${l}</td><td class="right">${v}</td></tr>`;
   return `<table class="breakdown"><tbody>
-    ${row(`${esc(q.category ? q.category.name : '')} · ${plural(q.days, 'día', 'días')} × ${money(q.per_day)}`, money(q.base))}
+    ${row(`${esc(q.category ? q.category.name : '')} · ${baseLabel(q, q.days)}`, money(q.base))}
     ${q.season_extra ? row('Recargo de temporada', money(q.season_extra)) : ''}
     ${(q.extras || []).map((x) => row(`${esc(x.name)}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount))).join('')}
     ${q.one_way_fee ? row('Devolución en otra sucursal', money(q.one_way_fee)) : ''}
@@ -1427,7 +1436,7 @@ function breakdownHtml(q) {
     ${q.calculated_total !== undefined ? row('<span class="muted">Precio según tarifas del sistema</span>', `<span class="muted">${money(q.calculated_total)}</span>`) : ''}
     ${row(q.calculated_total !== undefined ? `Total (precio del ${STATUS_LABEL[q.source] || q.source})` : 'Total', money(q.total), 'total')}
     </tbody></table>
-    <p class="muted">Garantía: ${money(q.deposit)}${q.km_included ? ` · Km incluidos: ${q.km_included}` : ' · Km libres'}</p>`;
+    <p class="muted">Garantía: ${money(q.deposit)}${q.km_included ? ` · Km incluidos: ${q.km_included}` : ' · Km libres'}${q.periods ? ` · Se cobra por adelantado y se renueva cada ${periodWord(1)}` : ''}</p>`;
 }
 
 /* ============================================================
@@ -1531,6 +1540,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         }</div>`
           : ''
       }
+      ${rentalCardHtml(r)}
       ${invoicesCardHtml(r)}
       ${filesCardHtml(r)}
       </div>
@@ -1748,6 +1758,35 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           reload();
         },
       ),
+    fine: () =>
+      openModal(
+        'Cargar multa o cargo',
+        formHtml(
+          [
+            { name: 'kind', label: 'Tipo', type: 'select', required: true, options: [['multa', 'Multa de tránsito'], ['otro', 'Otro cargo (acarreo, lavado, daño…)']] },
+            { name: 'amount', label: 'Importe', type: 'number', required: true },
+            { name: 'date', label: 'Fecha de la infracción', type: 'date' },
+            { name: 'reference', label: 'N° de acta o comprobante' },
+            { name: 'description', label: 'Detalle', full: true },
+          ],
+          { kind: 'multa', date: localISO(new Date()).slice(0, 10) },
+        ),
+        async (d) => {
+          await POST(`/reservations/${r.id}/charges`, d);
+          toast('Cargo registrado: se suma a lo que debe el chofer');
+          reload();
+        },
+      ),
+    km: () =>
+      openModal(
+        'Registrar kilometraje',
+        `<p class="muted">Si pasó los km incluidos (${num(Number(r.category_km_per_period) || 0)} por ${periodWord(1)}), se cobra el excedente.</p>${formHtml([{ name: 'km', label: 'Km que marca hoy el auto', type: 'number', required: true }], { km: r.vehicle_km })}`,
+        async (d) => {
+          const res = await POST(`/reservations/${r.id}/km`, d);
+          toast(res.km_charge ? `Se pasó ${num(res.km_charge.km)} km: se cobran ${money(res.km_charge.amount)}` : 'Km registrados: está dentro de lo incluido');
+          reload();
+        },
+      ),
     print: () => printContract(r),
     voucher: () => sendVoucher(r),
     pdf: async () => {
@@ -1795,6 +1834,12 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       ),
   };
   $$('[data-act]', view).forEach((b) => b.addEventListener('click', () => handlers[b.dataset.act]()));
+  $$('[data-del-charge]', view).forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!(await confirmModal({ title: 'Borrar cargo', text: 'Se saca de lo que debe el chofer.', ok: 'Borrar', danger: true }))) return;
+      run(() => DEL(`/reservations/${r.id}/charges/${b.dataset.delCharge}`), 'Cargo borrado').then(reload);
+    }),
+  );
   $('[data-hotel-copy]', view)?.addEventListener('click', () =>
     (navigator.clipboard ? navigator.clipboard.writeText(hotelLink(r)) : Promise.reject()).then(() => toast('Link copiado: mandáselo al cliente'), () => toast(hotelLink(r))),
   );
@@ -1980,6 +2025,10 @@ const LOG_LABEL = {
   archivo_borrado: 'Archivo borrado',
   factura_emitida: 'Factura emitida',
   devolucion_calculada: 'Devolución según la política',
+  renovado: 'Se renovó solo',
+  cargo: 'Multa o cargo',
+  cargo_borrado: 'Cargo borrado',
+  lectura_km: 'Lectura de km',
 };
 const DETAIL_KEY = { porcentaje: 'porcentaje', devolver: 'a devolver', pagado: 'pagado', regla: 'cancelación', factura: 'factura', modo: 'modo', status: 'estado', source: 'origen', contrato: 'contrato', km: 'km', combustible: 'combustible', cargos: 'cargos' };
 
@@ -2130,6 +2179,65 @@ const PAYMENT_KINDS = { pago: 'Pago', devolucion: 'Devolución de dinero', garan
  * Condiciones del contrato con las {palabras} completadas, como lista de cláusulas { title, body } en texto plano.
  * La usan el contrato impreso y el PDF.
  */
+/** Choferes: los períodos del alquiler (se renuevan solos), el recargo por atraso y las multas y cargos. */
+function rentalCardHtml(r) {
+  const open = r.status === 'en_curso';
+  if (!r.periods.length && !r.charges.length && !(choferesMode() && open)) return '';
+  const kindLabel = { multa: 'Multa', otro: 'Cargo', km: '' };
+  return `<div class="card"><h2>Alquiler por ${periodWord(1)}</h2>
+    ${
+      r.periods.length
+        ? `<div class="table-scroll"><table class="mini"><thead><tr><th>#</th><th>Desde</th><th>Hasta</th><th class="right">Importe</th></tr></thead><tbody>${r.periods
+            .map((p) => `<tr><td>${p.n}</td><td class="nowrap">${fmtDT(p.start_at)}</td><td class="nowrap">${fmtDT(p.end_at)}</td><td class="right">${money(p.amount)}</td></tr>`)
+            .join('')}</tbody></table></div>
+    ${open ? `<p class="muted">Se cobra por adelantado y se renueva sola cada ${periodWord(1)} hasta que registres la devolución.</p>` : ''}`
+        : ''
+    }
+    ${r.late_fee.total ? `<p><b class="error">Recargo por atraso en el pago: ${plural(r.late_fee.days, 'día', 'días')} · ${money(r.late_fee.total)}</b></p>` : ''}
+    <h3 style="margin-top:12px">Multas y cargos</h3>
+    ${
+      r.charges.length
+        ? `<table class="breakdown"><tbody>${r.charges
+            .map(
+              (x) =>
+                `<tr><td>${fmtD(x.date)} · ${esc([kindLabel[x.kind] ?? x.kind, x.description].filter(Boolean).join(' '))}${x.reference ? ` <small class="muted">${esc(x.reference)}</small>` : ''}</td>
+                <td class="right nowrap">${money(x.amount)}${isAdmin() ? ` <button class="btn small danger no-print" type="button" data-del-charge="${x.id}" aria-label="Borrar cargo">×</button>` : ''}</td></tr>`,
+            )
+            .join('')}</tbody></table>`
+        : '<p class="muted">Sin multas ni cargos.</p>'
+    }
+    <div class="actions no-print" style="margin-top:12px">
+      <button class="btn small" type="button" data-act="fine">Cargar multa</button>
+      ${open ? '<button class="btn small" type="button" data-act="km">Registrar km</button>' : ''}
+    </div></div>`;
+}
+
+/** Pantalla Hoy, modo choferes: quién debe, licencias vencidas y autos a los que les toca service. */
+function choferesCards(c) {
+  const card = (title, rows) => (rows.length ? `<div class="card"><h2>${title} <span class="count">${rows.length}</span></h2><div class="daylist">${rows.join('')}</div></div>` : '');
+  return [
+    card(
+      'Choferes que deben',
+      c.owing.map(
+        (r) =>
+          `<div class="dayrow"><span class="plate">${esc(r.vehicle_plate || '')}</span><div><a href="#/reservas/${r.id}"><b>${esc(r.customer_name)}</b></a>${
+            r.late_fee ? `<small>incluye ${money(r.late_fee)} de recargo por atraso</small>` : ''
+          }</div><div><small>Debe</small><b class="error">${money(r.pending)}</b></div>${waLink(r.customer_phone)}</div>`,
+      ),
+    ),
+    card(
+      'Licencia vencida',
+      c.license_expired.map((r) => `<div class="dayrow"><div><a href="#/reservas/${r.id}"><b>${esc(r.customer_name)}</b></a></div><div><small>Venció</small><b class="error">${fmtD(r.license_expiry)}</b></div></div>`),
+    ),
+    card(
+      'Les toca service',
+      c.service_due.map(
+        (v) => `<div class="dayrow"><span class="plate">${esc(v.plate)}</span><div><small>Tiene</small><b>${num(v.km)} km</b></div><div><small>Service a los</small><b>${num(v.next_service_km)} km</b></div></div>`,
+      ),
+    ),
+  ].join('');
+}
+
 function contractTermsList(r) {
   const s = state.settings;
   const km = Number(r.category_km_per_day) || 0;
@@ -2152,7 +2260,26 @@ function contractTermsList(r) {
     garantia: money(r.deposit),
     jurisdiccion: L(s.jurisdiction, s.jurisdiction_en || s.jurisdiction) || L('la ciudad donde se celebra este contrato', 'the city where this agreement is signed'),
   };
-  const terms = String(L(s.contract_terms, s.contract_terms_en || s.contract_terms) || '')
+  const choferes = choferesMode();
+  if (choferes) {
+    const kmP = Number(r.category_km_per_period) || 0;
+    const last = (r.periods || []).slice(-1)[0];
+    Object.assign(values, {
+      periodo: periodWord(1),
+      precio_periodo: money(last ? last.amount : (r.pricing && r.pricing.per_day) || r.total),
+      recargo_atraso: Number(s.late_fee_per_day) > 0 ? money(s.late_fee_per_day) : 'el que informe el Locador',
+      dias_gracia: Number(s.late_grace_days) || 0,
+      uso: r.customer_work_apps ? `trabajar con ${r.customer_work_apps}` : 'viajes por aplicaciones (Uber, Cabify, DiDi), remis o reparto',
+      garante: r.guarantor_name
+        ? ` Además, ${r.guarantor_name}${r.guarantor_doc ? `, documento ${r.guarantor_doc}` : ''}${r.guarantor_address ? `, con domicilio en ${r.guarantor_address}` : ''}, firma como garante: se constituye en fiador solidario, liso, llano y principal pagador de todas las obligaciones del Locatario en este contrato y sus renovaciones.`
+        : '',
+      kilometraje:
+        kmP > 0
+          ? `El kilometraje incluido es de ${num(kmP)} km por ${periodWord(1)}; cada kilómetro adicional se cobra ${money(r.category_extra_km_rate)}.`
+          : 'El kilometraje es libre.',
+    });
+  }
+  const terms = String(choferes ? s.contract_terms_choferes || '' : L(s.contract_terms, s.contract_terms_en || s.contract_terms) || '')
     .split(/\n\s*\n/)
     .map((p) => p.trim())
     .filter(Boolean)
@@ -2161,7 +2288,8 @@ function contractTermsList(r) {
       const title = filled.match(/^(\d+\.\s*[^.]{2,60}\.)\s*/);
       return title ? { title: title[1], body: filled.slice(title[0].length) } : { title: '', body: filled };
     });
-  // La política de devolución de Ajustes va siempre como última cláusula, numerada a continuación.
+  // La política de devolución de Ajustes va siempre como última cláusula, numerada a continuación (salvo para choferes: el contrato ya trae la rescisión).
+  if (choferes) return terms;
   return [...terms, { title: `${terms.length + 1}. ${L('CANCELACIÓN Y DEVOLUCIONES', 'CANCELLATION AND REFUNDS')}.`, body: refundPolicyText(s) }];
 }
 
@@ -2197,7 +2325,7 @@ function printContract(r) {
   const q = r.pricing || {};
   const line = (label, value) => `<tr><th>${label}</th><td>${value || '<span class="blank"></span>'}</td></tr>`;
   const priceRows = [
-    q.base !== undefined ? [`Alquiler ${plural(r.days, 'día', 'días')}${q.per_day ? ` × ${money(q.per_day)}` : ''}`, money(q.base)] : null,
+    q.base !== undefined ? [`Alquiler ${baseLabel(q, r.days)}`, money(q.base)] : null,
     q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
     ...(q.extras || []).map((x) => [esc(x.name) + (x.quantity > 1 ? ` ×${esc(x.quantity)}` : ''), money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
@@ -2251,9 +2379,14 @@ function printContract(r) {
     ${line('Licencia N°', esc(r.customer_license || ''))}
     ${line('Vencimiento licencia', fmtD(r.customer_license_expiry))}
   </table>
-  <h2>Conductor adicional</h2><table>
+  ${choferesMode()
+    ? `<h2>Licencia profesional y garante</h2><table>
+    ${line('Clase de licencia', esc(r.customer_license_class || ''))}${line('Trabaja con', esc(r.customer_work_apps || ''))}
+    ${line('Garante', esc(r.guarantor_name || ''))}${line('Documento / teléfono', esc([r.guarantor_doc, r.guarantor_phone].filter(Boolean).join(' · ')))}
+  </table>`
+    : `<h2>Conductor adicional</h2><table>
     ${line('Nombre y apellido', '')}${line('Documento', '')}${line('Licencia N° / vence', '')}
-  </table></div>
+  </table>`}</div>
   <div><h2>Vehículo</h2><table>
     ${line('Marca y modelo', r.vehicle_plate ? `${esc(r.vehicle_brand || '')} ${esc(r.vehicle_model || '')}` : '')}
     ${line('Patente', r.vehicle_plate ? `<b>${esc(r.vehicle_plate)}</b>` : '')}
@@ -2306,7 +2439,7 @@ function printContract(r) {
 <p style="margin-top:10px">El Cliente declara haber leído y aceptado las condiciones generales que forman parte de este contrato (página siguiente) y recibir el vehículo en el estado indicado.</p>
 <div class="sign">
   <div>Firma del cliente<small>Aclaración:<br>DNI:</small></div>
-  <div>Conductor adicional<small>Aclaración:<br>DNI:</small></div>
+  <div>${choferesMode() ? 'Garante' : 'Conductor adicional'}<small>Aclaración:<br>DNI:</small></div>
   <div>Por ${esc(s.company_name || 'la Empresa')}<small>Aclaración:</small></div>
 </div>
 
@@ -2549,6 +2682,13 @@ const CUSTOMER_FIELDS = [
   { name: 'license_number', label: 'Licencia de conducir N°' },
   { name: 'license_expiry', label: 'Vencimiento licencia', type: 'date' },
   { name: 'address', label: 'Domicilio', full: true },
+  // Choferes: licencia profesional, apps en las que trabaja y su garante.
+  { name: 'license_class', label: 'Clase de licencia (ej. D1 profesional)', when: () => choferesMode() },
+  { name: 'work_apps', label: 'Trabaja con (Uber, DiDi, Cabify, PedidosYa, remis…)', when: () => choferesMode() },
+  { name: 'guarantor_name', label: 'Garante: nombre y apellido', when: () => choferesMode() },
+  { name: 'guarantor_doc', label: 'Garante: DNI', when: () => choferesMode() },
+  { name: 'guarantor_phone', label: 'Garante: teléfono', when: () => choferesMode() },
+  { name: 'guarantor_address', label: 'Garante: domicilio', when: () => choferesMode() },
   { name: 'notes', label: 'Notas', type: 'textarea', full: true },
 ];
 
@@ -2565,6 +2705,7 @@ const VEHICLE_FIELDS = [
   { name: 'fuel', label: 'Combustible (octavos)', type: 'number', default: 8, attrs: 'min="0" max="8"' },
   { name: 'insurance_expiry', label: 'Vencimiento seguro', type: 'date' },
   { name: 'vtv_expiry', label: 'Vencimiento VTV', type: 'date' },
+  { name: 'service_every_km', label: 'Service cada (km, 0 = sin aviso)', type: 'number', default: 0, when: () => choferesMode() },
   { name: 'notes', label: 'Notas', type: 'textarea', full: true },
 ];
 
@@ -2908,6 +3049,45 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('#modal [data-href]')) closeModal();
 });
 
+/* ---------- Gastos de cada auto (modo choferes): se restan en la caja de Estadísticas. ---------- */
+const EXPENSE_KINDS = [
+  ['taller', 'Taller / mecánico'],
+  ['repuestos', 'Repuestos'],
+  ['combustible', 'Combustible / GNC'],
+  ['seguro', 'Seguro'],
+  ['patente', 'Patente e impuestos'],
+  ['lavado', 'Lavado'],
+  ['otro', 'Otro'],
+];
+let expenseVehicles = [];
+on(
+  /^\/gastos$/,
+  crudPage({
+    title: 'Gastos de los autos',
+    endpoint: 'expenses',
+    before: async () => {
+      expenseVehicles = await GET('/vehicles');
+    },
+    fields: [
+      { name: 'date', label: 'Fecha', type: 'date', required: true },
+      { name: 'vehicle_id', label: 'Auto (vacío = gasto general)', type: 'select', options: () => expenseVehicles.map((v) => [v.id, [v.plate, v.brand, v.model].filter(Boolean).join(' · ')]) },
+      { name: 'kind', label: 'Tipo', type: 'select', required: true, options: EXPENSE_KINDS, default: 'taller' },
+      { name: 'amount', label: 'Importe', type: 'number', required: true },
+      { name: 'description', label: 'Detalle', full: true },
+    ],
+    searchable: true,
+    canDelete: () => isAdmin(),
+    columns: [
+      { label: 'Fecha', render: (e) => fmtD(e.date) },
+      { label: 'Auto', render: (e) => (e.plate ? `<b>${esc(e.plate)}</b>` : '<span class="muted">General</span>') },
+      { label: 'Tipo', render: (e) => esc((EXPENSE_KINDS.find(([k]) => k === e.kind) || [e.kind, e.kind])[1]) },
+      { label: 'Detalle', key: 'description' },
+      { label: 'Importe', render: (e) => money(e.amount) },
+    ],
+  }),
+  'mas',
+);
+
 // El taller se maneja desde cada auto (botón "Taller"): la pantalla vieja lleva a Autos filtrado.
 on(
   /^\/mantenimiento$/,
@@ -2927,8 +3107,10 @@ on(/^\/tarifas$/, async (view) => {
         { name: 'name', label: 'Nombre', required: true },
         { name: 'daily_rate', label: 'Tarifa diaria', type: 'number', default: 0 },
         { name: 'weekly_rate', label: 'Tarifa semanal (7+ días, opcional)', type: 'number', default: 0 },
+        { name: 'monthly_rate', label: 'Tarifa mensual (choferes)', type: 'number', default: 0, when: () => choferesMode() },
         { name: 'deposit', label: 'Garantía', type: 'number', default: 0 },
         { name: 'km_per_day', label: 'Km incluidos por día (0 = libres)', type: 'number', default: 0 },
+        { name: 'km_per_period', label: 'Km incluidos por período de alquiler (choferes, 0 = libres)', type: 'number', default: 0, when: () => choferesMode() },
         { name: 'extra_km_rate', label: 'Precio km excedente', type: 'number', default: 0 },
         { name: 'seats', label: 'Plazas', type: 'number' },
         { name: 'transmission', label: 'Transmisión', type: 'select', options: [['Manual', 'Manual'], ['Automática', 'Automática']] },
@@ -3291,6 +3473,10 @@ on(/^\/config$/, async (view) => {
     [
       { name: 'company_name', label: 'Nombre de la empresa', required: true },
       { name: 'country', label: 'País (completa moneda, impuesto y formato)', type: 'select', options: Object.entries(presets).map(([k, p]) => [k, p.name]), required: true },
+      { name: 'business_mode', label: 'Tipo de negocio', type: 'select', required: true, options: [['turismo', 'Alquiler turístico (por días)'], ['choferes', 'Autos para choferes de apps (se renueva solo)']] },
+      { name: 'rent_period', label: 'Se cobra por adelantado y se renueva cada', type: 'select', required: true, options: [['dia', 'Día'], ['semana', 'Semana'], ['mes', 'Mes']], when: () => choferesMode() },
+      { name: 'late_fee_per_day', label: 'Recargo por cada día de atraso en el pago', type: 'number', attrs: 'min="0"', when: () => choferesMode() },
+      { name: 'late_grace_days', label: 'Días de tolerancia antes del recargo', type: 'number', attrs: 'min="0"', when: () => choferesMode() },
       { name: 'company_tax_id', label: `${s.tax_id_label || 'CUIT'} de la empresa` },
       { name: 'company_phone', label: 'Teléfono' },
       { name: 'company_address', label: 'Dirección', full: true },
@@ -3306,6 +3492,7 @@ on(/^\/config$/, async (view) => {
       { name: 'min_driver_age', label: 'Edad mínima del conductor', type: 'number' },
       { name: 'deductible_amount', label: 'Franquicia del seguro (vacío = la de la póliza)', type: 'number' },
       { name: 'jurisdiction', label: 'Jurisdicción del contrato (tribunales de...)', full: true },
+      { name: 'contract_terms_choferes', label: 'Contrato para choferes (un párrafo por cláusula; {periodo}, {precio_periodo}, {recargo_atraso}, {garante} y las demás se completan solas)', type: 'textarea', full: true, rows: 16, when: () => choferesMode() },
       { name: 'contract_terms', label: 'Condiciones generales del contrato (un párrafo por cláusula, separadas por una línea en blanco)', type: 'textarea', full: true, rows: 16 },
       // Factura electrónica: por ahora sólo de prueba (ver src/invoicing).
       { name: 'invoice_provider', label: 'Factura electrónica (sólo prueba)', type: 'select', options: [['arca', 'ARCA · Argentina'], ['sii', 'SII · Chile']] },
@@ -3330,7 +3517,9 @@ on(/^\/config$/, async (view) => {
     const f = formData(e.target);
     f.prices_include_tax = f.prices_include_tax ? '1' : '0';
     await run(() => PUT('/settings', f), 'Configuración guardada');
+    const modeChanged = f.business_mode !== state.settings.business_mode;
     await loadCatalogs();
+    if (modeChanged) route(); // aparecen o se van los campos del modo choferes
   });
   $('[data-close]', view).remove();
   // Al elegir el país se completan moneda, impuesto y formato (se pueden ajustar a mano después).
@@ -3513,6 +3702,16 @@ async function statsView(view, url, { owner = false } = {}) {
       ${tile(moneyRound(t.shop_cost), 'gastos de taller')}
       ${tile(moneyRound(t.net), 'resultado: cobrado menos taller', t.net < 0 ? 'bad' : 'good')}
     </div>
+    ${
+      s.cash && (choferesMode() || s.cash.expenses)
+        ? `<h2 class="stats-sub">Caja: lo que entró y lo que salió en el período</h2>
+    <div class="stat-tiles">
+      ${tile(moneyRound(s.cash.income), 'cobrado (por fecha de pago)', 'good')}
+      ${tile(moneyRound(s.cash.shop_cost + s.cash.expenses), `gastos (taller ${moneyRound(s.cash.shop_cost)}, otros ${moneyRound(s.cash.expenses)})`)}
+      ${tile(moneyRound(s.cash.net), 'ganancia: cobrado menos gastos', s.cash.net < 0 ? 'bad' : 'good')}
+    </div>`
+        : ''
+    }
     <h2 class="stats-sub">Alquileres</h2>
     <div class="stat-tiles">
       ${tile(num(t.rentals), `alquileres (de ${plural(t.requested, 'reserva pedida', 'reservas pedidas')})`)}

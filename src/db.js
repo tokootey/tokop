@@ -241,6 +241,43 @@ CREATE TABLE IF NOT EXISTS invoices (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_invoices_number ON invoices(provider, mode, type, point_of_sale, number);
 CREATE INDEX IF NOT EXISTS ix_invoices_reservation ON invoices(reservation_id);
 
+-- Modo "autos para choferes" (src/choferes.js): cada período del alquiler que se renueva solo,
+-- los cargos aparte (multas, km extra) y los gastos de cada auto.
+CREATE TABLE IF NOT EXISTS rental_periods (
+  id INTEGER PRIMARY KEY,
+  reservation_id INTEGER NOT NULL REFERENCES reservations(id) ON DELETE CASCADE,
+  n INTEGER NOT NULL,
+  start_at TEXT NOT NULL,
+  end_at TEXT NOT NULL,
+  amount REAL NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (reservation_id, n)
+);
+
+CREATE TABLE IF NOT EXISTS rental_charges (
+  id INTEGER PRIMARY KEY,
+  reservation_id INTEGER NOT NULL REFERENCES reservations(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'multa',
+  date TEXT,
+  reference TEXT,
+  description TEXT,
+  km INTEGER NOT NULL DEFAULT 0,
+  amount REAL NOT NULL,
+  created_by INTEGER,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS ix_rental_charges ON rental_charges(reservation_id);
+
+CREATE TABLE IF NOT EXISTS expenses (
+  id INTEGER PRIMARY KEY,
+  vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'otro',
+  description TEXT,
+  amount REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ix_expenses_date ON expenses(date);
+
 CREATE TABLE IF NOT EXISTS webhook_log (
   id INTEGER PRIMARY KEY,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -363,6 +400,42 @@ const CONTRACT_TERMS_EN = `1. PURPOSE. {empresa} (hereinafter "the Company") ren
 15. JURISDICTION. For any dispute arising from this agreement, the parties submit to the ordinary courts of {jurisdiccion}.`;
 
 /**
+ * Contrato para el modo "autos para choferes" (auto de trabajo para Uber, DiDi, Cabify, remis o reparto).
+ * Mismas reglas que CONTRACT_TERMS; además: {periodo} {precio_periodo} {recargo_atraso} {dias_gracia} {garante} {uso}
+ */
+const CONTRACT_TERMS_CHOFERES = `1. OBJETO. {empresa} (en adelante, "el Locador") da en alquiler al Locatario el vehículo descripto en este contrato, para que lo use como herramienta de trabajo propia. El Locatario trabaja por su cuenta y riesgo: este contrato no crea relación laboral, sociedad ni mandato entre las partes. Se rige por los artículos 1187 y siguientes del Código Civil y Comercial de la Nación.
+
+2. VEHÍCULO. Se entrega con la cédula de identificación (o autorización para conducir), el comprobante de seguro vigente, la VTV/RTO vigente, matafuego, balizas, rueda de auxilio, gato y llave de rueda. El estado del vehículo al entregarlo consta en este contrato y en las fotos tomadas en la entrega.
+
+3. PLAZO Y RENOVACIÓN. El alquiler es por {periodo} y empieza en la fecha de entrega que figura en este contrato. Si ninguna parte avisa por escrito con 7 días de anticipación, se renueva automáticamente por otro período igual, con el mismo precio salvo que se acuerde uno nuevo.
+
+4. PRECIO Y FORMA DE PAGO. El alquiler es de {precio_periodo} por {periodo}, pagadero por adelantado al comienzo de cada período, por transferencia o en efectivo contra recibo. Si el pago se atrasa más de {dias_gracia} días, se cobra un recargo de {recargo_atraso} por día de atraso, y el Locador puede retener el vehículo hasta que se pague.
+
+5. DEPÓSITO DE GARANTÍA. Al firmar, el Locatario entrega {garantia} como garantía. El Locador lo devuelve dentro de los 10 días posteriores a la devolución del vehículo, descontando alquileres impagos, recargos, multas, franquicias del seguro, daños no cubiertos y faltantes. Si esos importes superan el depósito, el Locatario paga la diferencia.{garante}
+
+6. USO PERMITIDO. El Locatario puede usar el vehículo para {uso}. Está prohibido: subalquilarlo o prestarlo; usarlo para competencias, remolque o transporte de cargas peligrosas; sacarlo del país o de la zona sin permiso escrito del Locador; manejar bajo efectos del alcohol o drogas; y hacerle modificaciones.
+
+7. CONDUCTOR HABILITADO. Solo puede manejar el Locatario, con licencia vigente y de la categoría que corresponda al uso (incluida la profesional, si la exige la jurisdicción). Otro conductor necesita autorización escrita del Locador y queda bajo la responsabilidad del Locatario. El Locatario se encarga de sus propias habilitaciones, inscripciones en las aplicaciones e impuestos. Si el vehículo es multado, retenido o secuestrado porque al Locatario le falta una habilitación, el Locatario paga la multa, el acarreo, la playa y el alquiler de esos días.
+
+8. MANTENIMIENTO. El Locador paga el service programado, los neumáticos por desgaste normal y las reparaciones por fallas propias del vehículo, en el taller que elija. El Locatario paga el lavado, el control diario de aceite, agua y presión de neumáticos, y las reparaciones por mal uso o negligencia. Si aparece una falla o se enciende un testigo en el tablero, el Locatario avisa dentro de las 24 horas y deja de usar el vehículo si seguir puede dañarlo. Los días en el taller por una falla que no sea culpa del Locatario no se cobran.
+
+9. COMBUSTIBLE Y KILOMETRAJE. El combustible, los peajes (incluido el TelePase, si el vehículo lo tiene) y el estacionamiento son a cargo del Locatario. El vehículo se devuelve con el mismo nivel de combustible con que se entregó. {kilometraje}
+
+10. RASTREO SATELITAL (GPS). Si el vehículo tiene un dispositivo de rastreo, el Locatario lo conoce y lo acepta. El Locador lo usa solo para ubicar el vehículo, controlar el kilometraje y actuar en caso de robo o incumplimiento, y no comparte esos datos salvo pedido de una autoridad. El Locatario no puede desconectarlo ni manipularlo.
+
+11. SEGURO Y SINIESTROS. El vehículo tiene un seguro que cubre el uso indicado en la cláusula 6. Ante un choque o siniestro, el Locatario debe avisar al Locador de inmediato, tomar datos y fotos, hacer la denuncia policial si corresponde y entregar la denuncia firmada dentro de las 72 horas. La franquicia y los daños que el seguro no cubra los paga el Locatario cuando el siniestro sea por su culpa o se haya violado este contrato o la póliza, hasta {franquicia} por siniestro, salvo dolo o culpa grave. Si el Locador tiene que pagarle a un tercero por un daño que causó el Locatario y que el seguro no cubre, el Locatario se lo devuelve.
+
+12. MULTAS. Las multas de tránsito, fotomultas y acarreos producidos mientras el vehículo esté en poder del Locatario los paga el Locatario, aunque lleguen después de terminado el contrato. El Locador puede identificarlo ante la autoridad como conductor responsable: cuando llegue un acta, le avisa y el Locatario firma la identificación de conductor y entrega una copia de su licencia dentro de los 5 días. Las multas que lleguen después de devolver el vehículo se pueden descontar de la garantía o cobrar aparte.
+
+13. ROBO O HURTO. En caso de robo o hurto, el Locatario hace la denuncia policial, avisa al Locador dentro de las 24 horas y le entrega las llaves y la documentación. Si el robo se produce por descuido del Locatario (por ejemplo, dejar las llaves puestas o el vehículo abierto), responde por los daños que el seguro no cubra.
+
+14. DEVOLUCIÓN. Al terminar el contrato, el Locatario devuelve el vehículo limpio, con la documentación y los accesorios, y en el mismo estado en que lo recibió, salvo el desgaste normal por uso. Las partes revisan juntas el vehículo y registran la devolución. Por cada día de demora se cobra el precio de un día de alquiler.
+
+15. RESCISIÓN. Cualquiera de las partes puede terminar el contrato sin dar motivo, avisando por escrito con 7 días de anticipación. El Locador puede terminarlo de inmediato y pedir la devolución del vehículo si el Locatario no paga en término, lo usa de forma no permitida, lo deja manejar a otra persona, desconecta el GPS o tiene la licencia vencida o suspendida. En ese caso, el Locatario lo devuelve dentro de las 24 horas.
+
+16. DOMICILIOS Y JURISDICCIÓN. Las partes constituyen domicilio en los indicados en este contrato, donde son válidas todas las notificaciones, incluidas las enviadas por correo electrónico o WhatsApp a los datos informados. Para cualquier conflicto, se someten a los tribunales ordinarios de {jurisdiccion}.`;
+
+/**
  * Datos de cada país para que la app sirva a agencias de otros lugares: al elegir el país en
  * Configuración se completan la moneda, el impuesto, el nombre de la identificación fiscal y el
  * formato de números y fechas. Las alícuotas son las generales: cada empresa las puede ajustar.
@@ -409,6 +482,12 @@ const DEFAULT_SETTINGS = {
   // Versión en inglés de los textos propios de la empresa (contrato y voucher con la app en inglés).
   contract_terms_en: CONTRACT_TERMS_EN,
   jurisdiction_en: 'the city of Ushuaia, Province of Tierra del Fuego',
+  // Tipo de negocio: 'turismo' (alquiler por días, el de siempre) o 'choferes' (autos de trabajo para choferes de apps, src/choferes.js).
+  business_mode: 'turismo',
+  rent_period: 'semana', // 'dia', 'semana' o 'mes': cada cuánto se cobra y se renueva el alquiler
+  late_fee_per_day: '0', // recargo por cada día de atraso en el pago
+  late_grace_days: '0', // días de tolerancia antes de cobrar el recargo
+  contract_terms_choferes: CONTRACT_TERMS_CHOFERES,
   // Integración con cotizador
   api_key: '',
   quote_mapping: JSON.stringify(DEFAULT_MAPPING, null, 2),
@@ -475,6 +554,13 @@ function migrate(db) {
   // Seguros: un adicional con tipo "seguro" (se elige uno por reserva) y su franquicia, que carga cada agencia.
   if (!has('extras', 'kind')) db.exec("ALTER TABLE extras ADD COLUMN kind TEXT NOT NULL DEFAULT 'adicional'");
   if (!has('extras', 'deductible')) db.exec('ALTER TABLE extras ADD COLUMN deductible REAL NOT NULL DEFAULT 0');
+  // Modo choferes: tarifa mensual y km por período en la categoría, datos del chofer y su garante, service cada X km.
+  if (!has('categories', 'monthly_rate')) db.exec('ALTER TABLE categories ADD COLUMN monthly_rate REAL NOT NULL DEFAULT 0');
+  if (!has('categories', 'km_per_period')) db.exec('ALTER TABLE categories ADD COLUMN km_per_period INTEGER NOT NULL DEFAULT 0');
+  for (const col of ['license_class', 'work_apps', 'guarantor_name', 'guarantor_doc', 'guarantor_phone', 'guarantor_address']) {
+    if (!has('customers', col)) db.exec(`ALTER TABLE customers ADD COLUMN ${col} TEXT`);
+  }
+  if (!has('vehicles', 'service_every_km')) db.exec('ALTER TABLE vehicles ADD COLUMN service_every_km INTEGER NOT NULL DEFAULT 0');
   // La sucursal de ejemplo "Entrega en hotel" duplicaba la opción Hotel: se apaga una sola vez (sus reservas viejas quedan igual;
   // si la agencia la vuelve a activar, no se toca más).
   if (!getSetting(db, 'migracion_sucursal_hotel')) {
@@ -503,4 +589,4 @@ function setSetting(db, key, value) {
   );
 }
 
-module.exports = { COUNTRY_PRESETS, openDb, getSetting, getSettings, setSetting, newApiKey, DEFAULT_MAPPING, WEBFORM_MAPPING, DEFAULT_SETTINGS, CONTRACT_TERMS, CONTRACT_TERMS_EN };
+module.exports = { COUNTRY_PRESETS, openDb, getSetting, getSettings, setSetting, newApiKey, DEFAULT_MAPPING, WEBFORM_MAPPING, DEFAULT_SETTINGS, CONTRACT_TERMS, CONTRACT_TERMS_EN, CONTRACT_TERMS_CHOFERES };
