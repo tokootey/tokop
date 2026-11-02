@@ -95,13 +95,15 @@ function restoreOnBoot({ dataDir, backupDir, stamp }) {
   return r;
 }
 
-/** Copia diaria: revisa cada hora si ya se hizo la de hoy. */
-function scheduleDaily({ dataDir, backupDir, keep, log = console }) {
+/** Copia diaria: revisa cada hora si ya se hizo la de hoy. `afterBackup(stamp)` corre después de cada copia hecha. */
+function scheduleDaily({ dataDir, backupDir, keep, log = console, afterBackup }) {
   const tick = () => {
     const today = stampOf(new Date()).slice(0, 10);
     if (listBackups(backupDir).some((b) => b.startsWith(today))) return;
     try {
-      log.log(`Copia de seguridad hecha: ${backupNow({ dataDir, backupDir, keep })}`);
+      const stamp = backupNow({ dataDir, backupDir, keep });
+      log.log(`Copia de seguridad hecha: ${stamp}`);
+      if (afterBackup) afterBackup(stamp);
     } catch (err) {
       log.error('No se pudo hacer la copia de seguridad:', err.message);
     }
