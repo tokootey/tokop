@@ -200,6 +200,11 @@ function platformRoutes(platform, company) {
     audit(company.db, req, 'agencia_nueva_contrasena', `empresa #${req.params.id}`);
     res.json(r);
   });
+  router.delete('/companies/:id', (req, res) => {
+    const r = platform.remove(req.params.id);
+    audit(company.db, req, 'agencia_eliminada', `empresa #${r.id} (${r.name})`);
+    res.json(r);
+  });
   // Estadísticas de una agencia (las mismas que ve su administrador), sin entrar a su cuenta.
   router.get('/companies/:id/stats', (req, res) => {
     const c = platform.get(req.params.id);

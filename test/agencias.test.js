@@ -58,4 +58,19 @@ test('datos de la agencia y contraseña nueva del administrador', () => {
   assert.equal(admin().must_change_password, 1);
   assert.equal(db().prepare('SELECT COUNT(*) AS n FROM sessions').get().n, 0);
   assert.throws(() => platform.resetAdminPassword(999), /inexistente/);
+
+  // Eliminar: sale del panel, no entra más (ni por email ni por subdominio), su archivo queda y el email se libera.
+  platform.setDomain(id, 'reservas.andes.test');
+  assert.throws(() => platform.remove(platform.principal().id), /principal/);
+  const slug = platform.get(id).slug;
+  platform.remove(id);
+  assert.equal(platform.get(id), null);
+  assert.ok(!platform.list().some((c) => c.id === id));
+  assert.equal(platform.bySlug(slug), null);
+  assert.equal(platform.byEmail('ana.perez@andes.test'), null);
+  assert.ok(fs.existsSync(path.join(dir, 'empresas', `${slug}.db`)), 'los datos no se borran');
+  assert.throws(() => platform.remove(id), /inexistente/);
+  const otra = platform.create({ name: 'Andes Rent', country: 'AR', admin_name: 'Ana', admin_email: 'ana.perez@andes.test' });
+  assert.notEqual(otra.company.slug, slug, 'el subdominio de la eliminada no se reusa');
+  platform.setDomain(otra.company.id, 'reservas.andes.test');
 });

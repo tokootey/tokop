@@ -258,6 +258,21 @@ function openPlatform(principalDb, principalFile) {
       return { email: admin.email, password, address: addressOf(c) };
     },
 
+    /**
+     * Da de baja una agencia: deja de entrar y sale del panel. Su base queda en el disco (no se borra nada),
+     * por si hay que recuperarla. Libera su dominio propio; el subdominio no se reusa.
+     */
+    remove(id) {
+      const c = platform.get(id);
+      if (!c) fail(404, 'Empresa inexistente');
+      if (c.principal) fail(400, 'La empresa principal no se puede eliminar');
+      c.db.prepare('DELETE FROM sessions').run();
+      reg.prepare('UPDATE companies SET active = 0, domain = NULL WHERE id = ?').run(c.id);
+      c.db.close();
+      open.delete(c.id);
+      return { id: c.id, name: c.name };
+    },
+
     close() {
       for (const db of open.values()) db.close();
       reg.close();
