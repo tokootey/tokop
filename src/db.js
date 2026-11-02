@@ -212,6 +212,9 @@ CREATE TABLE IF NOT EXISTS reservation_files (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS ix_reservation_files ON reservation_files(reservation_id);
+-- Cada reserva busca sus pagos y su historial: sin índice se recorre la tabla entera.
+CREATE INDEX IF NOT EXISTS ix_payments_reservation ON payments(reservation_id);
+CREATE INDEX IF NOT EXISTS ix_reservation_log ON reservation_log(reservation_id);
 
 -- Facturas electrónicas (por ahora sólo de prueba: mode = 'simulado' u 'homologacion').
 CREATE TABLE IF NOT EXISTS invoices (

@@ -123,7 +123,22 @@
   class DatabaseSync {
     constructor() {
       this.raw = initialBytes ? new SQL.Database(initialBytes) : new SQL.Database();
+      this.cache = new Map();
       current = this;
+    }
+    // Cada consulta se compila una sola vez: compilarla en cada llamada hacía lenta la demo (y su primera carga).
+    stmt(sql) {
+      let st = this.cache.get(sql);
+      if (!st) {
+        if (this.cache.size > 500) this.forget(); // consultas armadas con valores adentro: que no crezca sin fin
+        st = this.raw.prepare(sql);
+        this.cache.set(sql, st);
+      }
+      return st;
+    }
+    forget() {
+      for (const st of this.cache.values()) st.free();
+      this.cache.clear();
     }
     exec(sql) {
       this.raw.exec(sql);
@@ -133,28 +148,31 @@
       const norm = (args) => args.map((v) => (v === undefined ? null : typeof v === 'boolean' ? (v ? 1 : 0) : v));
       return {
         run: (...args) => {
-          db.run(sql, norm(args));
+          this.stmt(sql).run(norm(args));
           const changes = db.getRowsModified();
-          const r = db.exec('SELECT last_insert_rowid()');
-          return { changes, lastInsertRowid: r[0].values[0][0] };
+          const id = this.stmt('SELECT last_insert_rowid() AS id');
+          id.step();
+          const lastInsertRowid = id.getAsObject().id;
+          id.reset();
+          return { changes, lastInsertRowid };
         },
         get: (...args) => {
-          const st = db.prepare(sql);
+          const st = this.stmt(sql);
           try {
             st.bind(norm(args));
             return st.step() ? st.getAsObject() : undefined;
           } finally {
-            st.free();
+            st.reset();
           }
         },
         all: (...args) => {
-          const st = db.prepare(sql);
+          const st = this.stmt(sql);
           const out = [];
           try {
             st.bind(norm(args));
             while (st.step()) out.push(st.getAsObject());
           } finally {
-            st.free();
+            st.reset();
           }
           return out;
         },
@@ -270,6 +288,7 @@
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       try {
+        current.forget(); // export() libera las consultas compiladas
         const bytes = current.raw.export();
         current.raw.exec('PRAGMA foreign_keys = ON;'); // export() reabre la base
         localStorage.setItem(STORE_KEY, toB64(bytes));
@@ -312,6 +331,13 @@
     } else if (getSetting(db, 'company_name') === 'Austral Rent a Car (demo)') {
       // Quien ya había abierto la demo con el nombre anterior ve el nuevo sin reiniciar sus datos.
       setSetting(db, 'company_name', 'Demo Rent a Car');
+      scheduleSave();
+    }
+    // Un año de movimiento para que Estadísticas se vea como en una agencia que ya trabaja
+    // (también a quien ya tenía la demo guardada en el navegador, una sola vez).
+    if (!PROFILE && getSetting(db, 'demo_history') !== '1') {
+      req('./src/seed.js').seedHistory(db);
+      setSetting(db, 'demo_history', '1');
       scheduleSave();
     }
     // En la demo no se obliga a cambiar la contraseña de ejemplo.
