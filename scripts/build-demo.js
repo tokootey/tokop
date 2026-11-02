@@ -114,7 +114,7 @@ const demoUi = `
           try {
             localStorage.setItem('rentacar-demo-tipo', t[0]);
           } catch (e) {}
-          location.search = '?entrar';
+          location.search = '?elegido';
           return new Promise(function () {});
         });
       });
@@ -123,7 +123,8 @@ const demoUi = `
       button('Entrar a la demo', enter);
     }
     // Con ?entrar (el botón "Probar la demo" de flotyapp.com.ar) entra solo, una vez, y se ve directo la app.
-    if (/[?&]entrar\\b/.test(location.search)) {
+    // En la demo general no: primero se elige el tipo, y ?elegido es la recarga después de elegir.
+    if (/[?&]elegido\\b/.test(location.search) || (!window.__demoTipo && /[?&]entrar\\b/.test(location.search))) {
       history.replaceState(null, '', location.pathname + location.hash);
       var login = document.getElementById('login');
       new MutationObserver(function (_, obs) {
