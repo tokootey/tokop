@@ -1497,7 +1497,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       <div class="card">
         <h2>Datos de la reserva</h2>
         <dl class="info">
-          <dt>Cliente</dt><dd><b>${esc(r.customer_name)}</b><br><small>${esc(r.customer_doc || '')} · ${esc(r.customer_phone || '')} · ${esc(r.customer_email || '')}</small></dd>
+          <dt>Cliente</dt><dd><b>${esc(r.customer_name)}</b><br><small>${esc(r.customer_doc || '')} · ${esc(r.customer_phone || '')} · ${esc(r.customer_email || '')}</small>
+            <br><button class="btn small no-print" type="button" data-docs style="margin-top:6px">Carnet y DNI</button></dd>
           <dt>Retiro</dt><dd>${fmtDT(r.pickup_at)} · ${esc(r.pickup_branch_name || '')}</dd>
           <dt>Devolución</dt><dd>${fmtDT(r.return_at)} · ${esc(r.return_branch_name || '')}</dd>
           <dt>Categoría</dt><dd>${esc(r.category_code)} · ${esc(r.category_name)}</dd>
@@ -1858,6 +1859,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
     (navigator.clipboard ? navigator.clipboard.writeText(hotelLink(r)) : Promise.reject()).then(() => toast('Link copiado: mandáselo al cliente'), () => toast(hotelLink(r))),
   );
   wireFiles(view, r, reload);
+  $('[data-docs]', view)?.addEventListener('click', () => openDocuments(r.customer_id, r.customer_name));
   // Con ?accion=checkout|checkin|pay se abre ese paso directo si el estado lo permite (pay: sólo si queda saldo).
   if (accion) {
     history.replaceState(null, '', `#/reservas/${r.id}`);
@@ -2185,6 +2187,61 @@ function wireFiles(view, r, reload) {
         closeModal();
         reload();
       });
+    }),
+  );
+}
+
+/* ---------- Carnet y DNI del cliente ---------- */
+const DOC_KINDS = [
+  ['carnet_frente', 'Carnet · frente'],
+  ['carnet_dorso', 'Carnet · dorso'],
+  ['dni_frente', 'DNI · frente'],
+  ['dni_dorso', 'DNI · dorso'],
+];
+/** Los documentos de la persona: se cargan una vez y se ven desde todas sus reservas. Subir otro reemplaza al anterior. */
+async function openDocuments(customerId, name) {
+  const docs = await GET(`/customers/${customerId}/documents`);
+  const slot = ([kind, label]) => {
+    const d = docs.find((x) => x.kind === kind);
+    return `<div class="doc-slot" data-kind="${kind}">
+      <b>${label}</b>
+      ${d ? `<button type="button" class="thumb" data-open="${d.id}" title="Ver">${d.mime.startsWith('image/') ? `<img alt="${label}" data-doc-img="${d.id}"/>` : '<span>PDF</span>'}</button>` : '<div class="thumb empty"><span>Falta</span></div>'}
+      <div class="actions"><label class="btn small">${d ? 'Cambiar' : 'Subir foto'}<input type="file" accept="image/*,application/pdf" hidden data-up></label>
+      ${d ? `<button type="button" class="btn small danger" data-del="${d.id}">Borrar</button>` : ''}</div>
+    </div>`;
+  };
+  openModal(`Carnet y DNI · ${name}`, `<p class="muted">Se cargan una vez y quedan en la ficha del cliente para todos sus alquileres.</p><div class="doc-slots">${DOC_KINDS.map(slot).join('')}</div>`);
+  const box = $('#modal-body');
+  const blobOf = (id) => fetch(`/api/documents/${id}`, { credentials: 'same-origin' }).then((r) => (r.ok ? r.blob() : Promise.reject(new Error('No se pudo abrir el archivo'))));
+  $$('[data-doc-img]', box).forEach((img) =>
+    blobOf(img.dataset.docImg)
+      .then((b) => (img.src = URL.createObjectURL(b)))
+      .catch(() => (img.alt = 'No disponible')),
+  );
+  $$('[data-open]', box).forEach((b) => b.addEventListener('click', () => run(() => blobOf(b.dataset.open)).then((blob) => window.open(URL.createObjectURL(blob), '_blank', 'noopener'))));
+  $$('[data-up]', box).forEach((input) =>
+    input.addEventListener('change', async () => {
+      const f = input.files[0];
+      if (!f) return;
+      const kind = input.closest('[data-kind]').dataset.kind;
+      toast('Subiendo…');
+      const blob = await shrinkImage(f);
+      const res = await fetch(`/api/customers/${customerId}/documents?kind=${kind}&name=${encodeURIComponent(f.name)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': blob.type || f.type || 'application/octet-stream' },
+        credentials: 'same-origin',
+        body: blob,
+      });
+      if (!res.ok) return toast((await res.json().catch(() => ({}))).error || 'No se pudo subir', true);
+      toast('Guardado');
+      openDocuments(customerId, name);
+    }),
+  );
+  $$('[data-del]', box).forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!(await confirmModal({ title: 'Borrar documento', text: 'La foto se borra de la ficha del cliente.', ok: 'Borrar', danger: true }))) return;
+      await run(() => DEL(`/documents/${b.dataset.del}`), 'Borrado');
+      openDocuments(customerId, name);
     }),
   );
 }
@@ -3025,7 +3082,7 @@ on(
       { label: 'Licencia', render: (r) => (r.license_number ? `${esc(r.license_number)} <small class="muted">${fmtD(r.license_expiry)}</small>` : '<span class="badge b-pendiente">Falta</span>') },
     ],
     extraActions: (r) =>
-      `<button class="btn small" data-hist="${r.id}">Reservas</button> ${isAdmin() && !r.anonymized_at ? `<button class="btn small" data-anon="${r.id}">Anonimizar</button> ` : ''}`,
+      `<button class="btn small" data-hist="${r.id}">Reservas</button> ${r.anonymized_at ? '' : `<button class="btn small" data-docs="${r.id}">Carnet y DNI</button> `}${isAdmin() && !r.anonymized_at ? `<button class="btn small" data-anon="${r.id}">Anonimizar</button> ` : ''}`,
     nav: (tr, r) => {
       const b = tr.querySelector('[data-hist]');
       if (b)
@@ -3033,6 +3090,7 @@ on(
           const rows = await GET(`/reservations?customer_id=${r.id}&limit=50`);
           openModal(`Reservas de ${r.full_name}`, historyTable(rows));
         });
+      tr.querySelector('[data-docs]')?.addEventListener('click', () => openDocuments(r.id, r.full_name));
       const a = tr.querySelector('[data-anon]');
       if (a)
         a.addEventListener('click', () =>

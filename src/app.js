@@ -102,7 +102,7 @@ function companyApi(db, { uploadsDir, company, platform }) {
   app.use(
     '/api',
     guarded,
-    catalogRoutes(db),
+    catalogRoutes(db, { uploadsDir }),
     operationsRoutes(db),
     fileRoutes(db, uploadsDir),
     adminRoutes(db, { emailTaken, publicQuery: company && !company.principal ? `?empresa=${company.slug}` : '' }),
