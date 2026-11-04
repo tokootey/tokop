@@ -102,18 +102,41 @@ function syncReservation(db, id) {
   db.prepare('UPDATE reservations SET return_at = ?, total = ?, days = ?, updated_at = ? WHERE id = ?').run(s.b, round2(s.t), days, nowLocal(), id);
 }
 
-/** Renovación automática: mientras el auto siga con el chofer, cada período vencido abre el siguiente al mismo precio. */
+/** Domingo o feriado de Configuración (DD/MM/AAAA). El día de un período diario es el de su mitad: de 23:00 a 23:00 cuenta el siguiente. */
+function isRestDay(start, holidays) {
+  const day = fmtLocal(new Date(parseLocal(start).getTime() + DAY / 2)).slice(0, 10);
+  if (parseLocal(`${day}T12:00`).getDay() === 0) return true;
+  return String(holidays || '')
+    .split(',')
+    .some((h) => {
+      const m = h.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      return m && `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` === day;
+    });
+}
+
+/**
+ * Renovación automática: mientras el auto siga con el chofer, cada período vencido abre el siguiente al mismo precio.
+ * Cobro por día con tarifa de domingos y feriados en la categoría: esos días van a esa tarifa y el día siguiente vuelve a la diaria.
+ */
 function renew(db, reservationId, now = nowLocal(), userId = null) {
   let last = db.prepare('SELECT * FROM rental_periods WHERE reservation_id = ? ORDER BY n DESC LIMIT 1').get(reservationId);
   // El período siguiente arranca recién pasado el fin del actual (devolverlo justo al terminar no abre otro).
   if (!last || last.end_at >= now) return 0;
-  const period = periodOf(getSettings(db));
+  const settings = getSettings(db);
+  const period = periodOf(settings);
+  const cat = db.prepare('SELECT c.daily_rate, c.rest_day_rate FROM reservations r JOIN categories c ON c.id = r.category_id WHERE r.id = ?').get(reservationId);
+  const rest = period === 'dia' && cat && cat.rest_day_rate > 0;
+  const amountAfter = (prev, start) => {
+    if (!rest) return prev.amount;
+    if (isRestDay(start, settings.holidays)) return cat.rest_day_rate;
+    return isRestDay(prev.start_at, settings.holidays) ? cat.daily_rate : prev.amount;
+  };
   const ins = db.prepare('INSERT INTO rental_periods (reservation_id, n, start_at, end_at, amount) VALUES (?, ?, ?, ?, ?)');
   const logIns = db.prepare("INSERT INTO reservation_log (reservation_id, user_id, action, detail) VALUES (?, ?, 'renovado', ?)");
   let added = 0;
   tx(db, () => {
     while (last.end_at < now) {
-      const next = { n: last.n + 1, start_at: last.end_at, end_at: addPeriod(last.end_at, period), amount: last.amount };
+      const next = { n: last.n + 1, start_at: last.end_at, end_at: addPeriod(last.end_at, period), amount: amountAfter(last, last.end_at) };
       ins.run(reservationId, next.n, next.start_at, next.end_at, next.amount);
       logIns.run(reservationId, userId, JSON.stringify({ periodo: next.n, desde: next.start_at, hasta: next.end_at, importe: next.amount }));
       last = next;
@@ -202,4 +225,4 @@ function dashboardChoferes(db, getReservation, today) {
   return { owing, license_expired, service_due };
 }
 
-module.exports = { PERIODS, isChoferes, periodOf, addPeriod, periodsBetween, periodRate, lateFee, rentalExtras, openPeriods, renew, renewDue, kmReading, addCharge, dashboardChoferes };
+module.exports = { PERIODS, isChoferes, periodOf, addPeriod, isRestDay, periodsBetween, periodRate, lateFee, rentalExtras, openPeriods, renew, renewDue, kmReading, addCharge, dashboardChoferes };
