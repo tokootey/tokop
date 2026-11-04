@@ -81,6 +81,131 @@ test('cobro por día: domingos y feriados van a su tarifa solo si la categoría 
   assert.deepEqual(R.getReservation(other.db, r2.id).periods.map((p) => p.amount), [20000, 20000, 20000, 20000, 20000]);
 });
 
+test('precio propio de cada auto: manda sobre la categoría, con sus domingos, y si cambia vale desde la renovación siguiente', () => {
+  const { db, cat, vehicle, customer } = fleet();
+  setSetting(db, 'rent_period', 'dia');
+  db.prepare('UPDATE categories SET daily_rate = 50000, rest_day_rate = 40000 WHERE id = ?').run(cat);
+  db.prepare('UPDATE vehicles SET period_rate = 45000, rest_day_rate = 30000 WHERE id = ?').run(vehicle);
+  const input = { customer_id: customer, category_id: cat, vehicle_id: vehicle, pickup_at: '2026-11-06T23:00', return_at: '2026-11-07T23:00', status: 'confirmada' };
+  const r = R.createReservation(db, input);
+  assert.equal(r.total, 45000, 'la reserva ya sale con el precio del auto');
+  R.checkout(db, r.id, { out_at: '2026-11-06T23:00', out_km: 50000, out_fuel: 8 }, 1);
+  C.renew(db, r.id, '2026-11-08T12:00');
+  // sáb 07 a 45.000 y dom 08 al domingo del auto (no al de la categoría).
+  assert.deepEqual(R.getReservation(db, r.id).periods.map((p) => p.amount), [45000, 30000]);
+  // La agencia sube el precio: lo ya cobrado no cambia, lo que viene sí.
+  db.prepare('UPDATE vehicles SET period_rate = 48000 WHERE id = ?').run(vehicle);
+  C.renew(db, r.id, '2026-11-10T12:00');
+  assert.deepEqual(R.getReservation(db, r.id).periods.map((p) => p.amount), [45000, 30000, 48000, 48000]);
+  assert.equal(R.getReservation(db, r.id).total, 171000);
+
+  // Sin domingo propio, el auto cobra su precio todos los días (no el domingo de la categoría).
+  db.prepare('UPDATE vehicles SET rest_day_rate = 0 WHERE id = ?').run(vehicle);
+  const other = fleet();
+  setSetting(other.db, 'rent_period', 'dia');
+  other.db.prepare('UPDATE categories SET daily_rate = 50000, rest_day_rate = 40000 WHERE id = ?').run(other.cat);
+  other.db.prepare('UPDATE vehicles SET period_rate = 45000 WHERE id = ?').run(other.vehicle);
+  const r2 = R.createReservation(other.db, { ...input, customer_id: other.customer, category_id: other.cat, vehicle_id: other.vehicle });
+  R.checkout(other.db, r2.id, { out_at: '2026-11-06T23:00', out_km: 50000, out_fuel: 8 }, 1);
+  C.renew(other.db, r2.id, '2026-11-08T12:00');
+  assert.deepEqual(R.getReservation(other.db, r2.id).periods.map((p) => p.amount), [45000, 45000]);
+});
+
+test('corregir el inicio de un alquiler en curso: se rearman los días desde la fecha nueva y no figura como "vuelve hoy"', async () => {
+  const { db, cat, vehicle, customer } = fleet();
+  setSetting(db, 'rent_period', 'dia');
+  db.prepare('UPDATE categories SET daily_rate = 50000 WHERE id = ?').run(cat);
+  const r = R.createReservation(db, { customer_id: customer, category_id: cat, vehicle_id: vehicle, pickup_at: daysAgo(26), return_at: daysAgo(25), status: 'confirmada' });
+  R.checkout(db, r.id, { out_at: daysAgo(26), out_km: 50000, out_fuel: 8 }, 1);
+  C.renew(db, r.id);
+  assert.equal(R.getReservation(db, r.id).periods.length, 27);
+
+  C.restart(db, r.id, daysAgo(2), 1);
+  const after = R.getReservation(db, r.id);
+  assert.deepEqual(after.periods.map((p) => [p.n, p.amount]), [[1, 50000], [2, 50000], [3, 50000]]);
+  assert.equal(after.pickup_at, daysAgo(2));
+  assert.equal(after.contract.out_at, daysAgo(2));
+  assert.equal(after.total, 150000);
+  assert.ok(after.log.some((l) => l.action === 'inicio_corregido'));
+  assert.throws(() => C.restart(db, r.id, '2999-01-01T10:00'), /todavía no llegó/);
+  assert.throws(() => C.restart(db, r.id, 'ayer'), /inválida/);
+
+  // Hoy y la flota: un alquiler por tiempo indeterminado no es una devolución (ni vencida ni para hoy). Por la API, solo un admin corrige.
+  ensureAdmin(db);
+  const server = createApp(db).listen(0);
+  await new Promise((ok) => server.once('listening', ok));
+  const base = `http://127.0.0.1:${server.address().port}/api`;
+  let cookie;
+  const call = async (method, p, body) => {
+    const res = await fetch(base + p, { method, headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) }, body: body && JSON.stringify(body) });
+    if (!cookie && res.headers.get('set-cookie')) cookie = res.headers.get('set-cookie').split(';')[0];
+    return { status: res.status, data: await res.json().catch(() => null) };
+  };
+  try {
+    await call('POST', '/auth/login', { email: 'admin@rentacar.local', password: 'admin123' });
+    await call('POST', '/auth/password', { current: 'admin123', password: 'ChoferesPrueba2026' });
+    const d = (await call('GET', '/dashboard')).data;
+    assert.deepEqual([d.returns_today.length, d.overdue.length], [0, 0]);
+    assert.equal((await call('GET', '/vehicles')).data.find((v) => v.id === vehicle).back_at, null);
+    const fixed = await call('PUT', `/reservations/${r.id}/start`, { start_at: daysAgo(1) });
+    assert.equal(fixed.status, 200);
+    assert.equal(fixed.data.periods.length, 2);
+  } finally {
+    server.close();
+  }
+});
+
+test('seguro del auto como gasto mensual, pago con repuesto y notas, alerta de deuda de más de 3 días y habilitación por vencer', async () => {
+  const { db, cat, vehicle, customer } = fleet();
+  setSetting(db, 'rent_period', 'dia');
+  db.prepare('UPDATE categories SET daily_rate = 50000 WHERE id = ?').run(cat);
+  ensureAdmin(db);
+  const server = createApp(db).listen(0);
+  await new Promise((ok) => server.once('listening', ok));
+  const base = `http://127.0.0.1:${server.address().port}/api`;
+  let cookie;
+  const call = async (method, p, body) => {
+    const res = await fetch(base + p, { method, headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) }, body: body && JSON.stringify(body) });
+    if (!cookie && res.headers.get('set-cookie')) cookie = res.headers.get('set-cookie').split(';')[0];
+    return { status: res.status, data: await res.json().catch(() => null) };
+  };
+  try {
+    await call('POST', '/auth/login', { email: 'admin@rentacar.local', password: 'admin123' });
+    await call('POST', '/auth/password', { current: 'admin123', password: 'ChoferesPrueba2026' });
+    const soon = fmtLocal(new Date(Date.now() + 10 * 86400000)).slice(0, 10);
+    const v = await call('PUT', `/vehicles/${vehicle}`, { insurance_company: 'Agrosalta', insurance_policy: '8.751.520', insurance_cost: 26000, permit_number: '33379', permit_expiry: soon });
+    assert.equal(v.status, 200);
+
+    // La cuota se carga una sola vez por mes aunque se abra Hoy muchas veces.
+    const d = (await call('GET', '/dashboard')).data;
+    await call('GET', '/dashboard');
+    await call('GET', '/expenses');
+    const cuotas = db.prepare("SELECT * FROM expenses WHERE kind = 'seguro' AND vehicle_id = ?").all(vehicle);
+    assert.equal(cuotas.length, 1);
+    assert.equal(cuotas[0].amount, 26000);
+    assert.match(cuotas[0].description, /Agrosalta · póliza 8\.751\.520/);
+    assert.equal(cuotas[0].date, `${fmtLocal(new Date()).slice(0, 7)}-01`);
+    assert.equal(d.alerts.documents.find((x) => x.id === vehicle).permit_expiry, soon, 'habilitación por vencer en Hoy');
+
+    // 5 días sin pagar: debe más de 3. Paga 2 días (uno con un repuesto, con nota) y queda en 3.
+    const r = (await call('POST', '/reservations', { customer_id: customer, category_id: cat, vehicle_id: vehicle, pickup_at: daysAgo(4), return_at: daysAgo(3), status: 'confirmada' })).data;
+    await call('POST', `/reservations/${r.id}/checkout`, { out_at: daysAgo(4), out_km: 50000, out_fuel: 8 });
+    let owing = (await call('GET', '/dashboard')).data.choferes.owing[0];
+    assert.equal(owing.days_owed, 5);
+    await call('POST', `/reservations/${r.id}/payments`, { amount: 50000, method: 'efectivo' });
+    const pago = await call('POST', `/reservations/${r.id}/payments`, { amount: 50000, method: 'repuesto', notes: 'Batería nueva' });
+    assert.equal(pago.data.payments.at(-1).notes, 'Batería nueva');
+    owing = (await call('GET', '/dashboard')).data.choferes.owing[0];
+    assert.equal(owing.days_owed, 3);
+    // El repuesto queda también como gasto del auto (la plata no entró a caja).
+    const rep = db.prepare("SELECT * FROM expenses WHERE kind = 'repuestos' AND vehicle_id = ?").get(vehicle);
+    assert.equal(rep.amount, 50000);
+    assert.match(rep.description, /Batería nueva \(lo pagó el chofer/);
+  } finally {
+    server.close();
+  }
+});
+
 test('alquiler semanal: se cobra por semana, se renueva solo y suma km extra, multas y recargo', () => {
   const { db, cat, vehicle, customer } = fleet();
   const r = R.createReservation(db, { customer_id: customer, category_id: cat, vehicle_id: vehicle, pickup_at: daysAgo(15), return_at: daysAgo(8), status: 'confirmada' });

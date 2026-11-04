@@ -577,6 +577,19 @@ function migrate(db) {
   if (!has('categories', 'km_per_period')) db.exec('ALTER TABLE categories ADD COLUMN km_per_period INTEGER NOT NULL DEFAULT 0');
   // Cobro por día: precio de los domingos y feriados (0 = el mismo de todos los días).
   if (!has('categories', 'rest_day_rate')) db.exec('ALTER TABLE categories ADD COLUMN rest_day_rate REAL NOT NULL DEFAULT 0');
+  // Precio propio de cada auto por período y de sus domingos y feriados (0 = el de la categoría).
+  if (!has('vehicles', 'period_rate')) db.exec('ALTER TABLE vehicles ADD COLUMN period_rate REAL NOT NULL DEFAULT 0');
+  if (!has('vehicles', 'rest_day_rate')) db.exec('ALTER TABLE vehicles ADD COLUMN rest_day_rate REAL NOT NULL DEFAULT 0');
+  // Seguro de cada auto (la cuota mensual se carga sola como gasto) y su habilitación (remis / apps).
+  for (const col of ['insurance_company', 'insurance_policy', 'permit_number', 'permit_expiry']) {
+    if (!has('vehicles', col)) db.exec(`ALTER TABLE vehicles ADD COLUMN ${col} TEXT`);
+  }
+  if (!has('vehicles', 'insurance_cost')) db.exec('ALTER TABLE vehicles ADD COLUMN insurance_cost REAL NOT NULL DEFAULT 0');
+  // Notas de cada pago (por ejemplo: pagó una parte y otra en un repuesto).
+  if (!has('payments', 'notes')) db.exec('ALTER TABLE payments ADD COLUMN notes TEXT');
+  // Gastos que se cargan solos (la cuota del seguro de cada mes): la clave evita cargarlos dos veces.
+  if (!has('expenses', 'auto_key')) db.exec('ALTER TABLE expenses ADD COLUMN auto_key TEXT');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ix_expenses_auto ON expenses(auto_key)');
   for (const col of ['license_class', 'work_apps', 'guarantor_name', 'guarantor_doc', 'guarantor_phone', 'guarantor_address']) {
     if (!has('customers', col)) db.exec(`ALTER TABLE customers ADD COLUMN ${col} TEXT`);
   }

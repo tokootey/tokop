@@ -377,14 +377,25 @@ function addPayment(db, id, input, userId) {
   const amount = Number(input.amount);
   if (!(amount > 0)) fail(400, 'Importe inválido');
   const kind = ['pago', 'devolucion', 'garantia', 'devolucion_garantia'].includes(input.kind) ? input.kind : 'pago';
-  db.prepare('INSERT INTO payments (reservation_id, kind, method, amount, reference, created_by) VALUES (?, ?, ?, ?, ?, ?)').run(
+  const notes = input.notes ? String(input.notes).trim().slice(0, 500) : null;
+  db.prepare('INSERT INTO payments (reservation_id, kind, method, amount, reference, created_by, notes) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
     r.id,
     kind,
     input.method || 'efectivo',
     round2(amount),
     input.reference || null,
     userId || null,
+    notes,
   );
+  // Pagó con un repuesto o un arreglo del auto: cuenta como pago y también como gasto del auto (la plata no entró a caja).
+  if (kind === 'pago' && input.method === 'repuesto' && r.vehicle_id) {
+    db.prepare("INSERT INTO expenses (vehicle_id, date, kind, description, amount) VALUES (?, ?, 'repuestos', ?, ?)").run(
+      r.vehicle_id,
+      nowLocal().slice(0, 10),
+      `${notes || 'Repuesto o arreglo'} (lo pagó el chofer, ${r.code})`,
+      round2(amount),
+    );
+  }
   log(db, r.id, userId, kind, `${input.method || 'efectivo'} ${round2(amount)}`);
   const updated = getReservation(db, r.id);
   emit(db, 'reservation.payment', publicView(updated));

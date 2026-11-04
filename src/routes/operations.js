@@ -10,6 +10,7 @@ const { getSettings } = require('../db');
 const { refundFor } = require('../refunds');
 const choferes = require('../choferes');
 const { requireAdmin } = require('../auth');
+const { chargeInsurance } = require('./catalog');
 const { fail, normDateTime, nowLocal, parseLocal, fmtLocal } = require('../util');
 
 /**
@@ -190,6 +191,10 @@ function operationsRoutes(db) {
     R.log(db, r.id, req.user.id, 'cargo_borrado', `#${req.params.charge}`);
     res.json(R.getReservation(db, r.id));
   });
+  router.put('/reservations/:id/start', requireAdmin, (req, res) => {
+    choferes.restart(db, req.params.id, (req.body || {}).start_at, req.user.id);
+    res.json(R.getReservation(db, req.params.id));
+  });
   router.post('/reservations/:id/km', (req, res) => {
     const r = rentalOf(req.params.id);
     if (r.status !== 'en_curso') fail(409, 'El auto no está alquilado');
@@ -262,6 +267,7 @@ function operationsRoutes(db) {
   router.get('/dashboard', (_req, res) => {
     const now = nowLocal();
     const today = now.slice(0, 10);
+    chargeInsurance(db, today);
     const fleet = db.prepare('SELECT status, COUNT(*) AS n FROM vehicles GROUP BY status').all();
     const byStatus = Object.fromEntries(fleet.map((f) => [f.status, f.n]));
     const total = fleet.reduce((a, f) => a + f.n, 0);
@@ -276,6 +282,7 @@ function operationsRoutes(db) {
       FROM reservations r JOIN customers c ON c.id = r.customer_id JOIN categories cat ON cat.id = r.category_id
       LEFT JOIN vehicles v ON v.id = r.vehicle_id LEFT JOIN branches pb ON pb.id = r.pickup_branch_id LEFT JOIN branches rb ON rb.id = r.return_branch_id`;
     const month = today.slice(0, 7);
+    const FIXED = 'NOT EXISTS (SELECT 1 FROM rental_periods rp WHERE rp.reservation_id = r.id)';
     const t = new Date();
     const tomorrow = fmtLocal(new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1)).slice(0, 10);
     res.json({
@@ -283,8 +290,9 @@ function operationsRoutes(db) {
       fleet: { total, operational, ...byStatus },
       occupancy: operational ? Math.round(((byStatus.alquilado || 0) / operational) * 100) : 0,
       pickups_today: db.prepare(`${baseSelect} WHERE r.status IN ('pendiente','confirmada') AND substr(r.pickup_at,1,10) = ? ORDER BY r.pickup_at`).all(today),
-      returns_today: db.prepare(`${baseSelect} WHERE r.status = 'en_curso' AND substr(r.return_at,1,10) = ? ORDER BY r.return_at`).all(today),
-      overdue: db.prepare(`${baseSelect} WHERE r.status = 'en_curso' AND r.return_at < ? ORDER BY r.return_at`).all(now),
+      // Choferes: el alquiler es por tiempo indeterminado (se renueva solo); su fin de período no es una devolución.
+      returns_today: db.prepare(`${baseSelect} WHERE r.status = 'en_curso' AND substr(r.return_at,1,10) = ? AND ${FIXED} ORDER BY r.return_at`).all(today),
+      overdue: db.prepare(`${baseSelect} WHERE r.status = 'en_curso' AND r.return_at < ? AND ${FIXED} ORDER BY r.return_at`).all(now),
       late_pickups: db.prepare(`${baseSelect} WHERE r.status IN ('pendiente','confirmada') AND substr(r.pickup_at,1,10) < ? ORDER BY r.pickup_at`).all(today),
       pending_confirmation: db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE status = 'pendiente'`).get().n,
       // Pedidos para confirmar (link de reservas, cotizador o cargados como pendientes): la pantalla Hoy los lista.
@@ -299,17 +307,18 @@ function operationsRoutes(db) {
       from_quoter_month: db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE substr(created_at,1,7) = ? AND source = 'cotizador'`).get(month).n,
       tomorrow: {
         pickups: db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE status IN ('pendiente','confirmada') AND substr(pickup_at,1,10) = ?`).get(tomorrow).n,
-        returns: db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE status IN ('pendiente','confirmada','en_curso') AND substr(return_at,1,10) = ?`).get(tomorrow).n,
+        returns: db.prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE status IN ('pendiente','confirmada','en_curso') AND substr(return_at,1,10) = ? AND ${FIXED}`).get(tomorrow).n,
       },
       quote_errors: db.prepare(`SELECT COUNT(*) AS n FROM quote_inbox WHERE status = 'error'`).get().n,
       alerts: {
         documents: db
           .prepare(
-            `SELECT id, plate, insurance_expiry, vtv_expiry FROM vehicles
+            `SELECT id, plate, insurance_expiry, vtv_expiry, permit_expiry FROM vehicles
              WHERE (insurance_expiry IS NOT NULL AND insurance_expiry <= date(?, '+30 day')) OR (vtv_expiry IS NOT NULL AND vtv_expiry <= date(?, '+30 day'))
+               OR (permit_expiry IS NOT NULL AND permit_expiry <= date(?, '+30 day'))
              ORDER BY plate`,
           )
-          .all(today, today),
+          .all(today, today, today),
         maintenance_open: db.prepare(`SELECT COUNT(*) AS n FROM maintenance WHERE status = 'abierto'`).get().n,
       },
       setup: setupSteps(db),
