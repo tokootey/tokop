@@ -54,6 +54,7 @@ function lateFee(periods, payments, settings, now = nowLocal()) {
   for (const per of [...periods].sort((a, b) => a.n - b.n)) {
     due += per.amount;
     if (per.start_at > now) break;
+    if (!(per.amount > 0)) continue; // un día libre no vence ni suma atraso
     // Cubierto desde el último pago que dejó lo pagado por encima (una devolución posterior lo vuelve a descubrir).
     let sum = 0;
     let covered = null;
@@ -82,13 +83,24 @@ function rentalExtras(db, r) {
 
 /** Al entregar el auto: arma los períodos de la reserva desde la entrega, repartiendo el total entre ellos. */
 /**
- * Precio propio del auto (lo pone la agencia en cada auto): el de cada período y, cobrando por día, el de domingos y feriados.
- * Sin precio propio, null: se usa el de la categoría.
+ * Precio propio del auto (lo pone la agencia en cada auto): el de cada período y, cobrando por día, el de domingos y feriados,
+ * que también pueden ser libres (no se cobran). Sin precio propio ni días libres, null: se usa el de la categoría.
  */
 function carRate(db, vehicleId, period, holidays) {
-  const v = vehicleId && db.prepare('SELECT period_rate, rest_day_rate FROM vehicles WHERE id = ?').get(vehicleId);
-  if (!v || !(v.period_rate > 0)) return null;
-  return (start) => (period === 'dia' && v.rest_day_rate > 0 && isRestDay(start, holidays) ? v.rest_day_rate : v.period_rate);
+  const v =
+    vehicleId &&
+    db
+      .prepare('SELECT v.period_rate, v.rest_day_rate, v.rest_day_free, c.daily_rate, c.weekly_rate, c.monthly_rate FROM vehicles v JOIN categories c ON c.id = v.category_id WHERE v.id = ?')
+      .get(vehicleId);
+  if (!v) return null;
+  const free = period === 'dia' && v.rest_day_free;
+  if (!(v.period_rate > 0) && !free) return null;
+  const base = v.period_rate > 0 ? v.period_rate : periodRate(v, period);
+  return (start) => {
+    if (period !== 'dia' || !isRestDay(start, holidays)) return base;
+    if (free) return 0;
+    return v.rest_day_rate > 0 ? v.rest_day_rate : base;
+  };
 }
 
 function openPeriods(db, r, outAt) {
@@ -248,7 +260,7 @@ function dashboardChoferes(db, getReservation, today) {
     .filter((r) => r.balance.pending > 0.005)
     .map((r) => {
       // Días que debe: lo pendiente del alquiler (sin recargos ni multas) sobre el precio del último período (con días a distinto precio es aproximado).
-      const day = r.periods.length ? r.periods[r.periods.length - 1].amount : 0;
+      const day = r.periods.map((p) => p.amount).filter((a) => a > 0).pop() || 0; // el último día que se cobró: los libres valen 0
       const rent = r.balance.pending - r.late_fee.total - r.charges.reduce((a, c) => a + c.amount, 0);
       const days_owed = day > 0 && rent > 0 ? Math.floor((rent / day) * 10) / 10 : 0;
       return { id: r.id, code: r.code, customer_name: r.customer_name, customer_phone: r.customer_phone, vehicle_plate: r.vehicle_plate, pending: r.balance.pending, late_fee: r.late_fee.total, days_owed };

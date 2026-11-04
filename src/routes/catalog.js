@@ -178,7 +178,7 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     '/vehicles',
     crud(db, {
       table: 'vehicles',
-      fields: ['plate', 'brand', 'model', 'year', 'color', 'category_id', 'branch_id', 'status', 'km', 'fuel', 'insurance_expiry', 'vtv_expiry', 'service_every_km', 'notes', 'period_rate', 'rest_day_rate',
+      fields: ['plate', 'brand', 'model', 'year', 'color', 'category_id', 'branch_id', 'status', 'km', 'fuel', 'insurance_expiry', 'vtv_expiry', 'service_every_km', 'notes', 'period_rate', 'rest_day_rate', 'rest_day_free',
         'insurance_company', 'insurance_policy', 'insurance_cost', 'permit_number', 'permit_expiry'],
       required: ['plate', 'category_id'],
       order: 'plate',

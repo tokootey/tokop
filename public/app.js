@@ -2282,7 +2282,7 @@ function rentalCardHtml(r) {
     ${
       r.periods.length
         ? `<div class="table-scroll"><table class="mini"><thead><tr><th>#</th><th>Desde</th><th>Hasta</th><th class="right">Importe</th></tr></thead><tbody>${r.periods
-            .map((p) => `<tr><td>${p.n}</td><td class="nowrap">${fmtDT(p.start_at)}</td><td class="nowrap">${fmtDT(p.end_at)}</td><td class="right">${money(p.amount)}</td></tr>`)
+            .map((p) => `<tr><td>${p.n}</td><td class="nowrap">${fmtDT(p.start_at)}</td><td class="nowrap">${fmtDT(p.end_at)}</td><td class="right">${p.amount > 0 ? money(p.amount) : 'Libre'}</td></tr>`)
             .join('')}</tbody></table></div>
     ${open ? `<p class="muted">Alquiler por tiempo indeterminado: se suma un ${periodWord(1)} más solo, cobrado por adelantado, hasta que registres la devolución.</p>` : ''}`
         : ''
@@ -2815,6 +2815,7 @@ const VEHICLE_FIELDS = [
   // Cada auto puede cobrar distinto: su precio manda sobre el de la categoría.
   { name: 'period_rate', get label() { return `Precio por ${periodWord()} de este auto (0 = el de la categoría)`; }, type: 'number', default: 0, when: () => choferesMode() },
   { name: 'rest_day_rate', label: 'Precio de domingos y feriados de este auto (0 = el mismo)', type: 'number', default: 0, when: () => choferesMode() && state.settings.rent_period === 'dia' },
+  { name: 'rest_day_free', label: 'Domingos y feriados libres (no se cobran)', type: 'checkbox', full: true, when: () => choferesMode() && state.settings.rent_period === 'dia' },
   { name: 'notes', label: 'Notas', type: 'textarea', full: true },
 ];
 
@@ -2944,7 +2945,7 @@ on(
     const doc = (label, d) => `<div><dt>${label}</dt><dd class="doc-${d ? dueTone(d) : 'wait'}">${d ? fmtD(d) : '—'}</dd></div>`;
     const card = (v) => `<article class="vcard st-${v.status}" data-id="${v.id}">
         <div class="vcard-top">
-          <div class="vcard-name"><b>${esc([v.brand, v.model].filter(Boolean).join(' ') || v.category_name)}</b><small>${[v.year, `Cat. ${esc(v.category_code)}`, esc(v.color || ''), choferesMode() && v.period_rate > 0 ? `${moneyRound(v.period_rate)} por ${periodWord()}` : ''].filter(Boolean).join(' · ')}</small></div>
+          <div class="vcard-name"><b>${esc([v.brand, v.model].filter(Boolean).join(' ') || v.category_name)}</b><small>${[v.year, `Cat. ${esc(v.category_code)}`, esc(v.color || ''), choferesMode() && v.period_rate > 0 ? `${moneyRound(v.period_rate)} por ${periodWord()}` : '', choferesMode() && v.rest_day_free ? 'domingos libres' : ''].filter(Boolean).join(' · ')}</small></div>
           ${badge(v.status)}
         </div>
         <div class="vcard-id"><span class="plate">${esc(v.plate)}</span><span class="muted">${esc(v.branch_name || '')}</span></div>
