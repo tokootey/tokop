@@ -60,6 +60,27 @@ const daysAgo = (n) => {
   return fmtLocal(new Date(d.getFullYear(), d.getMonth(), d.getDate() - n, 10, 0));
 };
 
+test('cobro por día: domingos y feriados van a su tarifa solo si la categoría la tiene', () => {
+  const { db, cat, vehicle, customer } = fleet();
+  setSetting(db, 'rent_period', 'dia');
+  setSetting(db, 'holidays', '10/11/2026, 8/12/2026');
+  db.prepare('UPDATE categories SET daily_rate = 50000, rest_day_rate = 40000 WHERE id = ?').run(cat);
+  // De 23:00 a 23:00: el período que arranca el viernes 06/11 a la noche es el sábado 07.
+  const r = R.createReservation(db, { customer_id: customer, category_id: cat, vehicle_id: vehicle, pickup_at: '2026-11-06T23:00', return_at: '2026-11-07T23:00', status: 'confirmada' });
+  R.checkout(db, r.id, { out_at: '2026-11-06T23:00', out_km: 50000, out_fuel: 8 }, 1);
+  C.renew(db, r.id, '2026-11-11T12:00');
+  // sáb 07, dom 08, lun 09, feriado mar 10, mié 11
+  assert.deepEqual(R.getReservation(db, r.id).periods.map((p) => p.amount), [50000, 40000, 50000, 40000, 50000]);
+
+  // Sin tarifa de domingos (la de todas las agencias que no la cargan) todo sigue igual.
+  const other = fleet();
+  setSetting(other.db, 'rent_period', 'dia');
+  const r2 = R.createReservation(other.db, { customer_id: other.customer, category_id: other.cat, vehicle_id: other.vehicle, pickup_at: '2026-11-06T23:00', return_at: '2026-11-07T23:00', status: 'confirmada' });
+  R.checkout(other.db, r2.id, { out_at: '2026-11-06T23:00', out_km: 50000, out_fuel: 8 }, 1);
+  C.renew(other.db, r2.id, '2026-11-11T12:00');
+  assert.deepEqual(R.getReservation(other.db, r2.id).periods.map((p) => p.amount), [20000, 20000, 20000, 20000, 20000]);
+});
+
 test('alquiler semanal: se cobra por semana, se renueva solo y suma km extra, multas y recargo', () => {
   const { db, cat, vehicle, customer } = fleet();
   const r = R.createReservation(db, { customer_id: customer, category_id: cat, vehicle_id: vehicle, pickup_at: daysAgo(15), return_at: daysAgo(8), status: 'confirmada' });

@@ -123,7 +123,7 @@ function catalogRoutes(db) {
     '/categories',
     crud(db, {
       table: 'categories',
-      fields: ['code', 'name', 'description', 'daily_rate', 'weekly_rate', 'monthly_rate', 'deposit', 'km_per_day', 'km_per_period', 'extra_km_rate', 'seats', 'transmission', 'aliases', 'active'],
+      fields: ['code', 'name', 'description', 'daily_rate', 'weekly_rate', 'monthly_rate', 'deposit', 'km_per_day', 'km_per_period', 'rest_day_rate', 'extra_km_rate', 'seats', 'transmission', 'aliases', 'active'],
       required: ['code', 'name'],
       order: 'daily_rate',
       adminWrite: true,

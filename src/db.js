@@ -490,6 +490,7 @@ const DEFAULT_SETTINGS = {
   rent_period: 'semana', // 'dia', 'semana' o 'mes': cada cuánto se cobra y se renueva el alquiler
   late_fee_per_day: '0', // recargo por cada día de atraso en el pago
   late_grace_days: '0', // días de tolerancia antes de cobrar el recargo
+  holidays: '', // feriados con la tarifa de domingos de la categoría (cobro por día), DD/MM/AAAA separados por coma
   contract_terms_choferes: CONTRACT_TERMS_CHOFERES,
   // Integración con cotizador
   api_key: '',
@@ -560,6 +561,8 @@ function migrate(db) {
   // Modo choferes: tarifa mensual y km por período en la categoría, datos del chofer y su garante, service cada X km.
   if (!has('categories', 'monthly_rate')) db.exec('ALTER TABLE categories ADD COLUMN monthly_rate REAL NOT NULL DEFAULT 0');
   if (!has('categories', 'km_per_period')) db.exec('ALTER TABLE categories ADD COLUMN km_per_period INTEGER NOT NULL DEFAULT 0');
+  // Cobro por día: precio de los domingos y feriados (0 = el mismo de todos los días).
+  if (!has('categories', 'rest_day_rate')) db.exec('ALTER TABLE categories ADD COLUMN rest_day_rate REAL NOT NULL DEFAULT 0');
   for (const col of ['license_class', 'work_apps', 'guarantor_name', 'guarantor_doc', 'guarantor_phone', 'guarantor_address']) {
     if (!has('customers', col)) db.exec(`ALTER TABLE customers ADD COLUMN ${col} TEXT`);
   }
