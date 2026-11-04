@@ -111,6 +111,41 @@ test('precio propio de cada auto: manda sobre la categoría, con sus domingos, y
   assert.deepEqual(R.getReservation(other.db, r2.id).periods.map((p) => p.amount), [45000, 45000]);
 });
 
+test('domingos y feriados libres del auto: no se cobran, no suman atraso y no cortan la cuenta de días que debe', () => {
+  const { db, cat, vehicle, customer } = fleet();
+  setSetting(db, 'rent_period', 'dia');
+  setSetting(db, 'holidays', '10/11/2026');
+  db.prepare('UPDATE categories SET daily_rate = 50000, rest_day_rate = 40000 WHERE id = ?').run(cat);
+  db.prepare('UPDATE vehicles SET rest_day_free = 1 WHERE id = ?').run(vehicle);
+  const r = R.createReservation(db, { customer_id: customer, category_id: cat, vehicle_id: vehicle, pickup_at: '2026-11-06T23:00', return_at: '2026-11-07T23:00', status: 'confirmada' });
+  R.checkout(db, r.id, { out_at: '2026-11-06T23:00', out_km: 50000, out_fuel: 8 }, 1);
+  C.renew(db, r.id, '2026-11-11T12:00');
+  // sáb 07, dom 08 libre, lun 09, feriado mar 10 libre, mié 11: sin precio propio, el de la categoría.
+  const after = R.getReservation(db, r.id);
+  assert.deepEqual(after.periods.map((p) => p.amount), [50000, 0, 50000, 0, 50000]);
+  assert.equal(after.total, 150000);
+  const settings = { late_fee_per_day: '1000', late_grace_days: '0' };
+  // Solo vence el sábado 07: el domingo libre no suma atraso.
+  assert.equal(C.lateFee(after.periods.slice(0, 2), [], settings, '2026-11-08T23:00').days, 2);
+  assert.equal(C.lateFee([{ n: 1, start_at: '2026-11-07T23:00', amount: 0 }], [], settings, '2026-11-09T23:00').days, 0);
+  // Termina en un día libre: los días que debe se cuentan con el último que se cobró.
+  C.renew(db, r.id, '2026-11-14T23:30');
+  const last = R.getReservation(db, r.id).periods.at(-1);
+  assert.equal(last.amount, 0, 'el último período es domingo');
+  const owing = C.dashboardChoferes(db, R.getReservation, '2026-11-15').owing[0];
+  assert.ok(owing.days_owed >= 5, `días que debe: ${owing.days_owed}`);
+
+  // Con precio propio, los demás días van a ese precio; apagado, el domingo vuelve a cobrarse.
+  db.prepare('UPDATE vehicles SET period_rate = 45000 WHERE id = ?').run(vehicle);
+  assert.equal(C.carRate(db, vehicle, 'dia', '')('2026-11-09T23:00'), 45000);
+  assert.equal(C.carRate(db, vehicle, 'dia', '')('2026-11-07T23:00'), 0);
+  db.prepare('UPDATE vehicles SET rest_day_free = 0 WHERE id = ?').run(vehicle);
+  assert.equal(C.carRate(db, vehicle, 'dia', '')('2026-11-07T23:00'), 45000);
+  // Cobrando por semana no aplica.
+  db.prepare('UPDATE vehicles SET period_rate = 0, rest_day_free = 1 WHERE id = ?').run(vehicle);
+  assert.equal(C.carRate(db, vehicle, 'semana', ''), null);
+});
+
 test('corregir el inicio de un alquiler en curso: se rearman los días desde la fecha nueva y no figura como "vuelve hoy"', async () => {
   const { db, cat, vehicle, customer } = fleet();
   setSetting(db, 'rent_period', 'dia');

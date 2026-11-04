@@ -580,6 +580,8 @@ function migrate(db) {
   // Precio propio de cada auto por período y de sus domingos y feriados (0 = el de la categoría).
   if (!has('vehicles', 'period_rate')) db.exec('ALTER TABLE vehicles ADD COLUMN period_rate REAL NOT NULL DEFAULT 0');
   if (!has('vehicles', 'rest_day_rate')) db.exec('ALTER TABLE vehicles ADD COLUMN rest_day_rate REAL NOT NULL DEFAULT 0');
+  // Cobro por día: el chofer de este auto no paga los domingos ni los feriados.
+  if (!has('vehicles', 'rest_day_free')) db.exec('ALTER TABLE vehicles ADD COLUMN rest_day_free INTEGER NOT NULL DEFAULT 0');
   // Seguro de cada auto (la cuota mensual se carga sola como gasto) y su habilitación (remis / apps).
   for (const col of ['insurance_company', 'insurance_policy', 'permit_number', 'permit_expiry']) {
     if (!has('vehicles', col)) db.exec(`ALTER TABLE vehicles ADD COLUMN ${col} TEXT`);
