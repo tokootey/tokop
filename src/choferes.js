@@ -81,15 +81,27 @@ function rentalExtras(db, r) {
 }
 
 /** Al entregar el auto: arma los períodos de la reserva desde la entrega, repartiendo el total entre ellos. */
+/**
+ * Precio propio del auto (lo pone la agencia en cada auto): el de cada período y, cobrando por día, el de domingos y feriados.
+ * Sin precio propio, null: se usa el de la categoría.
+ */
+function carRate(db, vehicleId, period, holidays) {
+  const v = vehicleId && db.prepare('SELECT period_rate, rest_day_rate FROM vehicles WHERE id = ?').get(vehicleId);
+  if (!v || !(v.period_rate > 0)) return null;
+  return (start) => (period === 'dia' && v.rest_day_rate > 0 && isRestDay(start, holidays) ? v.rest_day_rate : v.period_rate);
+}
+
 function openPeriods(db, r, outAt) {
-  const period = periodOf(getSettings(db));
+  const settings = getSettings(db);
+  const period = periodOf(settings);
   const n = periodsBetween(r.pickup_at, r.return_at, period);
+  const car = carRate(db, r.vehicle_id, period, settings.holidays);
   const amount = round2(r.total / n);
   const ins = db.prepare('INSERT INTO rental_periods (reservation_id, n, start_at, end_at, amount) VALUES (?, ?, ?, ?, ?)');
   let start = outAt;
   for (let i = 1; i <= n; i++) {
     const end = addPeriod(start, period);
-    ins.run(r.id, i, start, end, amount);
+    ins.run(r.id, i, start, end, car ? car(start) : amount);
     start = end;
   }
   syncReservation(db, r.id);
@@ -124,9 +136,12 @@ function renew(db, reservationId, now = nowLocal(), userId = null) {
   if (!last || last.end_at >= now) return 0;
   const settings = getSettings(db);
   const period = periodOf(settings);
-  const cat = db.prepare('SELECT c.daily_rate, c.rest_day_rate FROM reservations r JOIN categories c ON c.id = r.category_id WHERE r.id = ?').get(reservationId);
+  const cat = db.prepare('SELECT c.daily_rate, c.rest_day_rate, r.vehicle_id FROM reservations r JOIN categories c ON c.id = r.category_id WHERE r.id = ?').get(reservationId);
   const rest = period === 'dia' && cat && cat.rest_day_rate > 0;
+  // Con precio propio del auto, cada renovación va a ese precio (si la agencia lo cambia, el período siguiente ya sale con el nuevo).
+  const car = cat && carRate(db, cat.vehicle_id, period, settings.holidays);
   const amountAfter = (prev, start) => {
+    if (car) return car(start);
     if (!rest) return prev.amount;
     if (isRestDay(start, settings.holidays)) return cat.rest_day_rate;
     return isRestDay(prev.start_at, settings.holidays) ? cat.daily_rate : prev.amount;
@@ -148,6 +163,34 @@ function renew(db, reservationId, now = nowLocal(), userId = null) {
 }
 
 /** Renueva todos los alquileres vencidos que siguen en curso (se llama al abrir el panel y las reservas). */
+/**
+ * Corregir desde cuándo corre un alquiler en curso (por ejemplo, uno que venía de antes y se cargó con otra fecha):
+ * se rearman los períodos desde la fecha nueva hasta hoy, al precio de ahora. Los pagos no se tocan.
+ */
+function restart(db, id, at, userId = null) {
+  const r = db.prepare('SELECT r.*, c.daily_rate, c.weekly_rate, c.monthly_rate, c.rest_day_rate FROM reservations r JOIN categories c ON c.id = r.category_id WHERE r.id = ?').get(Number(id));
+  if (!r) fail(404, 'Reserva inexistente');
+  if (r.status !== 'en_curso' || !db.prepare('SELECT 1 FROM rental_periods WHERE reservation_id = ?').get(r.id)) fail(409, 'Solo se corrige el inicio de un alquiler en curso');
+  const start = String(at || '').slice(0, 16);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(start) || Number.isNaN(parseLocal(start).getTime())) fail(400, 'Fecha de inicio inválida');
+  const now = nowLocal();
+  if (start > now) fail(400, 'El inicio no puede ser una fecha que todavía no llegó');
+  const settings = getSettings(db);
+  const period = periodOf(settings);
+  const car = carRate(db, r.vehicle_id, period, settings.holidays);
+  const rest = period === 'dia' && r.rest_day_rate > 0 && isRestDay(start, settings.holidays);
+  const amount = car ? car(start) : rest ? r.rest_day_rate : periodRate(r, period);
+  tx(db, () => {
+    db.prepare('DELETE FROM rental_periods WHERE reservation_id = ?').run(r.id);
+    db.prepare('INSERT INTO rental_periods (reservation_id, n, start_at, end_at, amount) VALUES (?, 1, ?, ?, ?)').run(r.id, start, addPeriod(start, period), amount);
+    db.prepare('UPDATE reservations SET pickup_at = ? WHERE id = ?').run(start, r.id);
+    db.prepare('UPDATE contracts SET out_at = ? WHERE reservation_id = ?').run(start, r.id);
+    db.prepare("INSERT INTO reservation_log (reservation_id, user_id, action, detail) VALUES (?, ?, 'inicio_corregido', ?)").run(r.id, userId, JSON.stringify({ antes: r.pickup_at, ahora: start }));
+    syncReservation(db, r.id);
+  });
+  renew(db, r.id, now, userId);
+}
+
 function renewDue(db, now = nowLocal()) {
   if (!isChoferes(getSettings(db))) return;
   const due = db
@@ -203,7 +246,13 @@ function dashboardChoferes(db, getReservation, today) {
   const rentals = db.prepare("SELECT id FROM reservations WHERE status = 'en_curso'").all().map((x) => getReservation(db, x.id));
   const owing = rentals
     .filter((r) => r.balance.pending > 0.005)
-    .map((r) => ({ id: r.id, code: r.code, customer_name: r.customer_name, customer_phone: r.customer_phone, vehicle_plate: r.vehicle_plate, pending: r.balance.pending, late_fee: r.late_fee.total }))
+    .map((r) => {
+      // Días que debe: lo pendiente del alquiler (sin recargos ni multas) sobre el precio del último período (con días a distinto precio es aproximado).
+      const day = r.periods.length ? r.periods[r.periods.length - 1].amount : 0;
+      const rent = r.balance.pending - r.late_fee.total - r.charges.reduce((a, c) => a + c.amount, 0);
+      const days_owed = day > 0 && rent > 0 ? Math.floor((rent / day) * 10) / 10 : 0;
+      return { id: r.id, code: r.code, customer_name: r.customer_name, customer_phone: r.customer_phone, vehicle_plate: r.vehicle_plate, pending: r.balance.pending, late_fee: r.late_fee.total, days_owed };
+    })
     .sort((a, b) => b.pending - a.pending);
   const license_expired = rentals
     .filter((r) => r.customer_license_expiry && r.customer_license_expiry < today)
@@ -225,4 +274,4 @@ function dashboardChoferes(db, getReservation, today) {
   return { owing, license_expired, service_due };
 }
 
-module.exports = { PERIODS, isChoferes, periodOf, addPeriod, isRestDay, periodsBetween, periodRate, lateFee, rentalExtras, openPeriods, renew, renewDue, kmReading, addCharge, dashboardChoferes };
+module.exports = { PERIODS, isChoferes, periodOf, addPeriod, isRestDay, periodsBetween, periodRate, carRate, lateFee, rentalExtras, openPeriods, renew, renewDue, restart, kmReading, addCharge, dashboardChoferes };

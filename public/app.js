@@ -619,10 +619,10 @@ on(/^\/panel$/, async (view) => {
     ${/* Lo del día va primero; los primeros pasos de una empresa nueva, abajo. */ setupCard(d.setup)}
     ${
       d.alerts.documents.length
-        ? `<div class="card"><h2>Seguro o VTV por vencer (30 días) <span class="count">${d.alerts.documents.length}</span></h2><div class="daylist">${d.alerts.documents
+        ? `<div class="card"><h2>${choferesMode() ? 'Seguro, VTV o habilitación' : 'Seguro o VTV'} por vencer (30 días) <span class="count">${d.alerts.documents.length}</span></h2><div class="daylist">${d.alerts.documents
             .map(
               (v) =>
-                `<div class="dayrow docs"><span class="plate">${esc(v.plate)}</span><div><small>Seguro</small><b>${fmtD(v.insurance_expiry) || '—'}</b></div><div><small>VTV</small><b>${fmtD(v.vtv_expiry) || '—'}</b></div></div>`,
+                `<div class="dayrow docs"><span class="plate">${esc(v.plate)}</span><div><small>Seguro</small><b>${fmtD(v.insurance_expiry) || '—'}</b></div><div><small>VTV</small><b>${fmtD(v.vtv_expiry) || '—'}</b></div>${choferesMode() ? `<div><small>Habilitación</small><b>${fmtD(v.permit_expiry) || '—'}</b></div>` : ''}</div>`,
             )
             .join('')}</div></div>`
         : ''
@@ -1574,7 +1574,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             ? `<div class="table-scroll"><table class="mini" style="margin-top:12px"><thead><tr><th>Fecha</th><th>Tipo</th><th>Medio</th><th class="right">Importe</th></tr></thead><tbody>${r.payments
                 .map(
                   (p) =>
-                    `<tr><td class="nowrap">${fmtDT(stampLocal(p.created_at)).slice(0, 5)} ${esc(stampLocal(p.created_at).slice(11, 16))}</td><td>${esc(PAYMENT_KINDS[p.kind] || p.kind)}</td><td>${esc(p.method || '')} ${p.reference ? `<small class="muted">${esc(p.reference)}</small>` : ''}</td><td class="right">${money(p.amount)}</td></tr>`,
+                    `<tr><td class="nowrap">${fmtDT(stampLocal(p.created_at)).slice(0, 5)} ${esc(stampLocal(p.created_at).slice(11, 16))}</td><td>${esc(PAYMENT_KINDS[p.kind] || p.kind)}</td><td>${esc(p.method || '')} ${p.reference ? `<small class="muted">${esc(p.reference)}</small>` : ''}${p.notes ? `<br><small class="muted">${esc(p.notes)}</small>` : ''}</td><td class="right">${money(p.amount)}</td></tr>`,
                 )
                 .join('')}</tbody></table></div>`
             : ''
@@ -1733,9 +1733,16 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         formHtml(
           [
             { name: 'kind', label: 'Tipo', type: 'select', options: Object.entries(PAYMENT_KINDS), required: true },
-            { name: 'method', label: 'Medio', type: 'select', options: ['efectivo', 'tarjeta', 'transferencia', 'mercadopago', 'otro'].map((m) => [m, m]), required: true },
+            {
+              name: 'method',
+              label: 'Medio',
+              type: 'select',
+              options: [...['efectivo', 'tarjeta', 'transferencia', 'mercadopago', 'otro'].map((m) => [m, m]), ...(choferesMode() ? [['repuesto', 'repuesto o arreglo que pagó el chofer']] : [])],
+              required: true,
+            },
             { name: 'amount', label: 'Importe', type: 'number', required: true },
             { name: 'reference', label: 'Referencia / comprobante' },
+            { name: 'notes', label: 'Notas (por ejemplo: pagó $30.000 y $20.000 en una batería)', type: 'textarea', full: true },
           ],
           { kind: 'pago', method: 'efectivo', amount: r.balance.pending > 0 ? r.balance.pending : '' },
         ),
@@ -1799,6 +1806,19 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         async (d) => {
           const res = await POST(`/reservations/${r.id}/km`, d);
           toast(res.km_charge ? `Se pasó ${num(res.km_charge.km)} km: se cobran ${money(res.km_charge.amount)}` : 'Km registrados: está dentro de lo incluido');
+          reload();
+        },
+      ),
+    start: () =>
+      openModal(
+        'Corregir desde cuándo corre el alquiler',
+        `<p class="muted">Para un alquiler que se cargó con otra fecha: se rearman los ${periodWord(2)} desde la fecha nueva hasta hoy, al precio de ahora. Los pagos no se tocan.</p>${formHtml(
+          [{ name: 'start_at', label: 'Empezó el', type: 'datetime-local', required: true }],
+          { start_at: r.pickup_at },
+        )}`,
+        async (d) => {
+          await PUT(`/reservations/${r.id}/start`, d);
+          toast('Inicio corregido');
           reload();
         },
       ),
@@ -2264,7 +2284,7 @@ function rentalCardHtml(r) {
         ? `<div class="table-scroll"><table class="mini"><thead><tr><th>#</th><th>Desde</th><th>Hasta</th><th class="right">Importe</th></tr></thead><tbody>${r.periods
             .map((p) => `<tr><td>${p.n}</td><td class="nowrap">${fmtDT(p.start_at)}</td><td class="nowrap">${fmtDT(p.end_at)}</td><td class="right">${money(p.amount)}</td></tr>`)
             .join('')}</tbody></table></div>
-    ${open ? `<p class="muted">Se cobra por adelantado y se renueva sola cada ${periodWord(1)} hasta que registres la devolución.</p>` : ''}`
+    ${open ? `<p class="muted">Alquiler por tiempo indeterminado: se suma un ${periodWord(1)} más solo, cobrado por adelantado, hasta que registres la devolución.</p>` : ''}`
         : ''
     }
     ${r.late_fee.total ? `<p><b class="error">Recargo por atraso en el pago: ${plural(r.late_fee.days, 'día', 'días')} · ${money(r.late_fee.total)}</b></p>` : ''}
@@ -2283,20 +2303,27 @@ function rentalCardHtml(r) {
     <div class="actions no-print" style="margin-top:12px">
       <button class="btn small" type="button" data-act="fine">Cargar multa</button>
       ${open ? '<button class="btn small" type="button" data-act="km">Registrar km</button>' : ''}
+      ${open && isAdmin() && r.periods.length ? '<button class="btn small" type="button" data-act="start">Corregir inicio</button>' : ''}
     </div></div>`;
 }
 
 /** Pantalla Hoy, modo choferes: quién debe, licencias vencidas y autos a los que les toca service. */
 function choferesCards(c) {
   const card = (title, rows) => (rows.length ? `<div class="card"><h2>${title} <span class="count">${rows.length}</span></h2><div class="daylist">${rows.join('')}</div></div>` : '');
+  const over = c.owing.filter((r) => r.days_owed > 3);
   return [
+    over.length
+      ? `<div class="notice error"><b>${over.length === 1 ? '1 chofer debe' : `${over.length} choferes deben`} más de 3 ${periodWord(2)}:</b> ${over
+          .map((r) => `<a href="#/reservas/${r.id}">${esc(r.customer_name)}</a> (${num(r.days_owed)})`)
+          .join(', ')}</div>`
+      : '',
     card(
       'Choferes que deben',
       c.owing.map(
         (r) =>
           `<div class="dayrow"><span class="plate">${esc(r.vehicle_plate || '')}</span><div><a href="#/reservas/${r.id}"><b>${esc(r.customer_name)}</b></a>${
             r.late_fee ? `<small>incluye ${money(r.late_fee)} de recargo por atraso</small>` : ''
-          }</div><div><small>Debe</small><b class="error">${money(r.pending)}</b></div>${waLink(r.customer_phone)}</div>`,
+          }</div><div><small>Debe${r.days_owed >= 1 ? ` ${num(r.days_owed)} ${periodWord(r.days_owed)}` : ''}</small><b class="error">${money(r.pending)}</b></div>${waLink(r.customer_phone)}</div>`,
       ),
     ),
     card(
@@ -2779,7 +2806,15 @@ const VEHICLE_FIELDS = [
   { name: 'fuel', label: 'Combustible (octavos)', type: 'number', default: 8, attrs: 'min="0" max="8"' },
   { name: 'insurance_expiry', label: 'Vencimiento seguro', type: 'date' },
   { name: 'vtv_expiry', label: 'Vencimiento VTV', type: 'date' },
+  { name: 'insurance_company', label: 'Aseguradora' },
+  { name: 'insurance_policy', label: 'N° de póliza' },
+  { name: 'insurance_cost', label: 'Cuota mensual del seguro (se carga sola como gasto el día 1)', type: 'number', default: 0 },
+  { name: 'permit_number', label: 'N° de habilitación (remis / apps)', when: () => choferesMode() },
+  { name: 'permit_expiry', label: 'Vencimiento de la habilitación', type: 'date', when: () => choferesMode() },
   { name: 'service_every_km', label: 'Service cada (km, 0 = sin aviso)', type: 'number', default: 0, when: () => choferesMode() },
+  // Cada auto puede cobrar distinto: su precio manda sobre el de la categoría.
+  { name: 'period_rate', get label() { return `Precio por ${periodWord()} de este auto (0 = el de la categoría)`; }, type: 'number', default: 0, when: () => choferesMode() },
+  { name: 'rest_day_rate', label: 'Precio de domingos y feriados de este auto (0 = el mismo)', type: 'number', default: 0, when: () => choferesMode() && state.settings.rent_period === 'dia' },
   { name: 'notes', label: 'Notas', type: 'textarea', full: true },
 ];
 
@@ -2909,7 +2944,7 @@ on(
     const doc = (label, d) => `<div><dt>${label}</dt><dd class="doc-${d ? dueTone(d) : 'wait'}">${d ? fmtD(d) : '—'}</dd></div>`;
     const card = (v) => `<article class="vcard st-${v.status}" data-id="${v.id}">
         <div class="vcard-top">
-          <div class="vcard-name"><b>${esc([v.brand, v.model].filter(Boolean).join(' ') || v.category_name)}</b><small>${[v.year, `Cat. ${esc(v.category_code)}`, esc(v.color || '')].filter(Boolean).join(' · ')}</small></div>
+          <div class="vcard-name"><b>${esc([v.brand, v.model].filter(Boolean).join(' ') || v.category_name)}</b><small>${[v.year, `Cat. ${esc(v.category_code)}`, esc(v.color || ''), choferesMode() && v.period_rate > 0 ? `${moneyRound(v.period_rate)} por ${periodWord()}` : ''].filter(Boolean).join(' · ')}</small></div>
           ${badge(v.status)}
         </div>
         <div class="vcard-id"><span class="plate">${esc(v.plate)}</span><span class="muted">${esc(v.branch_name || '')}</span></div>
@@ -2917,7 +2952,7 @@ on(
         <dl class="vcard-facts">
           <div><dt>Km</dt><dd>${num(v.km || 0)}</dd></div>
           <div><dt>Combustible</dt><dd>${fuel(v.fuel) || '—'}</dd></div>
-          ${doc('Seguro', v.insurance_expiry)}${doc('VTV', v.vtv_expiry)}
+          ${doc('Seguro', v.insurance_expiry)}${doc('VTV', v.vtv_expiry)}${choferesMode() && v.permit_expiry ? doc('Habilitación', v.permit_expiry) : ''}
         </dl>
         <div class="vcard-actions">
           <button class="btn pill small" type="button" data-hist>${ICON.list}Historial</button>

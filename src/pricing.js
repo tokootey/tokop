@@ -2,7 +2,7 @@
 
 const { getSettings } = require('./db');
 const { parseLocal, fmtLocal, round2, fail } = require('./util');
-const { isChoferes, periodOf, periodsBetween, periodRate } = require('./choferes');
+const { isChoferes, periodOf, periodsBetween, periodRate, carRate, addPeriod } = require('./choferes');
 
 /**
  * Días a cobrar: bloques de 24 h. Las horas que excedan el último bloque
@@ -51,6 +51,13 @@ function computeQuote(db, input) {
   if (choferes) {
     perDay = periodRate(category, period);
     base = perDay * periods;
+    // Si el auto ya está asignado y tiene precio propio, la cotización sale con ese precio.
+    const car = carRate(db, input.vehicle_id, period, settings.holidays);
+    if (car) {
+      base = 0;
+      for (let i = 0, start = input.pickup_at; i < periods; i++, start = addPeriod(start, period)) base += car(start);
+      perDay = base / periods;
+    }
   }
   for (let i = 0; i < (choferes ? 0 : days); i++) {
     const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);

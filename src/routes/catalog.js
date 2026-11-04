@@ -2,7 +2,7 @@
 
 const express = require('express');
 const { requireAdmin, audit } = require('../auth');
-const { fail, pick, normDate } = require('../util');
+const { fail, pick, normDate, nowLocal } = require('../util');
 const { removeCustomerDocuments } = require('./files');
 
 /**
@@ -93,6 +93,19 @@ function syncVehicleMaintenance(db, vehicleId) {
   else db.prepare("UPDATE vehicles SET status = 'disponible' WHERE id = ? AND status = 'mantenimiento'").run(vehicleId);
 }
 
+/**
+ * Cuota mensual del seguro de cada auto: se carga sola como gasto del auto el día 1 de cada mes (desde que se pone la cuota).
+ * Se llama al abrir Hoy y la lista de gastos; la clave por auto y mes evita repetirla.
+ */
+function chargeInsurance(db, today) {
+  const month = String(today).slice(0, 7);
+  const ins = db.prepare("INSERT OR IGNORE INTO expenses (vehicle_id, date, kind, description, amount, auto_key) VALUES (?, ?, 'seguro', ?, ?, ?)");
+  for (const v of db.prepare('SELECT id, insurance_company, insurance_policy, insurance_cost FROM vehicles WHERE insurance_cost > 0').all()) {
+    const what = ['Cuota del seguro', v.insurance_company, v.insurance_policy && `póliza ${v.insurance_policy}`].filter(Boolean).join(' · ');
+    ins.run(v.id, `${month}-01`, what, v.insurance_cost, `seguro:${v.id}:${month}`);
+  }
+}
+
 function catalogRoutes(db, { uploadsDir } = {}) {
   // Carnet y DNI del cliente: se borran con sus datos personales (también los archivos del disco).
   const dropDocuments = (id) => uploadsDir && removeCustomerDocuments(db, uploadsDir, id);
@@ -165,16 +178,17 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     '/vehicles',
     crud(db, {
       table: 'vehicles',
-      fields: ['plate', 'brand', 'model', 'year', 'color', 'category_id', 'branch_id', 'status', 'km', 'fuel', 'insurance_expiry', 'vtv_expiry', 'service_every_km', 'notes'],
+      fields: ['plate', 'brand', 'model', 'year', 'color', 'category_id', 'branch_id', 'status', 'km', 'fuel', 'insurance_expiry', 'vtv_expiry', 'service_every_km', 'notes', 'period_rate', 'rest_day_rate',
+        'insurance_company', 'insurance_policy', 'insurance_cost', 'permit_number', 'permit_expiry'],
       required: ['plate', 'category_id'],
       order: 'plate',
       search: ['plate', 'brand', 'model'],
-      dateFields: ['insurance_expiry', 'vtv_expiry'],
+      dateFields: ['insurance_expiry', 'vtv_expiry', 'permit_expiry'],
       adminDelete: true,
       // Con su próximo movimiento (la próxima salida y, si está alquilado, cuándo vuelve) y su trabajo abierto en el taller.
       listSql: `SELECT v.*, c.name AS category_name, c.code AS category_code, b.name AS branch_name,
                   (SELECT MIN(r.pickup_at) FROM reservations r WHERE r.vehicle_id = v.id AND r.status IN ('pendiente','confirmada')) AS next_out,
-                  (SELECT r.return_at FROM reservations r WHERE r.vehicle_id = v.id AND r.status = 'en_curso' ORDER BY r.return_at LIMIT 1) AS back_at,
+                  (SELECT r.return_at FROM reservations r WHERE r.vehicle_id = v.id AND r.status = 'en_curso' AND NOT EXISTS (SELECT 1 FROM rental_periods rp WHERE rp.reservation_id = r.id) ORDER BY r.return_at LIMIT 1) AS back_at,
                   (SELECT m.kind FROM maintenance m WHERE m.vehicle_id = v.id AND m.status = 'abierto' ORDER BY m.start_date LIMIT 1) AS shop_kind,
                   (SELECT m.start_date FROM maintenance m WHERE m.vehicle_id = v.id AND m.status = 'abierto' ORDER BY m.start_date LIMIT 1) AS shop_since
                 FROM vehicles v JOIN categories c ON c.id = v.category_id LEFT JOIN branches b ON b.id = v.branch_id`,
@@ -217,6 +231,10 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     }),
   );
   // Gastos de cada auto (taller, repuestos, combustible, seguro…): entran en las ganancias y gastos del mes.
+  router.get('/expenses', (_req, _res, next) => {
+    chargeInsurance(db, nowLocal().slice(0, 10));
+    next();
+  });
   router.use(
     '/expenses',
     crud(db, {
@@ -234,4 +252,4 @@ function catalogRoutes(db, { uploadsDir } = {}) {
   return router;
 }
 
-module.exports = { catalogRoutes, crud };
+module.exports = { catalogRoutes, crud, chargeInsurance };
