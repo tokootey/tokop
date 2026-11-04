@@ -41,6 +41,37 @@ function looksLike(mime, b) {
 const MAX_PHOTO = 1024 * 1024;
 const MAX_PDF = 10 * 1024 * 1024;
 
+/** Valida el archivo recibido (tipo declarado, que lo sea de verdad y tamaño) y devuelve su tipo. */
+function uploadedType(req) {
+  const mime = String(req.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  if (!TYPES[mime]) fail(415, 'Formato no admitido: subí fotos (JPG, PNG, HEIC) o PDF');
+  if (!Buffer.isBuffer(req.body) || !req.body.length) fail(400, 'El archivo está vacío');
+  if (!looksLike(mime, req.body)) fail(415, 'El archivo no es una foto o un PDF válido');
+  if (mime !== 'application/pdf' && req.body.length > MAX_PHOTO) {
+    fail(413, 'La foto pesa más de 1 MB. Subila desde el panel, que la achica sola.');
+  }
+  return mime;
+}
+
+// Documentos de la persona (no del alquiler): se cargan una vez y sirven para todas sus reservas.
+const DOC_KINDS = ['carnet_frente', 'carnet_dorso', 'dni_frente', 'dni_dorso'];
+
+/** Borra los documentos de un cliente (al anonimizarlo o borrarlo): las filas y los archivos. */
+function removeCustomerDocuments(db, uploadsDir, customerId) {
+  db.prepare('DELETE FROM customer_files WHERE customer_id = ?').run(Number(customerId));
+  fs.rmSync(path.join(uploadsDir, 'clientes', String(Number(customerId))), { recursive: true, force: true });
+}
+
+/** Manda un archivo guardado, aislado: un archivo manipulado no puede ejecutar código en la app. */
+function sendStored(res, abs, f) {
+  if (!fs.existsSync(abs)) fail(404, 'El archivo ya no está en el servidor');
+  res.set('Content-Type', f.mime);
+  res.set('Cache-Control', 'private, no-store');
+  res.set('Content-Security-Policy', "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox");
+  res.set('Content-Disposition', `inline; filename="${encodeURIComponent(f.name)}"`);
+  res.sendFile(path.resolve(abs)); // la carpeta puede venir relativa (DB_FILE relativo)
+}
+
 /**
  * Fotos y documentación de cada alquiler (estado del auto en la entrega y en la devolución).
  * El archivo se envía tal cual en el cuerpo del POST, con su Content-Type; los datos van en la URL.
@@ -54,13 +85,7 @@ function fileRoutes(db, uploadsDir) {
   router.post('/reservations/:id/files', express.raw({ type: () => true, limit: MAX_PDF }), (req, res) => {
     const r = db.prepare('SELECT id FROM reservations WHERE id = ?').get(Number(req.params.id));
     if (!r) fail(404, 'Reserva inexistente');
-    const mime = String(req.get('content-type') || '').split(';')[0].trim().toLowerCase();
-    if (!TYPES[mime]) fail(415, 'Formato no admitido: subí fotos (JPG, PNG, HEIC) o PDF');
-    if (!Buffer.isBuffer(req.body) || !req.body.length) fail(400, 'El archivo está vacío');
-    if (!looksLike(mime, req.body)) fail(415, 'El archivo no es una foto o un PDF válido');
-    if (mime !== 'application/pdf' && req.body.length > MAX_PHOTO) {
-      fail(413, 'La foto pesa más de 1 MB. Subila desde el panel, que la achica sola.');
-    }
+    const mime = uploadedType(req);
     const stage = STAGES.includes(req.query.stage) ? req.query.stage : 'otro';
     const name = String(req.query.name || `foto.${TYPES[mime]}`).replace(/[\\/\r\n]/g, '_').slice(0, 120);
 
@@ -86,14 +111,7 @@ function fileRoutes(db, uploadsDir) {
   router.get('/files/:id', (req, res) => {
     const f = db.prepare('SELECT * FROM reservation_files WHERE id = ?').get(Number(req.params.id));
     if (!f) fail(404, 'Archivo inexistente');
-    const abs = path.join(uploadsDir, f.path);
-    if (!fs.existsSync(abs)) fail(404, 'El archivo ya no está en el servidor');
-    res.set('Content-Type', f.mime);
-    res.set('Cache-Control', 'private, no-store');
-    // Se muestra aislado: un archivo manipulado no puede ejecutar código en la app.
-    res.set('Content-Security-Policy', "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox");
-    res.set('Content-Disposition', `inline; filename="${encodeURIComponent(f.name)}"`);
-    res.sendFile(abs);
+    sendStored(res, path.join(uploadsDir, f.path), f);
   });
 
   router.delete('/files/:id', (req, res) => {
@@ -106,7 +124,54 @@ function fileRoutes(db, uploadsDir) {
     res.status(204).end();
   });
 
+  // Carnet y DNI del cliente: uno por lugar (frente y dorso); subir otro reemplaza al anterior.
+  const docOf = (id) => db.prepare('SELECT * FROM customer_files WHERE id = ?').get(Number(id));
+  router.post('/customers/:id/documents', express.raw({ type: () => true, limit: MAX_PDF }), (req, res) => {
+    const c = db.prepare('SELECT id, anonymized_at FROM customers WHERE id = ?').get(Number(req.params.id));
+    if (!c) fail(404, 'Cliente inexistente');
+    if (c.anonymized_at) fail(409, 'El cliente está anonimizado');
+    const kind = req.query.kind;
+    if (!DOC_KINDS.includes(kind)) fail(400, 'Documento inválido');
+    const mime = uploadedType(req);
+    const rel = path.join('clientes', String(c.id), `${kind}-${crypto.randomBytes(6).toString('hex')}.${TYPES[mime]}`);
+    const abs = path.join(uploadsDir, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, req.body);
+    const old = db.prepare('SELECT * FROM customer_files WHERE customer_id = ? AND kind = ?').get(c.id, kind);
+    if (old) {
+      db.prepare('DELETE FROM customer_files WHERE id = ?').run(old.id);
+      fs.rmSync(path.join(uploadsDir, old.path), { force: true });
+    }
+    const name = String(req.query.name || `${kind}.${TYPES[mime]}`).replace(/[\\/\r\n]/g, '_').slice(0, 120);
+    const id = Number(
+      db
+        .prepare('INSERT INTO customer_files (customer_id, kind, name, mime, size, path, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(c.id, kind, name, mime, req.body.length, rel, req.user.id, nowLocal().replace('T', ' ')).lastInsertRowid,
+    );
+    audit(db, req, 'documento_subido', `cliente #${c.id}: ${kind}`);
+    res.status(201).json(db.prepare('SELECT id, kind, name, mime, size, created_at FROM customer_files WHERE id = ?').get(id));
+  });
+
+  router.get('/customers/:id/documents', (req, res) => {
+    res.json(db.prepare('SELECT id, kind, name, mime, size, created_at FROM customer_files WHERE customer_id = ? ORDER BY id').all(Number(req.params.id)));
+  });
+
+  router.get('/documents/:id', (req, res) => {
+    const f = docOf(req.params.id);
+    if (!f) fail(404, 'Archivo inexistente');
+    sendStored(res, path.join(uploadsDir, f.path), f);
+  });
+
+  router.delete('/documents/:id', (req, res) => {
+    const f = docOf(req.params.id);
+    if (!f) fail(404, 'Archivo inexistente');
+    db.prepare('DELETE FROM customer_files WHERE id = ?').run(f.id);
+    fs.rmSync(path.join(uploadsDir, f.path), { force: true });
+    audit(db, req, 'documento_borrado', `cliente #${f.customer_id}: ${f.kind}`);
+    res.status(204).end();
+  });
+
   return router;
 }
 
-module.exports = { fileRoutes, looksLike, TYPES, STAGES };
+module.exports = { fileRoutes, looksLike, TYPES, STAGES, DOC_KINDS, removeCustomerDocuments };

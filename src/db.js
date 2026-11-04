@@ -212,6 +212,20 @@ CREATE TABLE IF NOT EXISTS reservation_files (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS ix_reservation_files ON reservation_files(reservation_id);
+
+-- Carnet y DNI de cada cliente (frente y dorso): de la persona, no de un alquiler.
+CREATE TABLE IF NOT EXISTS customer_files (
+  id INTEGER PRIMARY KEY,
+  customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  name TEXT,
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  path TEXT NOT NULL,
+  created_by INTEGER,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (customer_id, kind)
+);
 -- Cada reserva busca sus pagos y su historial: sin índice se recorre la tabla entera.
 CREATE INDEX IF NOT EXISTS ix_payments_reservation ON payments(reservation_id);
 CREATE INDEX IF NOT EXISTS ix_reservation_log ON reservation_log(reservation_id);
