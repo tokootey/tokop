@@ -47,6 +47,13 @@ test('datos de la agencia y contraseña nueva del administrador', () => {
   assert.throws(() => platform.updateProfile(id, { business_mode: 'otro' }), /Tipo de negocio/);
   assert.throws(() => platform.updateProfile(id, { name: '  ' }), /nombre/);
   platform.updateProfile(id, { logo: '' });
+  // La modalidad de pago se activa por agencia: la otra no cambia.
+  assert.equal(platform.stats(id).pay_modes, 0);
+  assert.equal(platform.updateProfile(id, { pay_modes: 1 }).pay_modes, 1);
+  assert.equal(getSetting(db(), 'pay_modes'), '1');
+  assert.equal(platform.stats(platform.list().find((c) => c.name === 'Sur Autos').id).pay_modes, 0);
+  platform.updateProfile(id, { pay_modes: 0 });
+  assert.equal(platform.stats(id).pay_modes, 0);
   assert.equal(platform.stats(id).logo, null, 'quitar el logo');
 
   // Contraseña nueva: la anterior deja de servir, tiene que cambiarla al entrar y se cierran sus sesiones.

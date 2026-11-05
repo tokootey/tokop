@@ -69,6 +69,8 @@ const sourceBadge = (s) => (s === 'manual' ? '' : ` <span class="badge b-cotizad
 const fuel = (n) => (n === null || n === undefined ? '' : `${n}/8`);
 // Modo "autos para choferes" (Configuración → Tipo de negocio): alquiler por período que se renueva solo.
 const choferesMode = () => state.settings.business_mode === 'choferes';
+// Solo las agencias a las que el dueño de Floty se lo activa: cada auto elige si paga cada 24 o cada 12 horas.
+const payModes = () => choferesMode() && state.settings.rent_period === 'dia' && String(state.settings.pay_modes) === '1';
 const PERIOD_LABEL = { dia: ['día', 'días'], semana: ['semana', 'semanas'], mes: ['mes', 'meses'] };
 const periodWord = (n = 1) => (PERIOD_LABEL[state.settings.rent_period] || PERIOD_LABEL.semana)[Number(n) === 1 ? 0 : 1];
 /** Primera línea del precio: "3 días × $ 20.000" o, por períodos, "1 semana × $ 100.000". */
@@ -2796,6 +2798,9 @@ const CUSTOMER_FIELDS = [
 const VEHICLE_FIELDS = [
   { name: 'plate', label: 'Patente', required: true },
   { name: 'category_id', label: 'Categoría', type: 'select', required: true, options: () => state.categories.map((c) => [c.id, `${c.code} · ${c.name}`]) },
+  // Agencias con modalidad de pago: la modalidad y el monto van primero; su monto manda sobre la categoría.
+  { name: 'pay_every', label: 'Modalidad de pago', type: 'select', required: true, options: [[24, 'Cada 24 horas'], [12, 'Cada 12 horas']], default: 24, when: payModes },
+  { name: 'period_rate', label: 'Monto que abona en cada pago (0 = el de la categoría)', type: 'number', default: 0, when: payModes },
   { name: 'brand', label: 'Marca' },
   { name: 'model', label: 'Modelo' },
   { name: 'year', label: 'Año', type: 'number' },
@@ -2813,7 +2818,7 @@ const VEHICLE_FIELDS = [
   { name: 'permit_expiry', label: 'Vencimiento de la habilitación', type: 'date', when: () => choferesMode() },
   { name: 'service_every_km', label: 'Service cada (km, 0 = sin aviso)', type: 'number', default: 0, when: () => choferesMode() },
   // Cada auto puede cobrar distinto: su precio manda sobre el de la categoría.
-  { name: 'period_rate', get label() { return `Precio por ${periodWord()} de este auto (0 = el de la categoría)`; }, type: 'number', default: 0, when: () => choferesMode() },
+  { name: 'period_rate', get label() { return `Precio por ${periodWord()} de este auto (0 = el de la categoría)`; }, type: 'number', default: 0, when: () => choferesMode() && !payModes() },
   { name: 'rest_day_rate', label: 'Precio de domingos y feriados de este auto (0 = el mismo)', type: 'number', default: 0, when: () => choferesMode() && state.settings.rent_period === 'dia' },
   { name: 'rest_day_free', label: 'Domingos y feriados libres (no se cobran)', type: 'checkbox', full: true, when: () => choferesMode() && state.settings.rent_period === 'dia' },
   { name: 'notes', label: 'Notas', type: 'textarea', full: true },
@@ -2945,7 +2950,7 @@ on(
     const doc = (label, d) => `<div><dt>${label}</dt><dd class="doc-${d ? dueTone(d) : 'wait'}">${d ? fmtD(d) : '—'}</dd></div>`;
     const card = (v) => `<article class="vcard st-${v.status}" data-id="${v.id}">
         <div class="vcard-top">
-          <div class="vcard-name"><b>${esc([v.brand, v.model].filter(Boolean).join(' ') || v.category_name)}</b><small>${[v.year, `Cat. ${esc(v.category_code)}`, esc(v.color || ''), choferesMode() && v.period_rate > 0 ? `${moneyRound(v.period_rate)} por ${periodWord()}` : '', choferesMode() && v.rest_day_free ? 'domingos libres' : ''].filter(Boolean).join(' · ')}</small></div>
+          <div class="vcard-name"><b>${esc([v.brand, v.model].filter(Boolean).join(' ') || v.category_name)}</b><small>${[v.year, `Cat. ${esc(v.category_code)}`, esc(v.color || ''), choferesMode() && v.period_rate > 0 ? `${moneyRound(v.period_rate)} ${payModes() && Number(v.pay_every) === 12 ? 'cada 12 h' : `por ${periodWord()}`}` : '', payModes() && !(v.period_rate > 0) && Number(v.pay_every) === 12 ? 'paga cada 12 h' : '', choferesMode() && v.rest_day_free ? 'domingos libres' : ''].filter(Boolean).join(' · ')}</small></div>
           ${badge(v.status)}
         </div>
         <div class="vcard-id"><span class="plate">${esc(v.plate)}</span><span class="muted">${esc(v.branch_name || '')}</span></div>
@@ -4198,10 +4203,11 @@ on(/^\/empresas$/, async (view) => {
           [
             { name: 'name', label: 'Nombre de la agencia', required: true, full: true },
             { name: 'business_mode', label: 'Tipo de negocio', type: 'select', required: true, options: [['turismo', 'Alquiler turístico'], ['choferes', 'Autos para trabajo (choferes de apps)']] },
+            { name: 'pay_modes', label: 'Modalidad de pago por auto: cada 24 o cada 12 horas (autos para trabajo, cobro por día)', type: 'checkbox', full: true },
             { name: 'admin_name', label: 'Nombre del administrador' },
             { name: 'admin_email', label: 'Email del administrador (con el que entra)', type: 'email', required: true, full: true },
           ],
-          { name: c.name, business_mode: c.business_mode || 'turismo', admin_name: c.admin_name || '', admin_email: c.admin_email || '' },
+          { name: c.name, business_mode: c.business_mode || 'turismo', pay_modes: c.pay_modes || 0, admin_name: c.admin_name || '', admin_email: c.admin_email || '' },
           'Guardar',
         ) +
         `<div class="card" style="margin-top:14px"><b>¿El administrador no puede entrar?</b>

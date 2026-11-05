@@ -146,6 +146,43 @@ test('domingos y feriados libres del auto: no se cobran, no suman atraso y no co
   assert.equal(C.carRate(db, vehicle, 'semana', ''), null);
 });
 
+test('modalidad de pago cada 12 horas: un período por turno, con el monto del auto, sus domingos libres y la deuda en días', () => {
+  const { db, cat, vehicle, customer } = fleet();
+  setSetting(db, 'rent_period', 'dia');
+  setSetting(db, 'late_fee_per_day', '0');
+  setSetting(db, 'pay_modes', '1');
+  db.prepare('UPDATE categories SET daily_rate = 50000 WHERE id = ?').run(cat);
+  db.prepare('UPDATE vehicles SET pay_every = 12, period_rate = 26000, rest_day_free = 1 WHERE id = ?').run(vehicle);
+  const r = R.createReservation(db, { customer_id: customer, category_id: cat, vehicle_id: vehicle, pickup_at: '2026-11-07T00:00', return_at: '2026-11-07T12:00', status: 'confirmada' });
+  assert.equal(r.total, 26000, 'un turno');
+  R.checkout(db, r.id, { out_at: '2026-11-07T00:00', out_km: 50000, out_fuel: 8 }, 1);
+  C.renew(db, r.id, '2026-11-09T01:00');
+  const after = R.getReservation(db, r.id);
+  // sáb 07 mañana y noche, dom 08 libre (los dos turnos), lun 09 a la mañana.
+  assert.deepEqual(after.periods.map((p) => [p.start_at, p.amount]), [
+    ['2026-11-07T00:00', 26000], ['2026-11-07T12:00', 26000], ['2026-11-08T00:00', 0], ['2026-11-08T12:00', 0], ['2026-11-09T00:00', 26000],
+  ]);
+  assert.equal(after.periods.at(-1).end_at, '2026-11-09T12:00');
+  // Debe 3 turnos: un día y medio.
+  assert.equal(C.dashboardChoferes(db, R.getReservation, '2026-11-09').owing[0].days_owed, 1.5);
+
+  // Sin monto propio, cada turno vale la mitad de la diaria; corregir el inicio respeta la modalidad.
+  db.prepare('UPDATE vehicles SET period_rate = 0, rest_day_free = 0 WHERE id = ?').run(vehicle);
+  assert.equal(C.carRate(db, vehicle, '12h', '')('2026-11-09T00:00'), 25000);
+  C.restart(db, r.id, fmtLocal(new Date(Date.now() - 3600000)), 1);
+  const fixed = R.getReservation(db, r.id);
+  assert.equal(fixed.periods.length, 1);
+  assert.equal(fixed.periods[0].amount, 25000);
+
+  // Cobrando por semana la modalidad no aplica.
+  setSetting(db, 'rent_period', 'semana');
+  assert.equal(C.carPeriod(db, vehicle, { rent_period: 'semana', pay_modes: '1' }), 'semana');
+  assert.equal(C.carPeriod(db, vehicle, { rent_period: 'dia', pay_modes: '1' }), '12h');
+  // Una agencia sin la opción activada (como todas hasta ahora) cobra cada 24 aunque el auto diga 12.
+  assert.equal(C.carPeriod(db, vehicle, { rent_period: 'dia', pay_modes: '0' }), 'dia');
+  assert.equal(C.carPeriod(db, vehicle, { rent_period: 'dia' }), 'dia');
+});
+
 test('corregir el inicio de un alquiler en curso: se rearman los días desde la fecha nueva y no figura como "vuelve hoy"', async () => {
   const { db, cat, vehicle, customer } = fleet();
   setSetting(db, 'rent_period', 'dia');

@@ -502,6 +502,7 @@ const DEFAULT_SETTINGS = {
   // Tipo de negocio: 'turismo' (alquiler por días, el de siempre) o 'choferes' (autos de trabajo para choferes de apps, src/choferes.js).
   business_mode: 'turismo',
   rent_period: 'semana', // 'dia', 'semana' o 'mes': cada cuánto se cobra y se renueva el alquiler
+  pay_modes: '0', // '1': cobrando por día, cada auto elige si paga cada 24 o cada 12 horas (lo activa el dueño de Floty por agencia)
   late_fee_per_day: '0', // recargo por cada día de atraso en el pago
   late_grace_days: '0', // días de tolerancia antes de cobrar el recargo
   holidays: '', // feriados con la tarifa de domingos de la categoría (cobro por día), DD/MM/AAAA separados por coma
@@ -582,6 +583,8 @@ function migrate(db) {
   if (!has('vehicles', 'rest_day_rate')) db.exec('ALTER TABLE vehicles ADD COLUMN rest_day_rate REAL NOT NULL DEFAULT 0');
   // Cobro por día: el chofer de este auto no paga los domingos ni los feriados.
   if (!has('vehicles', 'rest_day_free')) db.exec('ALTER TABLE vehicles ADD COLUMN rest_day_free INTEGER NOT NULL DEFAULT 0');
+  // Cobro por día: cada cuántas horas paga el chofer de este auto (24 o 12).
+  if (!has('vehicles', 'pay_every')) db.exec('ALTER TABLE vehicles ADD COLUMN pay_every INTEGER NOT NULL DEFAULT 24');
   // Seguro de cada auto (la cuota mensual se carga sola como gasto) y su habilitación (remis / apps).
   for (const col of ['insurance_company', 'insurance_policy', 'permit_number', 'permit_expiry']) {
     if (!has('vehicles', col)) db.exec(`ALTER TABLE vehicles ADD COLUMN ${col} TEXT`);
