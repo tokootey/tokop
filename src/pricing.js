@@ -2,7 +2,7 @@
 
 const { getSettings } = require('./db');
 const { parseLocal, fmtLocal, round2, fail } = require('./util');
-const { isChoferes, periodOf, periodsBetween, periodRate, carRate, addPeriod } = require('./choferes');
+const { isChoferes, carPeriod, periodsBetween, periodRate, carRate, addPeriod } = require('./choferes');
 
 /**
  * Días a cobrar: bloques de 24 h. Las horas que excedan el último bloque
@@ -46,7 +46,7 @@ function computeQuote(db, input) {
   const start = parseLocal(input.pickup_at);
   // Choferes: se cobra por período entero (día, semana o mes), sin temporadas.
   const choferes = isChoferes(settings);
-  const period = choferes ? periodOf(settings) : null;
+  const period = choferes ? carPeriod(db, input.vehicle_id, settings) : null;
   const periods = choferes ? periodsBetween(input.pickup_at, input.return_at, period) : null;
   if (choferes) {
     perDay = periodRate(category, period);

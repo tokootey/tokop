@@ -14,11 +14,19 @@ const DAY = 86400000;
 
 const isChoferes = (settings) => settings.business_mode === 'choferes';
 const periodOf = (settings) => (PERIODS[settings.rent_period] ? settings.rent_period : 'semana');
+/** Período de un alquiler: el de la agencia o, cobrando por día, el turno de 12 horas si el auto paga cada 12. */
+function carPeriod(db, vehicleId, settings) {
+  const period = periodOf(settings);
+  if (period !== 'dia' || !vehicleId || String(settings.pay_modes) !== '1') return period;
+  const v = db.prepare('SELECT pay_every FROM vehicles WHERE id = ?').get(vehicleId);
+  return v && Number(v.pay_every) === 12 ? '12h' : period;
+}
 
 /** Fin de un período que empieza en `at` (AAAA-MM-DDTHH:MM). El mes es de calendario: 31/01 + 1 mes = 28 o 29/02. */
 function addPeriod(at, period) {
   if (period === 'mes') return addMonths(at.slice(0, 10), 1) + at.slice(10);
   const d = parseLocal(at);
+  if (period === '12h') return fmtLocal(new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours() + 12, d.getMinutes()));
   return fmtLocal(new Date(d.getFullYear(), d.getMonth(), d.getDate() + (period === 'dia' ? 1 : 7), d.getHours(), d.getMinutes()));
 }
 
@@ -32,6 +40,7 @@ function periodsBetween(from, to, period) {
 /** Precio de un período: la tarifa de la categoría para ese período o, si no tiene, la diaria multiplicada. */
 function periodRate(category, period) {
   if (period === 'dia') return category.daily_rate;
+  if (period === '12h') return category.daily_rate / 2;
   if (period === 'semana') return category.weekly_rate || category.daily_rate * 7;
   return category.monthly_rate || category.daily_rate * 30;
 }
@@ -93,11 +102,12 @@ function carRate(db, vehicleId, period, holidays) {
       .prepare('SELECT v.period_rate, v.rest_day_rate, v.rest_day_free, c.daily_rate, c.weekly_rate, c.monthly_rate FROM vehicles v JOIN categories c ON c.id = v.category_id WHERE v.id = ?')
       .get(vehicleId);
   if (!v) return null;
-  const free = period === 'dia' && v.rest_day_free;
-  if (!(v.period_rate > 0) && !free) return null;
+  const daily = period === 'dia' || period === '12h';
+  const free = daily && v.rest_day_free;
+  if (!(v.period_rate > 0) && !free && period !== '12h') return null;
   const base = v.period_rate > 0 ? v.period_rate : periodRate(v, period);
   return (start) => {
-    if (period !== 'dia' || !isRestDay(start, holidays)) return base;
+    if (!daily || !isRestDay(start, holidays, period)) return base;
     if (free) return 0;
     return v.rest_day_rate > 0 ? v.rest_day_rate : base;
   };
@@ -105,7 +115,7 @@ function carRate(db, vehicleId, period, holidays) {
 
 function openPeriods(db, r, outAt) {
   const settings = getSettings(db);
-  const period = periodOf(settings);
+  const period = carPeriod(db, r.vehicle_id, settings);
   const n = periodsBetween(r.pickup_at, r.return_at, period);
   const car = carRate(db, r.vehicle_id, period, settings.holidays);
   const amount = round2(r.total / n);
@@ -127,8 +137,8 @@ function syncReservation(db, id) {
 }
 
 /** Domingo o feriado de Configuración (DD/MM/AAAA). El día de un período diario es el de su mitad: de 23:00 a 23:00 cuenta el siguiente. */
-function isRestDay(start, holidays) {
-  const day = fmtLocal(new Date(parseLocal(start).getTime() + DAY / 2)).slice(0, 10);
+function isRestDay(start, holidays, period = 'dia') {
+  const day = fmtLocal(new Date(parseLocal(start).getTime() + (period === '12h' ? DAY / 4 : DAY / 2))).slice(0, 10);
   if (parseLocal(`${day}T12:00`).getDay() === 0) return true;
   return String(holidays || '')
     .split(',')
@@ -147,8 +157,8 @@ function renew(db, reservationId, now = nowLocal(), userId = null) {
   // El período siguiente arranca recién pasado el fin del actual (devolverlo justo al terminar no abre otro).
   if (!last || last.end_at >= now) return 0;
   const settings = getSettings(db);
-  const period = periodOf(settings);
   const cat = db.prepare('SELECT c.daily_rate, c.rest_day_rate, r.vehicle_id FROM reservations r JOIN categories c ON c.id = r.category_id WHERE r.id = ?').get(reservationId);
+  const period = carPeriod(db, cat && cat.vehicle_id, settings);
   const rest = period === 'dia' && cat && cat.rest_day_rate > 0;
   // Con precio propio del auto, cada renovación va a ese precio (si la agencia lo cambia, el período siguiente ya sale con el nuevo).
   const car = cat && carRate(db, cat.vehicle_id, period, settings.holidays);
@@ -188,7 +198,7 @@ function restart(db, id, at, userId = null) {
   const now = nowLocal();
   if (start > now) fail(400, 'El inicio no puede ser una fecha que todavía no llegó');
   const settings = getSettings(db);
-  const period = periodOf(settings);
+  const period = carPeriod(db, r.vehicle_id, settings);
   const car = carRate(db, r.vehicle_id, period, settings.holidays);
   const rest = period === 'dia' && r.rest_day_rate > 0 && isRestDay(start, settings.holidays);
   const amount = car ? car(start) : rest ? r.rest_day_rate : periodRate(r, period);
@@ -219,6 +229,7 @@ function kmReading(db, r, km, userId) {
   km = Number(km);
   if (!r.contract) fail(409, 'El auto todavía no se entregó');
   if (!(km >= r.contract.out_km)) fail(400, `El km tiene que ser mayor o igual al de la entrega (${r.contract.out_km})`);
+  // shortcut: pagando cada 12 horas cada turno suma km_per_period entero; si una agencia usa km limitados con turnos, dividirlos.
   const cat = db.prepare('SELECT km_per_period, extra_km_rate FROM categories WHERE id = ?').get(r.category_id);
   const periods = db.prepare('SELECT COUNT(*) AS n FROM rental_periods WHERE reservation_id = ?').get(r.id).n;
   const charged = db.prepare("SELECT COALESCE(SUM(km), 0) AS km FROM rental_charges WHERE reservation_id = ? AND kind = 'km'").get(r.id).km;
@@ -262,7 +273,10 @@ function dashboardChoferes(db, getReservation, today) {
       // Días que debe: lo pendiente del alquiler (sin recargos ni multas) sobre el precio del último período (con días a distinto precio es aproximado).
       const day = r.periods.map((p) => p.amount).filter((a) => a > 0).pop() || 0; // el último día que se cobró: los libres valen 0
       const rent = r.balance.pending - r.late_fee.total - r.charges.reduce((a, c) => a + c.amount, 0);
-      const days_owed = day > 0 && rent > 0 ? Math.floor((rent / day) * 10) / 10 : 0;
+      // Pagando cada 12 horas, dos turnos son un día.
+      const last = r.periods[r.periods.length - 1];
+      const perDay = last && parseLocal(last.end_at) - parseLocal(last.start_at) < DAY / 2 + 3600000 ? 2 : 1;
+      const days_owed = day > 0 && rent > 0 ? Math.floor((rent / day / perDay) * 10) / 10 : 0;
       return { id: r.id, code: r.code, customer_name: r.customer_name, customer_phone: r.customer_phone, vehicle_plate: r.vehicle_plate, pending: r.balance.pending, late_fee: r.late_fee.total, days_owed };
     })
     .sort((a, b) => b.pending - a.pending);
@@ -286,4 +300,4 @@ function dashboardChoferes(db, getReservation, today) {
   return { owing, license_expired, service_due };
 }
 
-module.exports = { PERIODS, isChoferes, periodOf, addPeriod, isRestDay, periodsBetween, periodRate, carRate, lateFee, rentalExtras, openPeriods, renew, renewDue, restart, kmReading, addCharge, dashboardChoferes };
+module.exports = { PERIODS, isChoferes, periodOf, carPeriod, addPeriod, isRestDay, periodsBetween, periodRate, carRate, lateFee, rentalExtras, openPeriods, renew, renewDue, restart, kmReading, addCharge, dashboardChoferes };

@@ -137,6 +137,7 @@ function openPlatform(principalDb, principalFile) {
         reservations: one('SELECT COUNT(*) n FROM reservations').n,
         reservations_30d: one("SELECT COUNT(*) n FROM reservations WHERE created_at >= datetime('now', '-30 days')").n,
         business_mode: (one("SELECT value FROM settings WHERE key = 'business_mode'") || {}).value || 'turismo',
+        pay_modes: (one("SELECT value FROM settings WHERE key = 'pay_modes'") || {}).value === '1' ? 1 : 0,
         logo: (one("SELECT value FROM settings WHERE key = 'company_logo'") || {}).value || null,
         admin_name: (one("SELECT name FROM users WHERE role = 'admin' AND active = 1 ORDER BY id LIMIT 1") || {}).name || null,
         last_login: one("SELECT MAX(at) at FROM audit_log WHERE action = 'login'").at || null,
@@ -217,7 +218,7 @@ function openPlatform(principalDb, principalFile) {
      * Datos de una agencia que cambia el dueño de Floty: nombre, tipo de negocio, logo y su administrador
      * (el primero: nombre y email). La dirección (subdominio) no cambia, para no romper los links ya mandados.
      */
-    updateProfile(id, { name, business_mode, logo, admin_name, admin_email } = {}) {
+    updateProfile(id, { name, business_mode, pay_modes, logo, admin_name, admin_email } = {}) {
       const c = platform.get(id);
       if (!c) fail(404, 'Empresa inexistente');
       const admin = c.db.prepare("SELECT * FROM users WHERE role = 'admin' AND active = 1 ORDER BY id LIMIT 1").get();
@@ -240,6 +241,7 @@ function openPlatform(principalDb, principalFile) {
         setSetting(c.db, 'company_name', name);
       }
       if (business_mode !== undefined) setSetting(c.db, 'business_mode', business_mode);
+      if (pay_modes !== undefined) setSetting(c.db, 'pay_modes', Number(pay_modes) ? '1' : '0');
       if (logo !== undefined) setSetting(c.db, 'company_logo', logo || '');
       if (admin && admin_name !== undefined) c.db.prepare('UPDATE users SET name = ? WHERE id = ?').run(String(admin_name || 'Administrador').trim().slice(0, 120) || 'Administrador', admin.id);
       if (admin && email && email !== admin.email) c.db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, admin.id);
