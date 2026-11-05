@@ -346,6 +346,7 @@ test('Panel de Floty administrativo: uso de cada agencia, prueba de su direcció
     // Vencimientos y abonos: solo el dueño. Una agencia no puede marcarse "pagada" ni ver lo que se le cobra.
     assert.ok(Array.isArray(ov.data.reminders));
     assert.equal((await call(cookieB, 'POST', '/api/platform/reminders', { title: 'Trucho' })).status, 403);
+    assert.equal((await call(cookieB, 'POST', '/api/platform/expenses', { paid_on: '2026-10-24', concept: 'Trucho', amount: 1, currency: 'USD' })).status, 403);
     assert.equal((await call(cookieB, 'POST', `/api/platform/companies/${companyB.id}/paid`)).status, 403);
     assert.equal((await call(cookieB, 'PUT', `/api/platform/companies/${companyB.id}/account`, { plan_price: 0 })).status, 403);
     const acc = await call(cookieA, 'PUT', `/api/platform/companies/${companyB.id}/account`, { plan_price: 20000, next_charge: '2026-10-01' });

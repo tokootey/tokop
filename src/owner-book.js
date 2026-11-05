@@ -11,6 +11,7 @@ const { fail } = require('./util');
 /** Campos de la ficha de cada agencia que carga el dueño. */
 const COMPANY_FIELDS = ['contact_name', 'contact_phone', 'notes', 'plan_price', 'billing_day', 'next_charge', 'trial_ends', 'domain_expires', 'cert_expires'];
 const REPEATS = ['anual', 'mensual', 'una_vez'];
+const CURRENCIES = ['ARS', 'USD'];
 
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(`${s}T12:00:00Z`).getTime());
 const date = (v, label) => {
@@ -61,7 +62,15 @@ function ownerBook(reg) {
     amount REAL,
     note TEXT
   );
-  CREATE INDEX IF NOT EXISTS ix_payments_ref ON payments(kind, ref_id);`);
+  CREATE INDEX IF NOT EXISTS ix_payments_ref ON payments(kind, ref_id);
+  CREATE TABLE IF NOT EXISTS expenses (
+    id INTEGER PRIMARY KEY,
+    paid_on TEXT NOT NULL,
+    concept TEXT NOT NULL,
+    amount REAL NOT NULL,
+    currency TEXT NOT NULL,
+    note TEXT
+  );`);
   // La primera vez arranca con lo que Mateo ya paga (datos que pasó él, 22/10/2026).
   if (fresh) {
     const add = reg.prepare('INSERT INTO reminders (title, due_date, repeat, note) VALUES (?, ?, ?, ?)');
@@ -76,6 +85,14 @@ function ownerBook(reg) {
     if (!title) fail(400, 'Poné qué hay que pagar o renovar');
     const repeat = REPEATS.includes(b.repeat) ? b.repeat : 'anual';
     return [title, date(b.due_date, 'Vence el'), repeat, amount(b.amount, 'Monto'), text(b.note, 500)];
+  };
+  const getExpense = (id) => reg.prepare('SELECT * FROM expenses WHERE id = ?').get(Number(id)) || fail(404, 'Gasto inexistente');
+  const expenseData = (b) => {
+    const paidOn = date(b.paid_on, 'Fecha') || fail(400, 'Poné la fecha del pago');
+    const concept = text(b.concept, 120) || fail(400, 'Poné qué pagaste');
+    const value = amount(b.amount, 'Monto') || fail(400, 'Poné el monto');
+    if (!CURRENCIES.includes(b.currency)) fail(400, 'Elegí la moneda');
+    return [paidOn, concept, value, b.currency, text(b.note, 200)];
   };
   const log = reg.prepare('INSERT INTO payments (kind, ref_id, paid_at, period, amount, note) VALUES (?, ?, ?, ?, ?, ?)');
   const now = () => new Date().toISOString();
@@ -100,6 +117,20 @@ function ownerBook(reg) {
       if (r.repeat === 'una_vez') reg.prepare('UPDATE reminders SET done_at = ? WHERE id = ?').run(now(), r.id);
       else if (r.due_date) reg.prepare('UPDATE reminders SET due_date = ? WHERE id = ?').run(addMonths(r.due_date, r.repeat === 'anual' ? 12 : 1), r.id);
       return { ...getReminder(id), payment_id: Number(p.lastInsertRowid) };
+    },
+
+    /** Lo que el dueño ya pagó para sostener Floty, con su fecha real y en la moneda en que lo pagó. */
+    expenses: () => reg.prepare('SELECT * FROM expenses ORDER BY paid_on DESC, id DESC').all(),
+    addExpense: (b) => getExpense(reg.prepare('INSERT INTO expenses (paid_on, concept, amount, currency, note) VALUES (?, ?, ?, ?, ?)').run(...expenseData(b || {})).lastInsertRowid),
+    updateExpense(id, b) {
+      getExpense(id);
+      reg.prepare('UPDATE expenses SET paid_on = ?, concept = ?, amount = ?, currency = ?, note = ? WHERE id = ?').run(...expenseData(b || {}), Number(id));
+      return getExpense(id);
+    },
+    removeExpense(id) {
+      getExpense(id);
+      reg.prepare('DELETE FROM expenses WHERE id = ?').run(Number(id));
+      return { ok: true };
     },
 
     /** Ficha y abono de una agencia: solo los campos que vienen en el pedido. */

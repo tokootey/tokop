@@ -4085,6 +4085,17 @@ on(/^\/empresas$/, async (view) => {
       <div class="due-what"><b>${esc(what)} · ${esc(c.name)}</b><small>${L('Lo paga la agencia: avisale antes', 'The agency pays it: remind them')} · ${dueText(dd)}</small></div>
       <div class="due-actions"><button class="btn pill small" type="button" data-account-of="${c.id}">Ficha</button></div>
     </li>`;
+  const expenseAmount = (currency, n) => `${currency} ${Number(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const expenseTotals = ['ARS', 'USD']
+    .map((cur) => [cur, d.expenses.filter((x) => x.currency === cur).reduce((sum, x) => sum + x.amount, 0)])
+    .filter(([, total]) => total > 0)
+    .map(([cur, total]) => expenseAmount(cur, total))
+    .join(' + ');
+  const expenseRow = (x) => `<li class="due" data-expense="${x.id}">
+      <span class="st">${fmtD(x.paid_on)}</span>
+      <div class="due-what"><b>${esc(x.concept)}</b><small>${expenseAmount(x.currency, x.amount)}${x.note ? ` · ${esc(x.note)}` : ''}</small></div>
+      <div class="due-actions"><button class="btn pill small" type="button" data-expense-edit>Editar</button></div>
+    </li>`;
 
   view.innerHTML = `
     <div class="own-head">
@@ -4112,6 +4123,11 @@ on(/^\/empresas$/, async (view) => {
       <div class="own-sec-head"><h2>Mis vencimientos</h2><button class="btn pill small" type="button" data-rem-new>${ICON.plus}Agregar</button></div>
       <p class="muted">Lo que tenés que pagar o renovar. Te avisamos en "Para mirar" 30 días antes, más fuerte a 7 días y en rojo si ya venció. Al marcarlo pagado, la fecha pasa sola al mes o al año siguiente.</p>
       <ul class="dues">${d.reminders.map(dueRow).join('') + agencyDues.map(agencyDueRow).join('') || `<li class="muted">${L('No hay vencimientos cargados.', 'No due dates yet.')}</li>`}</ul>
+    </section>
+    <section class="own-dues">
+      <div class="own-sec-head"><h2>Mis gastos</h2><button class="btn pill small" type="button" data-expense-new>${ICON.plus}Agregar</button></div>
+      <p class="muted">Lo que ya pagaste para sostener Floty.${expenseTotals ? ` Total: <b data-notr>${expenseTotals}</b>.` : ''} Cada moneda se suma por separado, sin convertir.</p>
+      <ul class="dues">${d.expenses.map(expenseRow).join('') || '<li class="muted">No hay gastos cargados.</li>'}</ul>
     </section>
     <h2 class="own-sec-title">Agencias</h2>
     ${
@@ -4277,6 +4293,36 @@ on(/^\/empresas$/, async (view) => {
       route();
     });
   };
+  const openExpense = (x) => {
+    openModal(
+      x ? `Editar · ${x.concept}` : 'Nuevo gasto',
+      formHtml(
+        [
+          { name: 'paid_on', label: 'Fecha del pago', type: 'date', required: true },
+          { name: 'concept', label: 'Qué pagaste', required: true, attrs: 'placeholder="Servidor, dominio, publicidad…"' },
+          { name: 'amount', label: 'Monto', type: 'number', required: true },
+          { name: 'currency', label: 'Moneda', type: 'select', required: true, options: [['ARS', 'Pesos (ARS)'], ['USD', 'Dólares (USD)']] },
+          { name: 'note', label: 'Nota (opcional)', full: true },
+        ],
+        x || { currency: 'USD' },
+        'Guardar',
+      ) + (x ? '<div class="actions" style="margin-top:12px"><button class="btn danger small" type="button" data-expense-del>Borrar este gasto</button></div>' : ''),
+      async (f) => {
+        await run(() => (x ? PUT(`/platform/expenses/${x.id}`, f) : POST('/platform/expenses', f)), 'Gasto guardado');
+        route();
+      },
+    );
+    $('#modal [data-expense-del]')?.addEventListener('click', async () => {
+      if (!(await confirmModal({ title: `Borrar "${x.concept}"`, text: 'Se borra de tus gastos.', ok: 'Borrar', danger: true }))) return;
+      await run(() => DEL(`/platform/expenses/${x.id}`), 'Gasto borrado');
+      closeModal();
+      route();
+    });
+  };
+  $('[data-expense-new]', view).addEventListener('click', () => openExpense(null));
+  $$('[data-expense]', view).forEach((li) => {
+    $('[data-expense-edit]', li).addEventListener('click', () => openExpense(d.expenses.find((x) => x.id === Number(li.dataset.expense))));
+  });
   $('[data-rem-new]', view).addEventListener('click', () => openReminder(null));
   $$('[data-rem]', view).forEach((li) => {
     const r = d.reminders.find((x) => x.id === Number(li.dataset.rem));
