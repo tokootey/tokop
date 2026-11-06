@@ -160,6 +160,7 @@ function platformRoutes(platform, company) {
       backups: backupStatus(),
       disk: diskStatus(platform.dir),
       reminders: book.reminders().map((r) => ({ ...r, payments: book.payments('reminder', r.id, 3) })),
+      expenses: book.expenses(),
       companies: platform.list().map((c) => ({
         ...pick(c, ['id', 'slug', 'name', 'created_at', 'principal', 'domain', 'address', ...COMPANY_FIELDS]),
         ...platform.stats(c.id),
@@ -171,6 +172,9 @@ function platformRoutes(platform, company) {
   router.put('/reminders/:id', (req, res) => res.json(book.updateReminder(req.params.id, req.body)));
   router.delete('/reminders/:id', (req, res) => res.json(book.removeReminder(req.params.id)));
   router.post('/reminders/:id/paid', (req, res) => res.json(book.payReminder(req.params.id, req.body)));
+  router.post('/expenses', (req, res) => res.status(201).json(book.addExpense(req.body)));
+  router.put('/expenses/:id', (req, res) => res.json(book.updateExpense(req.params.id, req.body)));
+  router.delete('/expenses/:id', (req, res) => res.json(book.removeExpense(req.params.id)));
   router.put('/companies/:id/account', (req, res) => res.json(book.updateCompany(req.params.id, req.body)));
   router.post('/companies/:id/paid', (req, res) => res.json(book.payCompany(req.params.id, req.body)));
   router.post('/payments/:id/undo', (req, res) => res.json(book.undoPayment(req.params.id)));

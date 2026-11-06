@@ -90,3 +90,21 @@ test('deshacer un "Pagado" tocado sin querer: vuelve la fecha y se borra del his
   assert.equal(platform.list().find((c) => c.id === company.id).next_charge, '2026-11-15');
   assert.throws(() => book.undoPayment(second.payment_id), /inexistente/);
 });
+
+test('gastos del dueño: guardan la fecha real y la moneda, y validan lo que entra', () => {
+  const g = book.addExpense({ paid_on: '2026-10-24', concept: 'Claude Max', amount: 96.79, currency: 'USD' });
+  assert.equal(g.paid_on, '2026-10-24');
+  assert.equal(g.amount, 96.79);
+  book.addExpense({ paid_on: '2026-10-25', concept: 'Meta', amount: 5000, currency: 'ARS', note: 'Fondos' });
+  assert.deepEqual(book.expenses().map((x) => x.concept), ['Meta', 'Claude Max']);
+
+  assert.throws(() => book.addExpense({ concept: 'Sin fecha', amount: 1, currency: 'USD' }), /fecha/);
+  assert.throws(() => book.addExpense({ paid_on: '2026-10-24', amount: 1, currency: 'USD' }), /pagaste/);
+  assert.throws(() => book.addExpense({ paid_on: '2026-10-24', concept: 'X', currency: 'USD' }), /monto/);
+  assert.throws(() => book.addExpense({ paid_on: '2026-10-24', concept: 'X', amount: 1, currency: 'EUR' }), /moneda/);
+
+  assert.equal(book.updateExpense(g.id, { paid_on: '2026-10-20', concept: 'Claude', amount: 10, currency: 'USD' }).amount, 10);
+  book.removeExpense(g.id);
+  assert.equal(book.expenses().length, 1);
+  assert.throws(() => book.removeExpense(g.id), /inexistente/);
+});
