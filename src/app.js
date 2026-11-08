@@ -18,6 +18,8 @@ const { HttpError, fail } = require('./util');
 const { backupStatus } = require('./backup');
 const { COMPANY_FIELDS } = require('./owner-book');
 const { hotelRoutes } = require('./hotel');
+const { deliveryPublicRoutes } = require('./routes/delivery-public');
+const { handleNotice } = require('./payments');
 const { log: reservationLog } = require('./reservations');
 
 /** Crea el usuario administrador inicial si no hay ninguno. */
@@ -71,10 +73,19 @@ function companyApi(db, { uploadsDir, company, platform }) {
   const prefix = company ? `${company.id}.` : '';
   const emailTaken = platform ? (email) => platform.emailTaken(email, company.id) : () => false;
 
-  app.use('/api/public/webform', webformRoutes(db));
-  app.use('/api/public/chat', chatRoutes(db));
-  app.use('/api/public/v1', publicRoutes(db));
+  const publicQuery = company && !company.principal ? `?empresa=${company.slug}` : '';
+  app.use('/api/public/webform', webformRoutes(db, { publicQuery }));
+  app.use('/api/public/chat', chatRoutes(db, { publicQuery }));
+  app.use('/api/public/v1', publicRoutes(db, { publicQuery }));
   app.use('/api/public/hotel', hotelRoutes(db, reservationLog));
+  app.use('/api/public/entrega', deliveryPublicRoutes(db, uploadsDir));
+  // Aviso de Mercado Pago. El id puede venir en la dirección o en el cuerpo, según el tipo de aviso.
+  app.all('/api/public/mp/aviso', async (req, res) => {
+    const q = req.query;
+    const b = req.body || {};
+    const isPayment = [q.type, q.topic, b.type, b.topic].includes('payment');
+    res.json(isPayment ? await handleNotice(db, q['data.id'] || (b.data && b.data.id) || q.id) : { ignored: true });
+  });
 
   app.post('/api/auth/login', sameOrigin, (req, res) => res.json(login(db, req, res, prefix)));
   const auth = requireUser(db);
@@ -103,9 +114,9 @@ function companyApi(db, { uploadsDir, company, platform }) {
     '/api',
     guarded,
     catalogRoutes(db, { uploadsDir }),
-    operationsRoutes(db),
+    operationsRoutes(db, { publicQuery }),
     fileRoutes(db, uploadsDir),
-    adminRoutes(db, { emailTaken, publicQuery: company && !company.principal ? `?empresa=${company.slug}` : '' }),
+    adminRoutes(db, { emailTaken, publicQuery }),
     importRoutes(db),
     statsRoutes(db),
   );

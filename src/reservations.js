@@ -1,7 +1,7 @@
 'use strict';
 
 const { computeQuote, computeReturnCharges } = require('./pricing');
-const { categoryAvailability, isVehicleFree } = require('./availability');
+const { categoryAvailability, isVehicleFree, paddedRange } = require('./availability');
 const { emit } = require('./webhooks');
 const { getSettings } = require('./db');
 const { refundFor } = require('./refunds');
@@ -136,7 +136,7 @@ function createReservation(db, input, userId) {
 
   const id = tx(db, () => {
     assertAvailability(db, data);
-    const quote = computeQuote(db, data);
+    const quote = computeQuote(db, { ...data, dynamic_pct: undefined });
     let pricing = quote;
     let total = quote.total;
     if (data.price_override !== undefined && data.price_override !== null && data.price_override !== '') {
@@ -207,7 +207,8 @@ function updateReservation(db, id, input, userId) {
   const data = normalizeInput(merged);
   tx(db, () => {
     assertAvailability(db, data, current.id);
-    const quote = computeQuote(db, data);
+    const sameTrip = data.pickup_at === current.pickup_at && data.return_at === current.return_at && Number(data.category_id) === current.category_id;
+    const quote = computeQuote(db, { ...data, exclude_reservation_id: current.id, dynamic_pct: sameTrip ? (current.pricing && current.pricing.dynamic_pct) || 0 : undefined });
     const keepExternalPrice = current.pricing && current.pricing.calculated_total !== undefined && input.recalculate !== true;
     const total = keepExternalPrice ? current.total : quote.total;
     const pricing = keepExternalPrice ? { ...quote, source: current.pricing.source, calculated_total: quote.total, total } : quote;
@@ -330,13 +331,14 @@ function moveOptions(db, id) {
        WHERE v.category_id = ? AND v.status NOT IN ('mantenimiento', 'fuera_servicio') AND v.id <> ? ORDER BY v.plate`,
     )
     .all(r.category_id, r.vehicle_id || 0);
+  const [from, to] = paddedRange(db, r.pickup_at, r.return_at);
   const hits = db.prepare(
     `SELECT id FROM reservations WHERE vehicle_id = ? AND status IN ('pendiente', 'confirmada', 'en_curso') AND pickup_at < ? AND return_at > ? AND id <> ?`,
   );
   const free = [];
   const swaps = [];
   for (const car of cars) {
-    const hit = hits.all(car.id, r.return_at, r.pickup_at, r.id);
+    const hit = hits.all(car.id, to, from, r.id);
     if (!hit.length) free.push(car);
     else if (hit.length === 1) {
       const other = getReservation(db, hit[0].id);

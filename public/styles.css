@@ -859,6 +859,12 @@ body.owner .acct-menu .lang-switch .btn.link.active { color: var(--text); }
 .qr-hotel > .muted { margin: 0; font-size: 13px; }
 .qr-hotel-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .qr-hotel-grid .full { grid-column: 1 / -1; }
+.sign-pad { display: block; width: 100%; height: 170px; border: 1px dashed var(--border, #bbb); border-radius: 10px; background: #fff; touch-action: none; cursor: crosshair; }
+.sign-terms { max-height: 45vh; overflow: auto; font-size: 13px; line-height: 1.45; border: 1px solid var(--border, #ddd); border-radius: 10px; padding: 10px 12px; }
+.sign-image { display: block; max-width: 260px; height: auto; background: #fff; border-radius: 8px; }
+.pub-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.pub-photos img { width: 100%; height: auto; border-radius: 10px; display: block; }
+.send-step { border: 1px solid var(--border, #ddd); border-radius: 12px; padding: 12px; }
 .hotel-card h2 { display: flex; align-items: center; gap: 8px; }
 .hotel-card h2 svg { width: 20px; height: 20px; fill: none; stroke: var(--primary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .hotel-card.missing { border-color: #f1dcb0; background: #fffdf7; }

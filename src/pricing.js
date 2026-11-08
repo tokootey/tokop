@@ -3,6 +3,26 @@
 const { getSettings } = require('./db');
 const { parseLocal, fmtLocal, round2, fail } = require('./util');
 const { isChoferes, carPeriod, periodsBetween, periodRate, carRate, addPeriod } = require('./choferes');
+const { categoryAvailability } = require('./availability');
+
+/** "70:10, 90:20" → desde 70 % de ocupación sube 10 %, desde 90 % sube 20 %. Devuelve null si está mal escrito. */
+function parseDynamicRules(text) {
+  const parts = String(text || '').split(',').map((p) => p.trim()).filter(Boolean);
+  const rules = parts.map((p) => p.match(/^(\d{1,3}(?:\.\d+)?)\s*:\s*(\d{1,3}(?:\.\d+)?)$/));
+  if (rules.some((m) => !m || Number(m[1]) > 100)) return null;
+  return rules.map((m) => ({ from: Number(m[1]), pct: Number(m[2]) })).sort((a, b) => a.from - b.from);
+}
+
+/** Recargo según qué tan ocupada está la categoría en esas fechas (la propia reserva no cuenta). */
+function dynamicPct(db, settings, input) {
+  if (settings.pro_features !== '1' || isChoferes(settings)) return 0;
+  const rules = parseDynamicRules(settings.dynamic_pricing_rules);
+  if (!rules || !rules.length) return 0;
+  const c = categoryAvailability(db, input).find((x) => x.id === Number(input.category_id));
+  if (!c || !(c.fleet > 0)) return 0;
+  const occupancy = (c.booked / c.fleet) * 100;
+  return rules.filter((r) => occupancy >= r.from).reduce((_, r) => r.pct, 0);
+}
 
 /**
  * Días a cobrar: bloques de 24 h. Las horas que excedan el último bloque
@@ -83,7 +103,11 @@ function computeQuote(db, input) {
       ? Number(settings.one_way_fee) || 0
       : 0;
 
-  const subtotal = base + seasonExtra + extrasTotal + oneWay;
+  // Una reserva ya hecha conserva su recargo mientras no cambie de fechas o categoría (dynamic_pct viene de updateReservation).
+  const demandPct = input.dynamic_pct !== undefined ? Number(input.dynamic_pct) || 0 : dynamicPct(db, settings, input);
+  const demandExtra = ((base + seasonExtra) * demandPct) / 100;
+
+  const subtotal = base + seasonExtra + demandExtra + extrasTotal + oneWay;
   const discountPct = Math.min(100, Math.max(0, Number(input.discount_pct) || 0));
   // El porcentaje y el monto fijo (por ejemplo 10.000 para redondear) se suman; nunca más que el subtotal.
   const discountAmount = Math.max(0, Number(input.discount_amount) || 0);
@@ -101,6 +125,8 @@ function computeQuote(db, input) {
     per_day: round2(perDay),
     base: round2(base),
     season_extra: round2(seasonExtra),
+    dynamic_pct: demandPct,
+    dynamic_extra: round2(demandExtra),
     extras: extrasLines,
     extras_total: round2(extrasTotal),
     one_way_fee: round2(oneWay),
@@ -162,4 +188,4 @@ function computeReturnCharges(db, reservation, contract, input, { byPeriods = fa
   return { km_driven: kmDriven, lines, total: round2(lines.reduce((a, l) => a + l.amount, 0)) };
 }
 
-module.exports = { rentalDays, computeQuote, computeReturnCharges };
+module.exports = { rentalDays, computeQuote, computeReturnCharges, parseDynamicRules };

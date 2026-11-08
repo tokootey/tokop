@@ -71,6 +71,8 @@ const fuel = (n) => (n === null || n === undefined ? '' : `${n}/8`);
 const choferesMode = () => state.settings.business_mode === 'choferes';
 // Solo las agencias a las que el dueño de Floty se lo activa: cada auto elige si paga cada 24 o cada 12 horas.
 const payModes = () => choferesMode() && state.settings.rent_period === 'dia' && String(state.settings.pay_modes) === '1';
+// Funciones en prueba: las activa el dueño de Floty por agencia, desde el panel.
+const proOn = () => String(state.settings.pro_features) === '1';
 const PERIOD_LABEL = { dia: ['día', 'días'], semana: ['semana', 'semanas'], mes: ['mes', 'meses'] };
 const periodWord = (n = 1) => (PERIOD_LABEL[state.settings.rent_period] || PERIOD_LABEL.semana)[Number(n) === 1 ? 0 : 1];
 /** Primera línea del precio: "3 días × $ 20.000" o, por períodos, "1 semana × $ 100.000". */
@@ -1165,6 +1167,38 @@ function hotelLink(r) {
   const co = state.user && state.user.company;
   return `${location.origin}/hotel/${r.hotel_token}${co && !co.principal ? `?empresa=${encodeURIComponent(co.slug)}` : ''}`;
 }
+/** Links del cliente (firma y fotos): llevan la agencia si no es la principal. */
+const clientLink = (path, token) => {
+  const co = state.user && state.user.company;
+  return `${location.origin}/${path}/${token}${co && !co.principal ? `?empresa=${encodeURIComponent(co.slug)}` : ''}`;
+};
+const waText = (r, text) => `https://wa.me/${String(r.customer_phone || '').replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
+const contractMessage = (r, link) =>
+  `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Este es el contrato de tu alquiler con ${state.settings.company_name}. Leelo y firmalo desde el celular`, `This is your rental agreement with ${state.settings.company_name}. Read and sign it from your phone`)}: ${link}`;
+const photosMessage = (r, link) =>
+  `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Estas son las fotos del auto${r.vehicle_plate ? ` ${r.vehicle_plate}` : ''} al momento de la entrega`, `These are the photos of the car${r.vehicle_plate ? ` ${r.vehicle_plate}` : ''} at delivery`)}: ${link}`;
+/** Un envío: su propio botón de WhatsApp, para que salga en un mensaje aparte. */
+const sendStep = (title, hint, r, text, link) => `<div class="send-step stack">
+    <b>${esc(title)}</b><small class="muted">${esc(hint)}</small>
+    ${r.customer_phone ? `<a class="btn ok" href="${esc(waText(r, text))}" target="_blank" rel="noopener">${WA_ICON}Mandarlo por WhatsApp</a>` : '<small class="error">El cliente no tiene teléfono cargado: copiá el link.</small>'}
+    <input readonly value="${esc(link)}" data-notr aria-label="Link"/>
+  </div>`;
+
+function signatureCardHtml(r) {
+  if (!proOn() || choferesMode() || ['cancelada', 'no_show'].includes(r.status)) return '';
+  const s = r.signature;
+  const open = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
+  const ask = open ? `<div class="actions no-print" style="margin-top:12px"><button class="btn" type="button" data-act="sign">${s && s.requested ? 'Volver a mandar el link de firma' : 'Pedir la firma del cliente'}</button></div>` : '';
+  if (s && s.signed_at && !s.stale) {
+    return `<div class="card"><h2>Firma del contrato</h2>
+      <p><span class="badge b-confirmada">Firmado</span> por <b>${esc(s.name)}</b> · ${esc(s.doc)}</p>
+      <img class="sign-image" src="${esc(s.image)}" alt="Firma del cliente"/>
+      <small class="muted">${fmtDT(stampLocal(s.signed_at))} · IP ${esc(s.ip || '')} · Huella ${esc(String(s.hash).slice(0, 16))}</small></div>`;
+  }
+  if (s && s.signed_at) return `<div class="card"><h2>Firma del contrato</h2><p class="notice warn">Firmó ${esc(s.name)}, pero la reserva cambió después. Pedile la firma de nuevo.</p>${ask}</div>`;
+  return `<div class="card"><h2>Firma del contrato</h2><p class="muted">${s && s.requested ? 'Le pediste la firma: todavía no firmó.' : 'El cliente lo firma desde el celular, con el dedo.'}</p>${ask}</div>`;
+}
+
 const hotelAsk = (r) => {
   const text = `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L('Para llevarte el auto al hotel necesitamos unos datos. Completalos acá', 'To bring the car to your hotel we need a few details. Fill them in here')}: ${hotelLink(r)}`;
   const n = String(r.customer_phone || '').replace(/\D/g, '');
@@ -1465,6 +1499,7 @@ function breakdownHtml(q) {
   return `<table class="breakdown"><tbody>
     ${row(`${esc(q.category ? q.category.name : '')} · ${baseLabel(q, q.days)}`, money(q.base))}
     ${q.season_extra ? row('Recargo de temporada', money(q.season_extra)) : ''}
+    ${q.dynamic_extra ? row(`Recargo por alta demanda ${q.dynamic_pct}%`, money(q.dynamic_extra)) : ''}
     ${(q.extras || []).map((x) => row(`${esc(x.name)}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount))).join('')}
     ${q.one_way_fee ? row('Devolución en otra sucursal', money(q.one_way_fee)) : ''}
     ${q.discount ? row(`Descuento${q.discount_pct ? ` ${q.discount_pct}%` : ''}`, '−' + money(q.discount)) : ''}
@@ -1494,6 +1529,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   const hotelOpen = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
   if (hotelOpen && !r.hotel && !choferesMode()) more.push('<button data-act="hotel">Entregar o retirar en un hotel</button>');
   if (r.status === 'en_curso') actions.push(`<button class="btn ok" data-act="checkin">${ICON.in}Registrar devolución</button>`);
+  if (proOn() && !choferesMode() && ['confirmada', 'en_curso'].includes(r.status)) actions.push(`<button class="btn" data-act="express">${ICON.send}Entrega express</button>`);
+  if (proOn() && state.settings.mp_connected && !['cancelada', 'no_show'].includes(r.status) && r.balance.pending > 0) more.unshift('<button data-act="paylink">Link de pago con tarjeta</button>');
   // Saldo a cobrar a la vista, con el importe: un toque abre el cobro ya completado.
   if (['confirmada', 'en_curso', 'finalizada'].includes(r.status) && r.balance.pending > 0)
     actions.push(`<button class="btn ${r.status === 'finalizada' ? 'primary' : ''}" data-act="pay">${ICON.money}Cobrar ${money(r.balance.pending)}</button>`);
@@ -1581,6 +1618,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         }</div>`
           : ''
       }
+      ${signatureCardHtml(r)}
       ${rentalCardHtml(r)}
       ${invoicesCardHtml(r)}
       ${filesCardHtml(r)}
@@ -1710,6 +1748,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'out_fuel', label: 'Combustible (octavos)', type: 'select', options: FUEL_OPTS, required: true },
             { name: 'out_notes', label: 'Observaciones / estado del vehículo', type: 'textarea', full: true },
             { name: 'fotos', label: 'Fotos del auto al entregarlo (frente, laterales, cola, interior, tablero con km y combustible)', type: 'photos' },
+            { name: 'express', label: 'Entrega express: el cliente no pasa por el mostrador (después le mandás el contrato y las fotos por separado)', type: 'checkbox', full: true, when: () => proOn() && !choferesMode() },
           ],
           { vehicle_id: first.id, out_at: localISO(new Date()), out_km: first.km, out_fuel: first.fuel ?? 8 },
           'Entregar y abrir contrato',
@@ -1722,7 +1761,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           } catch (e) {
             toast(`La entrega quedó registrada, pero falló una foto: ${e.message}. Podés subirla desde la reserva.`, true);
           }
-          reload();
+          if (d.express) location.hash = `#/reservas/${r.id}?accion=express`;
+          else reload();
         },
       );
       const sel = $('#modal-body [name=vehicle_id]');
@@ -1858,6 +1898,39 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       ),
     print: () => printContract(r),
     voucher: () => sendVoucher(r),
+    sign: async () => {
+      const s = await run(() => POST(`/reservations/${r.id}/signature`, { terms: contractTermsList(r) }));
+      if (!s) return;
+      const link = clientLink('firmar', s.token);
+      openModal(`Firma del contrato · ${r.code}`, sendStep('Contrato para firmar', 'Le llega un link: lee el contrato y firma con el dedo. La firma aparece sola en la reserva.', r, contractMessage(r, link), link));
+    },
+    express: async () => {
+      const s = await run(() => POST(`/reservations/${r.id}/signature`, { terms: contractTermsList(r) }));
+      if (!s) return;
+      const contract = clientLink('firmar', s.token);
+      const photos = clientLink('fotos', s.photos_token);
+      const count = r.files.filter((f) => f.stage === 'entrega' && f.mime.startsWith('image/')).length;
+      openModal(
+        `Entrega express · ${r.code}`,
+        `<p class="muted">Son dos mensajes separados: mandá primero uno y después el otro.</p>
+         <div class="stack">
+           ${sendStep('1. Contrato', 'Lee el contrato y lo firma desde el celular.', r, contractMessage(r, contract), contract)}
+           ${sendStep('2. Fotos del auto', count ? `${count} foto${count === 1 ? '' : 's'} de la entrega.` : 'Todavía no hay fotos de la entrega: agregalas desde la reserva antes de mandar este link.', r, photosMessage(r, photos), photos)}
+         </div>`,
+      );
+    },
+    paylink: () =>
+      openModal(
+        `Link de pago con tarjeta · ${r.code}`,
+        formHtml([{ name: 'amount', label: 'Importe a cobrar', type: 'number', required: true, attrs: `min="1" max="${r.balance.pending}" step="any"` }], { amount: r.balance.pending }, 'Crear link de pago'),
+        async (d) => {
+          const p = await POST(`/reservations/${r.id}/pay-link`, { amount: d.amount });
+          const text = `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Podés pagar ${money(p.amount)} de tu reserva ${r.code} con tarjeta acá`, `You can pay ${money(p.amount)} for your booking ${r.code} by card here`)}: ${p.url}`;
+          setTimeout(() =>
+            openModal(`Link de pago · ${r.code}`, sendStep(`Pago de ${money(p.amount)}`, 'Cuando pague, el cobro se carga solo en la reserva.', r, text, p.url)),
+          );
+        },
+      ),
     pdf: async () => {
       if (!window.jspdf) return toast('No se pudo cargar el generador de PDF. Recargá la página e intentá de nuevo.', true);
       let built;
@@ -1949,6 +2022,7 @@ function voucherLines(r) {
   const price = [
     q.base !== undefined ? [`Tarifa ${days}${q.per_day ? ` × ${money(q.per_day)}` : ''}`, money(q.base)] : null,
     q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
+    q.dynamic_extra ? [`Recargo por alta demanda ${q.dynamic_pct}%`, money(q.dynamic_extra)] : null,
     ...(q.extras || []).map((x) => [`${x.name}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct} %` : ''}`, `−${money(q.discount)}`] : null,
@@ -2078,6 +2152,10 @@ function sendVoucher(r) {
 }
 
 const LOG_LABEL = {
+  firma_pedida: 'Firma pedida al cliente',
+  firma_cliente: 'El cliente firmó el contrato',
+  firma_anulada: 'Firma anulada: la reserva cambió',
+  link_de_pago: 'Link de pago creado',
   creada: 'Reserva creada',
   modificada: 'Reserva modificada',
   confirmada: 'Confirmada',
@@ -3488,6 +3566,7 @@ on(/^\/cotizador$/, async (view) => {
     ['api', 'API del cotizador'],
     ['inbox', `Bandeja (${d.inbox.filter((x) => x.status === 'error').length} con error)`],
     ['out', 'Avisos salientes'],
+    ...(proOn() ? [['pagos', 'Pagos con tarjeta']] : []),
   ];
   view.innerHTML = `
     <div class="page-head"><h1>Integración con el cotizador</h1></div>
@@ -3502,8 +3581,46 @@ on(/^\/cotizador$/, async (view) => {
   );
   const body = $('#cot-body');
 
-  if (tab === 'web') {
+  if (tab === 'pagos') {
     body.innerHTML = `
+      <form class="card stack" id="mp-form" style="max-width:620px">
+        <h2>Cobrar con tarjeta por Mercado Pago</h2>
+        <p class="muted">Cuando alguien pide una reserva desde el link de reservas, la API o un formulario que envía directo al sistema (opción B), puede pagar con tarjeta enseguida. Con el formulario de la opción A, o cuando quieras, mandale el link desde la reserva: Más acciones, Link de pago con tarjeta. Paga en la página de Mercado Pago: los datos de la tarjeta no pasan por Floty. Al aprobarse, el cobro se carga solo y la reserva queda confirmada.</p>
+        <p>${d.cards.connected ? '<span class="badge b-confirmada">Conectado</span>' : '<span class="badge b-pendiente">Sin conectar</span>'}</p>
+        <label>Access Token de producción (en Mercado Pago: Tus integraciones → tu aplicación → Credenciales)<input name="mp_access_token" type="password" autocomplete="off" placeholder="${d.cards.connected ? 'Ya está cargado: escribí otro solo para cambiarlo' : 'APP_USR-…'}"/></label>
+        <label>Qué parte del saldo se cobra desde el cotizador (%)<input name="card_pay_pct" type="number" min="1" max="100" required value="${esc(d.cards.pct)}"/></label>
+        <div class="actions"><button class="btn primary">Guardar</button>${d.cards.connected ? '<button class="btn danger" type="button" id="mp-off">Desconectar</button>' : ''}</div>
+      </form>`;
+    $('#mp-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const f = formData(e.target);
+      await run(() => PUT('/integration', { card_pay_pct: f.card_pay_pct, ...(f.mp_access_token ? { mp_access_token: f.mp_access_token } : {}) }), 'Guardado');
+      state.settings = await GET('/settings');
+      route();
+    });
+    $('#mp-off')?.addEventListener('click', async () => {
+      await run(() => PUT('/integration', { mp_disconnect: true }), 'Mercado Pago desconectado');
+      state.settings = await GET('/settings');
+      route();
+    });
+  }
+
+  if (tab === 'web') {
+    const fromWeb = d.inbox.filter((i) => i.channel === 'web');
+    const siteSet = d.webform.allowed_origins && !/discoverushuaia/.test(d.webform.allowed_origins);
+    const devNote = `Hola! Necesito conectar el formulario de cotización de mi página con mi sistema de reservas. Pegá esta línea antes de </body> en la página del cotizador:\n\n${d.webform.script_tag}\n\nEl formulario sigue funcionando igual: solo manda una copia de cada pedido al sistema. Si la página tiene más de un formulario, cambiá data-form="form" por el selector del cotizador.`;
+    const guide = proOn()
+      ? `<div class="card stack" style="margin-bottom:16px">
+        <h2>Dejar tu página conectada</h2>
+        <form id="site-form" class="stack"><label><b>1.</b> Dirección de tu página<input name="webform_site" required placeholder="mipagina.com" value="${siteSet ? esc(d.webform.allowed_origins.split(',').pop()) : ''}"/></label>
+          ${siteSet ? '<small class="muted">Ya acepta pedidos de esa página.</small>' : '<small class="error">Falta: sin esto, los pedidos de tu página no entran.</small>'}
+          <div class="actions"><button class="btn">Guardar la dirección</button></div></form>
+        <label><b>2.</b> Mandale esto a quien hace tu página<textarea id="dev-note" readonly rows="7" data-notr>${esc(devNote)}</textarea></label>
+        <div class="actions"><button class="btn" type="button" data-copy="dev-note">Copiar</button></div>
+        <p><b>3.</b> Mandá una cotización de prueba desde tu página. ${fromWeb.length ? `<span class="badge b-confirmada">Conectada</span> Último pedido: ${esc(fromWeb[0].received_at)}` : '<span class="badge b-pendiente">Todavía no llegó ningún pedido</span>'}</p>
+      </div>`
+      : '';
+    body.innerHTML = `${guide}
       <div class="grid cols-2">
         <div class="card stack">
           <h2>Conectar el formulario del sitio</h2>
@@ -3557,6 +3674,11 @@ on(/^\/cotizador$/, async (view) => {
       if (raw.startsWith('{')) return JSON.parse(raw);
       return Object.fromEntries(new URLSearchParams(raw));
     };
+    $('#site-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await run(() => PUT('/integration', { webform_site: formData(e.target).webform_site }), 'Dirección guardada');
+      route();
+    });
     $('#wf-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const f = formData(e.target);
@@ -3744,6 +3866,8 @@ on(/^\/config$/, async (view) => {
       { name: 'grace_hours', label: 'Tolerancia (horas) antes de cobrar un día más', type: 'number' },
       { name: 'one_way_fee', label: 'Recargo por devolver en otro lugar', type: 'number', when: () => !choferesMode() },
       { name: 'fuel_charge_per_eighth', label: 'Cargo por cada 1/8 de combustible faltante', type: 'number' },
+      { name: 'turnaround_minutes', label: 'Minutos libres entre la devolución de un auto y su próximo alquiler', type: 'number', attrs: 'min="0"', when: () => proOn() },
+      { name: 'dynamic_pricing_rules', label: 'Subir precios según ocupación (ocupación:recargo, por ejemplo 70:10, 90:20)', when: () => proOn() && !choferesMode() },
       { name: 'min_driver_age', label: 'Edad mínima del conductor', type: 'number' },
       { name: 'deductible_amount', label: 'Franquicia del seguro (vacío = la de la póliza)', type: 'number' },
       { name: 'jurisdiction', label: 'Jurisdicción del contrato (tribunales de...)', full: true },
@@ -4345,10 +4469,11 @@ on(/^\/empresas$/, async (view) => {
             { name: 'name', label: 'Nombre de la agencia', required: true, full: true },
             { name: 'business_mode', label: 'Tipo de negocio', type: 'select', required: true, options: [['turismo', 'Alquiler turístico'], ['choferes', 'Autos para trabajo (choferes de apps)']] },
             { name: 'pay_modes', label: 'Modalidad de pago por auto: cada 24 o cada 12 horas (autos para trabajo, cobro por día)', type: 'checkbox', full: true },
+            { name: 'pro_features', label: 'Funciones en prueba: precios por demanda, intervalo entre alquileres, firma, entrega express y tarjeta', type: 'checkbox', full: true },
             { name: 'admin_name', label: 'Nombre del administrador' },
             { name: 'admin_email', label: 'Email del administrador (con el que entra)', type: 'email', required: true, full: true },
           ],
-          { name: c.name, business_mode: c.business_mode || 'turismo', pay_modes: c.pay_modes || 0, admin_name: c.admin_name || '', admin_email: c.admin_email || '' },
+          { name: c.name, business_mode: c.business_mode || 'turismo', pay_modes: c.pay_modes || 0, pro_features: c.pro_features || 0, admin_name: c.admin_name || '', admin_email: c.admin_email || '' },
           'Guardar',
         ) +
         `<div class="card" style="margin-top:14px"><b>¿El administrador no puede entrar?</b>
@@ -4999,6 +5124,7 @@ async function bookingPage() {
           <h1>¡Listo! Te confirmamos por WhatsApp</h1>
           <p>${esc(o.name)} · ${when} · <b>${money(o.total)}</b></p>
           <p class="muted">${L(`${esc(cfg.company)} te va a escribir para confirmar la reserva.`, `${esc(cfg.company)} will message you to confirm the booking.`)}</p>
+          ${r.pay_url ? `<a class="btn primary big" href="${esc(r.pay_url)}" rel="noopener">${ICON.money}${L('Pagar con tarjeta', 'Pay by card')}</a>` : ''}
           ${cfg.whatsapp ? `<a class="btn ok big" href="https://wa.me/${esc(cfg.whatsapp)}?text=${encodeURIComponent(text)}" target="_blank" rel="noopener">${WA_ICON}Escribirle a la agencia</a>` : ''}
         </div>`,
       );
@@ -5097,6 +5223,162 @@ async function hotelPage() {
   });
 }
 
-const PUBLIC_PAGES = { '/reservar': bookingPage, '/como-funciona': howItWorksPage };
+const empresaQuery = () => {
+  const empresa = new URLSearchParams(location.search).get('empresa');
+  return empresa ? `?empresa=${encodeURIComponent(empresa)}` : '';
+};
+const linkGone = (title) =>
+  publicPage(`<div class="card pub-done"><h1>${title}</h1><p class="muted">${L('Este link ya no está disponible. Escribile a la agencia.', 'This link is no longer available. Please contact the agency.')}</p></div>`);
+
+/** Dibujar la firma con el dedo o el mouse. Devuelve cómo saber si firmó y cómo limpiarla. */
+function signaturePad(canvas) {
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = canvas.clientWidth * ratio;
+  canvas.height = canvas.clientHeight * ratio;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(ratio, ratio);
+  ctx.lineWidth = 2.2;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = '#111';
+  let drawing = false;
+  let length = 0;
+  let last = null;
+  const at = (e) => {
+    const b = canvas.getBoundingClientRect();
+    return [e.clientX - b.left, e.clientY - b.top];
+  };
+  canvas.addEventListener('pointerdown', (e) => {
+    drawing = true;
+    last = at(e);
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drawing) return;
+    const p = at(e);
+    ctx.beginPath();
+    ctx.moveTo(...last);
+    ctx.lineTo(...p);
+    ctx.stroke();
+    length += Math.hypot(p[0] - last[0], p[1] - last[1]);
+    last = p;
+  });
+  const stop = () => (drawing = false);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+  return {
+    signed: () => length > 40, // un punto o una rayita no es una firma
+    clear: () => {
+      ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+      length = 0;
+    },
+  };
+}
+
+/** /firmar/<código>: el cliente lee el contrato y lo firma desde el celular. */
+async function signPage() {
+  const url = `/api/public/entrega/contrato/${encodeURIComponent(location.pathname.split('/')[2] || '')}${empresaQuery()}`;
+  let d;
+  try {
+    const res = await fetch(url);
+    d = await res.json();
+    if (!res.ok) throw new Error(d.error);
+  } catch {
+    linkGone(L('Contrato', 'Agreement'));
+    return;
+  }
+  state.settings = { ...state.settings, currency: d.currency, locale: d.locale };
+  document.title = `${d.company} · ${L('Contrato', 'Agreement')} ${d.code}`;
+  const row = (l, v) => (v ? `<dt>${esc(l)}</dt><dd>${v}</dd>` : '');
+  const summary = `<dl class="info">
+      ${row(L('Cliente', 'Customer'), `${esc(d.customer_name)}${d.customer_doc ? ` · ${esc(d.customer_doc)}` : ''}`)}
+      ${row(L('Auto', 'Car'), d.plate ? `${esc(d.vehicle)} · ${esc(d.plate)}` : esc(d.category_name))}
+      ${row(L('Retiro', 'Pick-up'), `${fmtDT(d.pickup_at)}${d.pickup_place ? ` · ${esc(d.pickup_place)}` : ''}`)}
+      ${row(L('Devolución', 'Return'), `${fmtDT(d.return_at)}${d.return_place ? ` · ${esc(d.return_place)}` : ''}`)}
+      ${row(L('Total', 'Total'), `<b>${money(d.total)}</b>`)}
+      ${row(L('Garantía', 'Deposit'), money(d.deposit))}
+    </dl>`;
+  const terms = `<div class="sign-terms">${d.terms.map((t) => `<p>${t.title ? `<b>${esc(t.title)}</b> ` : ''}${esc(t.body)}</p>`).join('')}</div>`;
+  const signedHtml = (s) => `<div class="card stack"><div class="pub-ok" aria-hidden="true">✓</div><h2>${L('Contrato firmado', 'Agreement signed')}</h2>
+      <img class="sign-image" src="${esc(s.image)}" alt=""/>
+      <p>${esc(s.name)} · ${esc(s.doc)}<br><small class="muted">${fmtDT(stampLocal(s.at))} · ${L('Huella', 'Fingerprint')} ${esc(String(s.hash).slice(0, 16))}</small></p>
+      <div class="actions no-print"><button class="btn" type="button" id="sign-print">${L('Imprimir o guardar', 'Print or save')}</button></div></div>`;
+  const head = `<div class="pub-head"><h1>${L('Contrato de alquiler', 'Rental agreement')}</h1><p>${esc(d.company)} · ${esc(d.code)}</p></div>
+    <div class="card stack">${summary}${terms}</div>`;
+  const bindPrint = (page) => $('#sign-print', page)?.addEventListener('click', () => window.print());
+  if (!d.can_sign) {
+    const page = publicPage(`${head}${d.signed ? signedHtml(d.signed) : `<div class="card"><p class="notice warn">${L('Este contrato cambió o ya no se puede firmar. Pedile a la agencia un link nuevo.', 'This agreement has changed or can no longer be signed. Ask the agency for a new link.')}</p></div>`}`);
+    bindPrint(page);
+    return;
+  }
+  const page = publicPage(`${head}
+    <form class="card qr" id="sign-form">
+      <label>${L('Nombre y apellido', 'Full name')}<input name="name" required maxlength="120" value="${esc(d.customer_name || '')}"/></label>
+      <label>${L('Documento', 'ID or passport')}<input name="doc" required maxlength="40" value="${esc(d.customer_doc || '')}"/></label>
+      <label class="check"><input type="checkbox" name="accepted" required/> ${L('Leí y acepto este contrato y sus condiciones', 'I have read and accept this agreement and its terms')}</label>
+      <div><b>${L('Firmá acá con el dedo', 'Sign here with your finger')}</b><canvas class="sign-pad" id="sign-pad" aria-label="${L('Espacio para firmar', 'Signature area')}"></canvas>
+      <button class="btn small link" type="button" id="sign-clear">${L('Borrar y volver a firmar', 'Clear and sign again')}</button></div>
+      <button class="btn primary big" type="submit">${L('Firmar el contrato', 'Sign the agreement')}</button>
+      <p class="error" id="sign-err"></p>
+    </form>`);
+  const form = $('#sign-form', page);
+  const canvas = $('#sign-pad', page);
+  const pad = signaturePad(canvas);
+  $('#sign-clear', page).addEventListener('click', pad.clear);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = $('#sign-err', page);
+    err.textContent = '';
+    if (!pad.signed()) {
+      err.textContent = L('Dibujá tu firma en el recuadro', 'Draw your signature in the box');
+      return;
+    }
+    const btn = $('[type=submit]', form);
+    btn.disabled = true;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: form.name.value, doc: form.doc.value, accepted: form.accepted.checked, image: canvas.toDataURL('image/png') }),
+      });
+      const r = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(r.error || `Error ${res.status}`);
+      form.outerHTML = signedHtml({ at: r.at, hash: r.hash, name: form.name.value, doc: form.doc.value, image: canvas.toDataURL('image/png') });
+      bindPrint(page);
+      window.scrollTo(0, 0);
+    } catch (ex) {
+      err.textContent = ex.message;
+      btn.disabled = false;
+    }
+  });
+}
+
+/** /fotos/<código>: las fotos del auto al entregarlo, para que el cliente las tenga. */
+async function photosPage() {
+  const token = encodeURIComponent(location.pathname.split('/')[2] || '');
+  let d;
+  try {
+    const res = await fetch(`/api/public/entrega/fotos/${token}${empresaQuery()}`);
+    d = await res.json();
+    if (!res.ok) throw new Error(d.error);
+  } catch {
+    linkGone(L('Fotos del auto', 'Car photos'));
+    return;
+  }
+  document.title = `${d.company} · ${L('Fotos del auto', 'Car photos')}`;
+  publicPage(`<div class="pub-head"><h1>${L('Fotos del auto', 'Car photos')}</h1><p>${esc(d.company)} · ${esc(d.code)}</p></div>
+    <div class="card stack"><p class="muted">${L('Así estaba el auto al momento de la entrega.', 'This is how the car was at delivery.')}</p>
+    ${d.photos.length ? `<div class="pub-photos">${d.photos.map((p) => `<a href="/api/public/entrega/fotos/${token}/${p.id}${empresaQuery()}" target="_blank" rel="noopener"><img loading="lazy" alt="${esc(p.name || '')}" src="/api/public/entrega/fotos/${token}/${p.id}${empresaQuery()}"/></a>`).join('')}</div>` : `<p>${L('Todavía no hay fotos. La agencia las va a subir enseguida.', 'There are no photos yet. The agency will upload them soon.')}</p>`}</div>`);
+}
+
+/** /pago-listo: adonde vuelve el cliente desde Mercado Pago. Lo que vale es el aviso de Mercado Pago, no esta página. */
+function paidPage() {
+  const status = new URLSearchParams(location.search).get('status');
+  const ok = status === 'approved';
+  publicPage(`<div class="card pub-done">${ok ? '<div class="pub-ok" aria-hidden="true">✓</div>' : ''}<h1>${ok ? L('¡Pago recibido!', 'Payment received!') : status === 'pending' || status === 'in_process' ? L('Tu pago está en revisión', 'Your payment is being reviewed') : L('El pago no se completó', 'The payment was not completed')}</h1>
+    <p class="muted">${ok ? L('La agencia ya tiene tu pago. Ya podés cerrar esta página.', 'The agency has your payment. You can close this page.') : L('Si necesitás ayuda, escribile a la agencia.', 'If you need help, contact the agency.')}</p></div>`);
+}
+
+const PUBLIC_PAGES = { '/reservar': bookingPage, '/como-funciona': howItWorksPage, '/pago-listo': paidPage };
+const TOKEN_PAGES = [[/^\/hotel\/[\w-]+$/, hotelPage], [/^\/firmar\/[\w-]+$/, signPage], [/^\/fotos\/[\w-]+$/, photosPage]];
 const publicPath = location.pathname.replace(/\/+$/, '');
-(PUBLIC_PAGES[publicPath] || (/^\/hotel\/[\w-]+$/.test(publicPath) ? hotelPage : startSession))();
+(PUBLIC_PAGES[publicPath] || (TOKEN_PAGES.find(([re]) => re.test(publicPath)) || [])[1] || startSession)();

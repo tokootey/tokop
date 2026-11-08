@@ -11,6 +11,8 @@ const { refundFor } = require('../refunds');
 const choferes = require('../choferes');
 const { requireAdmin } = require('../auth');
 const { chargeInsurance } = require('./catalog');
+const delivery = require('../delivery');
+const payments = require('../payments');
 const { fail, normDateTime, nowLocal, parseLocal, fmtLocal } = require('../util');
 
 /**
@@ -34,7 +36,7 @@ function setupSteps(db) {
 /** Sucursal elegida en el selector (?branch=3). Solo dígitos: el número va directo en las consultas. */
 const branchOf = (req) => (/^\d+$/.test(req.query.branch) ? Number(req.query.branch) : null);
 
-function operationsRoutes(db) {
+function operationsRoutes(db, { publicQuery = '' } = {}) {
   const router = express.Router();
 
   // Modo choferes: antes de mostrar reservas, el panel o el calendario se renuevan los alquileres vencidos.
@@ -136,7 +138,7 @@ function operationsRoutes(db) {
   router.get('/reservations/:id', (req, res) => {
     const r = R.getReservation(db, req.params.id);
     if (!r) fail(404, 'Reserva inexistente');
-    res.json({ ...r, invoices: invoicing.listInvoices(db, r.id) });
+    res.json({ ...r, invoices: invoicing.listInvoices(db, r.id), signature: delivery.stateOf(db, r) });
   });
 
   // --- Factura electrónica (sólo prueba) ---
@@ -170,6 +172,12 @@ function operationsRoutes(db) {
       if (extras.map((e) => e.extra_id).sort().join() !== before) R.updateReservation(db, r.id, { extras }, req.user.id);
     }
     res.json(R.getReservation(db, r.id));
+  });
+  // Firma del contrato, fotos para la entrega express y link de pago con tarjeta.
+  router.post('/reservations/:id/signature', (req, res) => res.json(delivery.requestSignature(db, req.params.id, (req.body || {}).terms, getSettings(db), req.user.id)));
+  router.post('/reservations/:id/photos-link', (req, res) => res.json(delivery.photosLink(db, req.params.id)));
+  router.post('/reservations/:id/pay-link', async (req, res) => {
+    res.json(await payments.createPayLink(db, req.params.id, { base: payments.baseOf(req), query: publicQuery, amount: (req.body || {}).amount }));
   });
   router.get('/reservations/:id/move-options', (req, res) => res.json(R.moveOptions(db, req.params.id)));
   router.post('/reservations/:id/swap', (req, res) => res.json(R.swapVehicles(db, req.params.id, req.body.reservation_id, req.user.id)));

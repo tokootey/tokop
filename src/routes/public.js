@@ -7,13 +7,14 @@ const { categoryAvailability } = require('../availability');
 const { ingestQuote, reservationFromQuote, findByCodeOrName } = require('../integration');
 const { getReservation, changeStatus, publicView } = require('../reservations');
 const { getSetting } = require('../db');
+const { payUrlFor } = require('../payments');
 const { fail, normDateTime } = require('../util');
 
 /**
  * API pública para el cotizador (autenticada con X-API-Key).
  * Permite consultar catálogo, disponibilidad y precios, y crear/consultar/cancelar reservas.
  */
-function publicRoutes(db) {
+function publicRoutes(db, { publicQuery = '' } = {}) {
   const router = express.Router();
   router.use(requireApiKey(db));
 
@@ -84,7 +85,7 @@ function publicRoutes(db) {
    * POST /reservations — crea una reserva a partir de una cotización aceptada, en formato canónico:
    * { id, customer: {...}, category_code, pickup_at, return_at, pickup_branch, return_branch, extras, total, flight, notes }
    */
-  router.post('/reservations', (req, res) => {
+  router.post('/reservations', async (req, res) => {
     const b = req.body || {};
     const { reservation, duplicated } = reservationFromQuote(db, {
       external_id: b.id || b.external_id,
@@ -99,7 +100,8 @@ function publicRoutes(db) {
       flight: b.flight,
       notes: b.notes,
     });
-    res.status(duplicated ? 200 : 201).json({ duplicated, reservation: publicView(reservation) });
+    const pay_url = await payUrlFor(db, reservation.code, req, publicQuery);
+    res.status(duplicated ? 200 : 201).json({ duplicated, reservation: publicView(reservation), ...(pay_url ? { pay_url } : {}) });
   });
 
   router.get('/reservations/:code', (req, res) => {
@@ -118,9 +120,10 @@ function publicRoutes(db) {
    * POST /quotes/inbound — webhook genérico: el cotizador envía la cotización en SU formato
    * y se traduce con el mapeo configurado en la pantalla "Cotizador".
    */
-  router.post('/quotes/inbound', (req, res) => {
+  router.post('/quotes/inbound', async (req, res) => {
     const result = ingestQuote(db, req.body || {});
-    res.status(result.duplicated ? 200 : 201).json(result);
+    const pay_url = await payUrlFor(db, result.reservation && result.reservation.code, req, publicQuery);
+    res.status(result.duplicated ? 200 : 201).json({ ...result, ...(pay_url ? { pay_url } : {}) });
   });
 
   function findByExternal(externalId) {

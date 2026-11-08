@@ -257,6 +257,17 @@ Las traducciones están en `public/i18n.js`. Un texto nuevo de la pantalla sale 
 - Dar de baja enseguida a quien deje de trabajar.
 - Revisar de vez en cuando el registro de actividad.
 
+## Funciones en prueba (se activan por agencia)
+
+Vienen apagadas y no cambian nada. Las activa el dueño de Floty en el panel: *Editar agencia → Funciones en prueba*. La primera vez quedan 120 minutos de intervalo y un recargo de ejemplo (70:10, 90:20); la agencia los cambia en *Configuración*.
+
+- **Precios según disponibilidad.** En *Configuración*, "ocupación:recargo": `70:10, 90:20` sube 10 % desde 70 % de la categoría ocupada en esas fechas y 20 % desde 90 %. Una reserva ya hecha conserva su recargo mientras no cambie de fechas o categoría. No aplica a autos para choferes ni al precio que manda un cotizador externo.
+- **Intervalo entre alquileres.** En *Configuración*: minutos libres entre la devolución pactada y el próximo alquiler del mismo auto.
+- **Firma electrónica.** Desde la reserva, el cliente recibe un link (`/firmar/<código>`), lee el contrato y firma con el dedo. Queda una copia fija de lo firmado, con nombre, documento, fecha, IP y huella SHA-256, y la firma sale en el contrato PDF. Si la reserva cambia, hay que pedirla de nuevo. Es firma electrónica, no "firma digital" con certificado licenciado (ley 25.506).
+- **Entrega express.** Al entregar, o desde la reserva: dos mensajes de WhatsApp separados, el contrato y las fotos de la entrega (`/fotos/<código>`).
+- **Conectar la página.** *Cotizador → Formulario web → Dejar tu página conectada*: la dirección de la página, el texto para quien la administra y el aviso cuando llega el primer pedido.
+- **Tarjeta (Mercado Pago, Checkout Pro).** *Cotizador → Pagos con tarjeta*: el Access Token de la agencia. Los datos de la tarjeta no pasan por Floty. Hay link de pago desde la reserva y, automático, en el link de reservas, la API y el formulario que envía directo (opción B). Al aprobarse se consulta el pago a Mercado Pago, se registra una sola vez y la reserva pendiente queda confirmada. Las devoluciones hechas en Mercado Pago se cargan a mano.
+
 ## Conexión con el cotizador de discoverushuaia.com.ar
 
 En **Cotizador → Formulario web** hay dos formas de conectarlo.

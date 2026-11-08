@@ -5,6 +5,7 @@ const { getSettings } = require('../db');
 const { computeQuote } = require('../pricing');
 const { categoryAvailability } = require('../availability');
 const { ingestQuote } = require('../integration');
+const { payUrlFor } = require('../payments');
 const { fail, normDateTime, nowLocal } = require('../util');
 
 /**
@@ -36,7 +37,7 @@ function parseFaq(text, settings) {
 
 const str = (v, max = MAX_TEXT) => (v === undefined || v === null ? '' : String(v).trim().slice(0, max));
 
-function chatRoutes(db) {
+function chatRoutes(db, { publicQuery = '' } = {}) {
   const router = express.Router();
 
   const hits = new Map();
@@ -100,7 +101,7 @@ function chatRoutes(db) {
     res.json({ pickup_at, return_at, options });
   });
 
-  router.post('/book', (req, res) => {
+  router.post('/book', async (req, res) => {
     if (limited(`b:${req.ip}`, 5, 10 * 60 * 1000)) fail(429, 'Ya recibimos varias solicitudes, probá en unos minutos');
     const b = req.body || {};
     if (b._gotcha) return res.status(201).json({ ok: true }); // trampa para robots: se descarta en silencio
@@ -122,13 +123,15 @@ function chatRoutes(db) {
       vuelo: str(b.flight, 40),
       comentarios: ['Pedido desde el link de reservas', str(b.notes, 500)].filter(Boolean).join('. '),
     };
+    let result;
     try {
-      const result = ingestQuote(db, payload, undefined, 'web');
-      res.status(201).json({ ok: true, code: result.reservation.code });
+      result = ingestQuote(db, payload, undefined, 'web');
     } catch {
       // Queda en la bandeja del cotizador para que la gestione una persona; al público no se le muestran detalles.
-      res.status(202).json({ ok: true, pending_review: true });
+      return res.status(202).json({ ok: true, pending_review: true });
     }
+    const pay_url = await payUrlFor(db, result.reservation.code, req, publicQuery);
+    res.status(201).json({ ok: true, code: result.reservation.code, ...(pay_url ? { pay_url } : {}) });
   });
 
   return router;
