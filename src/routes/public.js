@@ -7,7 +7,7 @@ const { categoryAvailability } = require('../availability');
 const { ingestQuote, reservationFromQuote, findByCodeOrName } = require('../integration');
 const { getReservation, changeStatus, publicView } = require('../reservations');
 const { getSetting } = require('../db');
-const { payUrlFor } = require('../payments');
+const { cardUrlFor } = require('../delivery');
 const { fail, normDateTime } = require('../util');
 
 /**
@@ -85,7 +85,7 @@ function publicRoutes(db, { publicQuery = '' } = {}) {
    * POST /reservations — crea una reserva a partir de una cotización aceptada, en formato canónico:
    * { id, customer: {...}, category_code, pickup_at, return_at, pickup_branch, return_branch, extras, total, flight, notes }
    */
-  router.post('/reservations', async (req, res) => {
+  router.post('/reservations', (req, res) => {
     const b = req.body || {};
     const { reservation, duplicated } = reservationFromQuote(db, {
       external_id: b.id || b.external_id,
@@ -100,8 +100,8 @@ function publicRoutes(db, { publicQuery = '' } = {}) {
       flight: b.flight,
       notes: b.notes,
     });
-    const pay_url = await payUrlFor(db, reservation.code, req, publicQuery);
-    res.status(duplicated ? 200 : 201).json({ duplicated, reservation: publicView(reservation), ...(pay_url ? { pay_url } : {}) });
+    const card_url = cardUrlFor(db, reservation.code, req, publicQuery);
+    res.status(duplicated ? 200 : 201).json({ duplicated, reservation: publicView(reservation), ...(card_url ? { card_url } : {}) });
   });
 
   router.get('/reservations/:code', (req, res) => {
@@ -120,10 +120,10 @@ function publicRoutes(db, { publicQuery = '' } = {}) {
    * POST /quotes/inbound — webhook genérico: el cotizador envía la cotización en SU formato
    * y se traduce con el mapeo configurado en la pantalla "Cotizador".
    */
-  router.post('/quotes/inbound', async (req, res) => {
+  router.post('/quotes/inbound', (req, res) => {
     const result = ingestQuote(db, req.body || {});
-    const pay_url = await payUrlFor(db, result.reservation && result.reservation.code, req, publicQuery);
-    res.status(result.duplicated ? 200 : 201).json({ ...result, ...(pay_url ? { pay_url } : {}) });
+    const card_url = cardUrlFor(db, result.reservation && result.reservation.code, req, publicQuery);
+    res.status(result.duplicated ? 200 : 201).json({ ...result, ...(card_url ? { card_url } : {}) });
   });
 
   function findByExternal(externalId) {

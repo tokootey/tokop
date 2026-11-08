@@ -263,10 +263,18 @@ Vienen apagadas y no cambian nada. Las activa el dueño de Floty en el panel: *E
 
 - **Precios según disponibilidad.** En *Configuración*, "ocupación:recargo": `70:10, 90:20` sube 10 % desde 70 % de la categoría ocupada en esas fechas y 20 % desde 90 %. Una reserva ya hecha conserva su recargo mientras no cambie de fechas o categoría. No aplica a autos para choferes ni al precio que manda un cotizador externo.
 - **Intervalo entre alquileres.** En *Configuración*: minutos libres entre la devolución pactada y el próximo alquiler del mismo auto.
-- **Firma electrónica.** Desde la reserva, el cliente recibe un link (`/firmar/<código>`), lee el contrato y firma con el dedo. Queda una copia fija de lo firmado, con nombre, documento, fecha, IP y huella SHA-256, y la firma sale en el contrato PDF. Si la reserva cambia, hay que pedirla de nuevo. Es firma electrónica, no "firma digital" con certificado licenciado (ley 25.506).
+- **Firma electrónica.** Desde la reserva, el cliente recibe un link (`/firmar/<código>`), lee el contrato y firma con el dedo. Queda una copia fija de lo firmado, con nombre, documento, fecha, IP y huella SHA-256, y la firma sale en el contrato PDF. Si la reserva cambia, hay que pedirla de nuevo. Es firma electrónica simple, sin certificado de un proveedor autorizado: la validez legal depende del país de cada agencia.
 - **Entrega express.** Al entregar, o desde la reserva: dos mensajes de WhatsApp separados, el contrato y las fotos de la entrega (`/fotos/<código>`).
 - **Conectar la página.** *Cotizador → Formulario web → Dejar tu página conectada*: la dirección de la página, el texto para quien la administra y el aviso cuando llega el primer pedido.
-- **Tarjeta (Mercado Pago, Checkout Pro).** *Cotizador → Pagos con tarjeta*: el Access Token de la agencia. Los datos de la tarjeta no pasan por Floty. Hay link de pago desde la reserva y, automático, en el link de reservas, la API y el formulario que envía directo (opción B). Al aprobarse se consulta el pago a Mercado Pago, se registra una sola vez y la reserva pendiente queda confirmada. Las devoluciones hechas en Mercado Pago se cargan a mano.
+- **Dejar la tarjeta.** Desde la reserva (`/tarjeta/<código>`) y, automático, después de pedir por el link de reservas, la API o el formulario que envía directo (opción B). El navegador comprueba el número y manda sólo titular, marca, últimos 4 dígitos y vencimiento: el número completo y el código de seguridad no llegan al servidor, porque guardarlos exigiría certificación PCI. Identifica la tarjeta, no permite cobrar: el cobro o la garantía se hacen con la terminal de la agencia. Para cobrar online hace falta conectar una pasarela del país de la agencia.
+
+### Ejemplo para presentar
+
+En el panel, *Editar agencia → Ver el ejemplo de precios*: en una agencia vacía carga una agencia de Panamá ficticia (autos, reservas y adicionales de ejemplo) y muestra el mismo SUV a precio normal, +10 % y +20 % según las fechas, con un link al cotizador en cada una. No se puede cargar en una agencia con datos.
+
+## Cotizador propio (`/reservar`)
+
+Es la página pública donde el cliente elige fechas, lugares, auto y adicionales y ve el precio final. El precio lo calcula siempre `computeQuote` a través de `POST /api/public/chat/quote`, el mismo que usa el asistente de la web: es el punto a reutilizar al unir otros cotizadores. Otro sistema o un aviso pueden mandar directo con las fechas elegidas: `/reservar?desde=AAAA-MM-DD&dias=3`.
 
 ## Conexión con el cotizador de discoverushuaia.com.ar
 

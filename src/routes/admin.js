@@ -10,7 +10,7 @@ const { FAQ_DEFAULT } = require('./chat');
 const { fail } = require('../util');
 const { parseDynamicRules } = require('../pricing');
 
-const SECRET_KEYS = ['api_key', 'webhook_secret', 'mp_access_token'];
+const SECRET_KEYS = ['api_key', 'webhook_secret'];
 // Sólo los cambia el dueño de Floty, desde el panel.
 const OWNER_KEYS = ['pro_features'];
 const INTEGRATION_KEYS = [
@@ -22,7 +22,6 @@ const INTEGRATION_KEYS = [
   'webform_mapping',
   'webform_allowed_origins',
   'webform_redirect_url',
-  'card_pay_pct',
 ];
 
 function validLocale(v) {
@@ -64,7 +63,6 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
   // --- Configuración general ---
   router.get('/settings', (_req, res) => {
     const s = getSettings(db);
-    s.mp_connected = Boolean(s.mp_access_token);
     for (const k of [...SECRET_KEYS, ...INTEGRATION_KEYS]) delete s[k];
     s.contract_terms_default = CONTRACT_TERMS; // para "Restaurar condiciones sugeridas"
     s.contract_terms_en_default = CONTRACT_TERMS_EN;
@@ -162,7 +160,6 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
       webhook_secret: s.webhook_secret,
       quote_price_source: s.quote_price_source,
       quote_auto_confirm: s.quote_auto_confirm,
-      cards: { connected: Boolean(s.mp_access_token), pct: s.card_pay_pct },
       mapping: getMapping(db),
       webform: {
         enabled: s.webform_enabled === '1',
@@ -198,12 +195,6 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
       setSetting(db, 'webform_mapping', JSON.stringify(m, null, 2));
     }
     if (b.webform_site !== undefined) setSetting(db, 'webform_allowed_origins', siteOrigins(b.webform_site));
-    if (b.mp_access_token) setSetting(db, 'mp_access_token', String(b.mp_access_token).trim());
-    if (b.mp_disconnect) setSetting(db, 'mp_access_token', '');
-    if (b.card_pay_pct !== undefined) {
-      if (!(Number(b.card_pay_pct) > 0 && Number(b.card_pay_pct) <= 100)) fail(400, 'El porcentaje a cobrar tiene que estar entre 1 y 100');
-      setSetting(db, 'card_pay_pct', Number(b.card_pay_pct));
-    }
     if (b.webform_enabled !== undefined) setSetting(db, 'webform_enabled', b.webform_enabled ? '1' : '0');
     if (b.webform_allowed_origins !== undefined) setSetting(db, 'webform_allowed_origins', b.webform_allowed_origins);
     if (b.webform_redirect_url !== undefined) {

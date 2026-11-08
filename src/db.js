@@ -217,6 +217,7 @@ CREATE TABLE IF NOT EXISTS delivery_links (
   reservation_id INTEGER PRIMARY KEY REFERENCES reservations(id) ON DELETE CASCADE,
   token TEXT NOT NULL UNIQUE,
   photos_token TEXT NOT NULL UNIQUE,
+  card_token TEXT NOT NULL UNIQUE,
   snapshot TEXT,
   signed_at TEXT,
   signed_name TEXT,
@@ -224,7 +225,13 @@ CREATE TABLE IF NOT EXISTS delivery_links (
   signed_ip TEXT,
   signed_ua TEXT,
   signed_image TEXT,
-  signed_hash TEXT
+  signed_hash TEXT,
+  card_holder TEXT,
+  card_brand TEXT,
+  card_last4 TEXT,
+  card_exp TEXT,
+  card_at TEXT,
+  card_ip TEXT
 );
 
 -- Carnet y DNI de cada cliente (frente y dorso): de la persona, no de un alquiler.
@@ -520,8 +527,6 @@ const DEFAULT_SETTINGS = {
   pro_features: '0',
   turnaround_minutes: '0', // minutos entre la devolución de un auto y su próximo alquiler
   dynamic_pricing_rules: '', // recargo según ocupación de la categoría, "ocupación:recargo": 70:10, 90:20
-  mp_access_token: '', // Mercado Pago de la agencia, para cobrar con tarjeta
-  card_pay_pct: '100', // qué parte del saldo se cobra con el link de pago del cotizador
   pay_modes: '0', // '1': cobrando por día, cada auto elige si paga cada 24 o cada 12 horas (lo activa el dueño de Floty por agencia)
   late_fee_per_day: '0', // recargo por cada día de atraso en el pago
   late_grace_days: '0', // días de tolerancia antes de cobrar el recargo

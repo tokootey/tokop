@@ -14,7 +14,6 @@ const { computeQuote, parseDynamicRules } = require('../src/pricing');
 const { isVehicleFree, availableVehicles } = require('../src/availability');
 const R = require('../src/reservations');
 const D = require('../src/delivery');
-const P = require('../src/payments');
 const { fmtLocal } = require('../src/util');
 
 function setup(pro = true) {
@@ -108,43 +107,33 @@ test('firma: el cliente firma una copia fija; si la reserva cambia, hay que pedi
   assert.ok(R.getReservation(db, r.id).log.some((l) => l.action === 'firma_anulada'));
 });
 
-test('tarjeta: crea el link y registra el pago una sola vez, consultándolo a Mercado Pago', async (t) => {
+test('tarjeta: guarda sólo titular, marca, últimos 4 y vencimiento, y rechaza el número completo', () => {
   const { db, at, book } = setup();
   const r = book(at(70), at(72), { status: 'pendiente' });
-  await assert.rejects(P.createPayLink(db, r.id, { base: 'https://x.test' }), /Conectá Mercado Pago/);
-  setSetting(db, 'mp_access_token', 'TEST-123');
-  setSetting(db, 'card_pay_pct', '50');
-  const calls = [];
-  const payment = { id: 777, status: 'approved', transaction_amount: 1000, external_reference: r.code };
-  t.mock.method(globalThis, 'fetch', async (url, init = {}) => {
-    calls.push({ url: String(url), init });
-    if (String(url).endsWith('/checkout/preferences')) return new Response(JSON.stringify({ init_point: 'https://mp.test/pagar' }), { status: 201 });
-    return new Response(JSON.stringify(payment), { status: 200 });
-  });
-  const link = await P.createPayLink(db, r.id, { base: 'https://x.test', query: '?empresa=sur' });
-  assert.equal(link.url, 'https://mp.test/pagar');
-  assert.equal(link.amount, Math.round(r.total * 50) / 100);
-  const sent = JSON.parse(calls[0].init.body);
-  assert.equal(sent.external_reference, r.code);
-  assert.equal(sent.notification_url, 'https://x.test/api/public/mp/aviso?empresa=sur');
-  assert.equal(calls[0].init.headers.Authorization, 'Bearer TEST-123');
-  await assert.rejects(P.createPayLink(db, r.id, { base: 'https://x.test', amount: r.total + 1 }), /saldo/);
-
-  assert.deepEqual(await P.handleNotice(db, 'abc/../1'), { ignored: true });
-  payment.status = 'rejected';
-  assert.deepEqual(await P.handleNotice(db, 777), { ignored: true });
-  assert.equal(R.getReservation(db, r.id).payments.length, 0);
-  payment.status = 'approved';
-  assert.deepEqual(await P.handleNotice(db, 777), { registered: true });
-  assert.deepEqual(await P.handleNotice(db, 777), { duplicated: true });
-  const paid = R.getReservation(db, r.id);
-  assert.equal(paid.payments.length, 1);
-  assert.equal(paid.payments[0].amount, 1000);
-  assert.equal(paid.payments[0].reference, 'MP 777');
-  assert.equal(paid.status, 'confirmada');
+  const token = D.cardLink(db, r.id).card_token;
+  assert.equal(D.viewCard(db, token).card, null);
+  const good = { holder: 'Ana López', brand: 'Visa', last4: '4242', exp: '12/40', accepted: true };
+  const client = { ip: '200.1.1.1' };
+  assert.throws(() => D.saveCard(db, token, { ...good, last4: '4242424242424242' }, client), /número completo/);
+  assert.throws(() => D.saveCard(db, token, { ...good, holder: '4242 4242 4242 4242' }, client), /número completo/);
+  assert.throws(() => D.saveCard(db, token, { ...good, number: '4242424242424242' }, client), /número completo/);
+  assert.throws(() => D.saveCard(db, token, { ...good, last4: '42' }, client), /número/);
+  assert.throws(() => D.saveCard(db, token, { ...good, exp: '01/20' }, client), /vencida/);
+  assert.throws(() => D.saveCard(db, token, { ...good, exp: '13/40' }, client), /MM\/AA/);
+  assert.throws(() => D.saveCard(db, token, { ...good, accepted: false }, client), /presentar/);
+  assert.equal(D.viewCard(db, token).card, null, 'nada de lo rechazado quedó guardado');
+  D.saveCard(db, token, { ...good, cvv: '123' }, client);
+  assert.deepEqual(D.viewCard(db, token).card, { holder: 'Ana López', brand: 'Visa', last4: '4242', exp: '12/40' });
+  const stored = JSON.stringify(db.prepare('SELECT * FROM delivery_links WHERE reservation_id = ?').get(r.id));
+  assert.ok(!stored.includes('123"') && !stored.includes('42424242'), 'ni el código ni el número se guardan');
+  assert.equal(D.stateOf(db, R.getReservation(db, r.id)).card.last4, '4242');
+  assert.ok(R.getReservation(db, r.id).log.some((l) => l.action === 'tarjeta_dejada'));
+  // Una reserva terminada ya no recibe tarjetas.
+  R.changeStatus(db, r.id, 'cancelada', null);
+  assert.throws(() => D.viewCard(db, token), /ya no está disponible/);
 });
 
-test('API: apagado por defecto, el Access Token nunca sale y la agencia no se activa sola', async () => {
+test('API: apagado por defecto y la agencia no se activa sola', async () => {
   const { db, at, book } = setup(false);
   const uploads = fs.mkdtempSync(path.join(os.tmpdir(), 'pro-'));
   const server = createApp(db, { uploadsDir: uploads }).listen(0);
@@ -167,15 +156,8 @@ test('API: apagado por defecto, el Access Token nunca sale y la agencia no se ac
 
     setSetting(db, 'pro_features', '1');
     assert.equal((await req('PUT', '/api/settings', { dynamic_pricing_rules: 'mucho' })).status, 400);
-    assert.equal((await req('PUT', '/api/integration', { card_pay_pct: 0 })).status, 400);
-    assert.equal((await req('PUT', '/api/integration', { mp_access_token: 'APP_USR-secreto', webform_site: 'https://www.mipagina.com/cotizar' })).status, 200);
+    assert.equal((await req('PUT', '/api/integration', { webform_site: 'https://www.mipagina.com/cotizar' })).status, 200);
     assert.equal(getSetting(db, 'webform_allowed_origins'), 'https://www.mipagina.com,https://mipagina.com');
-    const settings = await req('GET', '/api/settings');
-    const integration = await req('GET', '/api/integration');
-    assert.equal(settings.data.mp_connected, true);
-    assert.equal(integration.data.cards.connected, true);
-    assert.ok(!JSON.stringify(settings.data).includes('APP_USR-secreto'));
-    assert.ok(!JSON.stringify(integration.data).includes('APP_USR-secreto'));
 
     // El cliente firma y ve las fotos sin usuario, sólo con el link.
     const s = (await req('POST', `/api/reservations/${r.id}/signature`, { terms: TERMS })).data;
@@ -201,7 +183,14 @@ test('API: apagado por defecto, el Access Token nunca sale y la agencia no se ac
     // El link de firma no abre las fotos.
     assert.equal((await anon(`/api/public/entrega/fotos/${s.token}`)).status, 404);
 
-    // Anonimizar al cliente borra su firma.
+    // La tarjeta se deja con su propio link, y el de firma no sirve para eso.
+    const card = (await req('POST', `/api/reservations/${r.id}/card-link`)).data.card_token;
+    assert.equal((await anon(`/api/public/entrega/tarjeta/${s.token}`)).status, 404);
+    const left = await anon(`/api/public/entrega/tarjeta/${card}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ holder: 'Ana López', brand: 'Visa', last4: '4242', exp: '12/40', accepted: true }) });
+    assert.equal(left.status, 200);
+    assert.equal((await req('GET', `/api/reservations/${r.id}`)).data.signature.card.last4, '4242');
+
+    // Anonimizar al cliente borra su firma y su tarjeta.
     await req('POST', `/api/customers/${r.customer_id}/anonymize`, {});
     assert.equal((await anon(`/api/public/entrega/contrato/${s.token}`)).status, 404);
   } finally {
@@ -223,4 +212,59 @@ test('panel: se activa por agencia, con valores de ejemplo la primera vez', () =
   assert.equal(getSetting(platform.get(b).db, 'turnaround_minutes'), '0');
   platform.updateProfile(a, { pro_features: 0 });
   assert.equal(platform.stats(a).pro_features, 0);
+});
+
+test('ejemplo para presentar: el mismo auto sube según la disponibilidad, sólo en una agencia vacía', () => {
+  const { demandExample } = require('../src/demand-example');
+  const empty = openDb(':memory:');
+  const [calm, filling, full] = demandExample(empty);
+  assert.deepEqual([calm.pct, filling.pct, full.pct], [0, 10, 20]);
+  assert.ok(calm.total < filling.total && filling.total < full.total);
+  assert.equal(calm.currency, 'USD');
+  assert.equal(getSetting(empty, 'country'), 'PA');
+  assert.equal(getSetting(empty, 'pro_features'), '1');
+  // Volver a pedirlo no duplica nada.
+  const cars = empty.prepare('SELECT COUNT(*) n FROM vehicles').get().n;
+  assert.deepEqual(demandExample(empty), [calm, filling, full]);
+  assert.equal(empty.prepare('SELECT COUNT(*) n FROM vehicles').get().n, cars);
+  // Una agencia con datos no se toca.
+  const { db } = setup();
+  const before = db.prepare('SELECT COUNT(*) n FROM vehicles').get().n;
+  assert.throws(() => demandExample(db), /agencia vacía/);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM vehicles').get().n, before);
+});
+
+test('cotizador: los adicionales y el lugar de devolución cambian el precio y llegan a la reserva', async () => {
+  const { demandExample } = require('../src/demand-example');
+  const db = openDb(':memory:');
+  ensureAdmin(db);
+  const [calm] = demandExample(db);
+  const server = createApp(db, { uploadsDir: fs.mkdtempSync(path.join(os.tmpdir(), 'quoter-')) }).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${server.address().port}/api/public/chat`;
+  const post = async (p, body) => {
+    const res = await fetch(base + p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return { status: res.status, data: await res.json() };
+  };
+  try {
+    const cfg = await (await fetch(`${base}/config`)).json();
+    assert.equal(cfg.phone_hint, '+507 6123 4567');
+    assert.ok(cfg.extras.some((x) => x.code === 'EJG'));
+    const search = { pickup_at: calm.pickup_at, return_at: calm.return_at, pickup_branch: 'PTY' };
+    const suv = async (extra) => (await post('/quote', { ...search, ...extra })).data.options.find((o) => o.code === 'EJS');
+    const plain = await suv({});
+    assert.equal(plain.high_demand, false);
+    const withGps = await suv({ extras: ['EJG', 'NO-EXISTE'] });
+    assert.ok(withGps.total > plain.total);
+    const booked = await post('/book', { ...search, return_branch: 'PAC', extras: ['EJG'], category: 'EJS', name: 'Ana López', phone: '+507 6123 4567' });
+    assert.equal(booked.status, 201);
+    assert.match(booked.data.card_url, /\/tarjeta\//);
+    const r = R.getReservation(db, booked.data.code);
+    assert.equal(r.total, withGps.total, 'el cliente paga lo que vio');
+    assert.equal(r.extras[0].name, 'GPS');
+    assert.equal(r.return_branch_name, 'Oficina Ciudad de Panamá');
+  } finally {
+    server.close();
+    db.close();
+  }
 });

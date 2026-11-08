@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { proOn } = require('./db');
+const { proOn, getSettings } = require('./db');
 const { fail } = require('./util');
 const R = require('./reservations');
 
@@ -17,7 +17,7 @@ const rowOf = (db, id) => db.prepare('SELECT * FROM delivery_links WHERE reserva
 function ensureRow(db, id) {
   const row = rowOf(db, id);
   if (row) return row;
-  db.prepare('INSERT INTO delivery_links (reservation_id, token, photos_token) VALUES (?, ?, ?)').run(id, newToken(), newToken());
+  db.prepare('INSERT INTO delivery_links (reservation_id, token, photos_token, card_token) VALUES (?, ?, ?, ?)').run(id, newToken(), newToken(), newToken());
   return rowOf(db, id);
 }
 
@@ -40,6 +40,8 @@ function stateOf(db, r) {
   return {
     token: row.token,
     photos_token: row.photos_token,
+    card_token: row.card_token,
+    card: row.card_last4 ? { holder: row.card_holder, brand: row.card_brand, last4: row.card_last4, exp: row.card_exp, at: row.card_at } : null,
     requested: Boolean(row.snapshot),
     signed_at: row.signed_at,
     name: row.signed_name,
@@ -155,4 +157,73 @@ function deliveryPhotos(db, token) {
   return { code: r.code, files };
 }
 
-module.exports = { stateOf, requestSignature, photosLink, viewContract, sign, deliveryPhotos };
+/**
+ * Tarjeta que deja el cliente: sirve para identificarla al retirar el auto, no para cobrarle.
+ * El número completo y el código de seguridad nunca llegan al servidor (exigirían certificación PCI):
+ * el navegador comprueba el número y manda sólo la marca y los últimos 4 dígitos.
+ */
+const CARD_BRANDS = ['Visa', 'Mastercard', 'American Express', 'Otra'];
+
+function cardLink(db, id) {
+  const r = reservationOf(db, id);
+  return { card_token: ensureRow(db, r.id).card_token };
+}
+
+/** Link para que el cliente deje la tarjeta después de pedir una reserva por la web o la API. */
+function cardUrlFor(db, code, req, query = '') {
+  if (!code || !proOn(db)) return null;
+  const r = db.prepare('SELECT id FROM reservations WHERE code = ?').get(String(code));
+  return r ? `${req.protocol}://${req.get('host')}/tarjeta/${ensureRow(db, r.id).card_token}${query}` : null;
+}
+
+function cardOf(db, token) {
+  const row = token && proOn(db) && db.prepare('SELECT * FROM delivery_links WHERE card_token = ?').get(String(token));
+  if (!row) fail(404, 'Este link ya no está disponible');
+  const r = R.getReservation(db, row.reservation_id);
+  if (!OPEN.includes(r.status)) fail(404, 'Este link ya no está disponible');
+  return { row, r };
+}
+
+function viewCard(db, token) {
+  const { row, r } = cardOf(db, token);
+  const s = getSettings(db);
+  return {
+    company: s.company_name || '',
+    currency: s.currency,
+    locale: s.locale,
+    code: r.code,
+    first_name: String(r.customer_name || '').split(' ')[0],
+    deposit: r.deposit,
+    card: row.card_last4 ? { holder: row.card_holder, brand: row.card_brand, last4: row.card_last4, exp: row.card_exp } : null,
+  };
+}
+
+function saveCard(db, token, body, { ip }) {
+  const { r } = cardOf(db, token);
+  // Si algún dato trae un número de tarjeta, se rechaza sin guardar ni registrar nada.
+  if (/\d[\d\s-]{7,}\d/.test(JSON.stringify(body))) fail(400, 'No mandes el número completo de la tarjeta');
+  const holder = String(body.holder || '').trim().slice(0, 80);
+  const brand = String(body.brand || '');
+  const last4 = String(body.last4 || '');
+  const exp = String(body.exp || '').trim();
+  if (holder.length < 3) fail(400, 'Escribí el nombre del titular, como figura en la tarjeta');
+  if (!CARD_BRANDS.includes(brand) || !/^\d{4}$/.test(last4)) fail(400, 'Revisá el número de la tarjeta');
+  const m = exp.match(/^(0[1-9]|1[0-2])\/(\d{2})$/);
+  if (!m) fail(400, 'Escribí el vencimiento como MM/AA');
+  const now = new Date();
+  if (2000 + Number(m[2]) < now.getFullYear() || (2000 + Number(m[2]) === now.getFullYear() && Number(m[1]) < now.getMonth() + 1)) fail(400, 'La tarjeta está vencida');
+  if (body.accepted !== true) fail(400, 'Confirmá que vas a presentar esta tarjeta al retirar el auto');
+  db.prepare('UPDATE delivery_links SET card_holder = ?, card_brand = ?, card_last4 = ?, card_exp = ?, card_at = ?, card_ip = ? WHERE reservation_id = ?').run(
+    holder,
+    brand,
+    last4,
+    exp,
+    now.toISOString(),
+    String(ip || '').slice(0, 64),
+    r.id,
+  );
+  R.log(db, r.id, null, 'tarjeta_dejada', `${brand} terminada en ${last4}`);
+  return { ok: true, card: { holder, brand, last4, exp } };
+}
+
+module.exports = { stateOf, requestSignature, photosLink, viewContract, sign, deliveryPhotos, cardLink, cardUrlFor, viewCard, saveCard };

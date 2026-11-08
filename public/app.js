@@ -1184,6 +1184,19 @@ const sendStep = (title, hint, r, text, link) => `<div class="send-step stack">
     <input readonly value="${esc(link)}" data-notr aria-label="Link"/>
   </div>`;
 
+/** La tarjeta que dejó el cliente: identifica la tarjeta, no permite cobrar. */
+function clientCardHtml(r) {
+  if (!proOn() || choferesMode() || ['cancelada', 'no_show'].includes(r.status)) return '';
+  const c = r.signature && r.signature.card;
+  const open = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
+  const ask = open ? `<div class="actions no-print" style="margin-top:12px"><button class="btn" type="button" data-act="card">${c ? 'Pedirle otra tarjeta' : 'Pedirle la tarjeta'}</button></div>` : '';
+  return `<div class="card"><h2>Tarjeta del cliente</h2>${
+    c
+      ? `<p><b>${esc(c.brand)} terminada en ${esc(c.last4)}</b> · vence ${esc(c.exp)}<br><small class="muted">${esc(c.holder)} · ${fmtDT(stampLocal(c.at))}</small></p><p class="muted">Pedile esta tarjeta al entregar el auto. Con estos datos no se le puede cobrar: el cobro o la garantía se hacen con tu terminal.</p>`
+      : '<p class="muted">Todavía no dejó ninguna.</p>'
+  }${ask}</div>`;
+}
+
 function signatureCardHtml(r) {
   if (!proOn() || choferesMode() || ['cancelada', 'no_show'].includes(r.status)) return '';
   const s = r.signature;
@@ -1530,7 +1543,6 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   if (hotelOpen && !r.hotel && !choferesMode()) more.push('<button data-act="hotel">Entregar o retirar en un hotel</button>');
   if (r.status === 'en_curso') actions.push(`<button class="btn ok" data-act="checkin">${ICON.in}Registrar devolución</button>`);
   if (proOn() && !choferesMode() && ['confirmada', 'en_curso'].includes(r.status)) actions.push(`<button class="btn" data-act="express">${ICON.send}Entrega express</button>`);
-  if (proOn() && state.settings.mp_connected && !['cancelada', 'no_show'].includes(r.status) && r.balance.pending > 0) more.unshift('<button data-act="paylink">Link de pago con tarjeta</button>');
   // Saldo a cobrar a la vista, con el importe: un toque abre el cobro ya completado.
   if (['confirmada', 'en_curso', 'finalizada'].includes(r.status) && r.balance.pending > 0)
     actions.push(`<button class="btn ${r.status === 'finalizada' ? 'primary' : ''}" data-act="pay">${ICON.money}Cobrar ${money(r.balance.pending)}</button>`);
@@ -1619,6 +1631,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           : ''
       }
       ${signatureCardHtml(r)}
+      ${clientCardHtml(r)}
       ${rentalCardHtml(r)}
       ${invoicesCardHtml(r)}
       ${filesCardHtml(r)}
@@ -1919,18 +1932,13 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
          </div>`,
       );
     },
-    paylink: () =>
-      openModal(
-        `Link de pago con tarjeta · ${r.code}`,
-        formHtml([{ name: 'amount', label: 'Importe a cobrar', type: 'number', required: true, attrs: `min="1" max="${r.balance.pending}" step="any"` }], { amount: r.balance.pending }, 'Crear link de pago'),
-        async (d) => {
-          const p = await POST(`/reservations/${r.id}/pay-link`, { amount: d.amount });
-          const text = `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Podés pagar ${money(p.amount)} de tu reserva ${r.code} con tarjeta acá`, `You can pay ${money(p.amount)} for your booking ${r.code} by card here`)}: ${p.url}`;
-          setTimeout(() =>
-            openModal(`Link de pago · ${r.code}`, sendStep(`Pago de ${money(p.amount)}`, 'Cuando pague, el cobro se carga solo en la reserva.', r, text, p.url)),
-          );
-        },
-      ),
+    card: async () => {
+      const c = await run(() => POST(`/reservations/${r.id}/card-link`));
+      if (!c) return;
+      const link = clientLink('tarjeta', c.card_token);
+      const text = `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Para tu reserva ${r.code} en ${state.settings.company_name}, dejá acá los datos de tu tarjeta`, `For your booking ${r.code} at ${state.settings.company_name}, please leave your card details here`)}: ${link}`;
+      openModal(`Tarjeta del cliente · ${r.code}`, sendStep('Dejar la tarjeta', 'Carga los datos desde el celular. Queda guardada la marca, los últimos 4 dígitos, el titular y el vencimiento.', r, text, link));
+    },
     pdf: async () => {
       if (!window.jspdf) return toast('No se pudo cargar el generador de PDF. Recargá la página e intentá de nuevo.', true);
       let built;
@@ -2155,7 +2163,7 @@ const LOG_LABEL = {
   firma_pedida: 'Firma pedida al cliente',
   firma_cliente: 'El cliente firmó el contrato',
   firma_anulada: 'Firma anulada: la reserva cambió',
-  link_de_pago: 'Link de pago creado',
+  tarjeta_dejada: 'El cliente dejó su tarjeta',
   creada: 'Reserva creada',
   modificada: 'Reserva modificada',
   confirmada: 'Confirmada',
@@ -3566,7 +3574,6 @@ on(/^\/cotizador$/, async (view) => {
     ['api', 'API del cotizador'],
     ['inbox', `Bandeja (${d.inbox.filter((x) => x.status === 'error').length} con error)`],
     ['out', 'Avisos salientes'],
-    ...(proOn() ? [['pagos', 'Pagos con tarjeta']] : []),
   ];
   view.innerHTML = `
     <div class="page-head"><h1>Integración con el cotizador</h1></div>
@@ -3580,30 +3587,6 @@ on(/^\/cotizador$/, async (view) => {
     }),
   );
   const body = $('#cot-body');
-
-  if (tab === 'pagos') {
-    body.innerHTML = `
-      <form class="card stack" id="mp-form" style="max-width:620px">
-        <h2>Cobrar con tarjeta por Mercado Pago</h2>
-        <p class="muted">Cuando alguien pide una reserva desde el link de reservas, la API o un formulario que envía directo al sistema (opción B), puede pagar con tarjeta enseguida. Con el formulario de la opción A, o cuando quieras, mandale el link desde la reserva: Más acciones, Link de pago con tarjeta. Paga en la página de Mercado Pago: los datos de la tarjeta no pasan por Floty. Al aprobarse, el cobro se carga solo y la reserva queda confirmada.</p>
-        <p>${d.cards.connected ? '<span class="badge b-confirmada">Conectado</span>' : '<span class="badge b-pendiente">Sin conectar</span>'}</p>
-        <label>Access Token de producción (en Mercado Pago: Tus integraciones → tu aplicación → Credenciales)<input name="mp_access_token" type="password" autocomplete="off" placeholder="${d.cards.connected ? 'Ya está cargado: escribí otro solo para cambiarlo' : 'APP_USR-…'}"/></label>
-        <label>Qué parte del saldo se cobra desde el cotizador (%)<input name="card_pay_pct" type="number" min="1" max="100" required value="${esc(d.cards.pct)}"/></label>
-        <div class="actions"><button class="btn primary">Guardar</button>${d.cards.connected ? '<button class="btn danger" type="button" id="mp-off">Desconectar</button>' : ''}</div>
-      </form>`;
-    $('#mp-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const f = formData(e.target);
-      await run(() => PUT('/integration', { card_pay_pct: f.card_pay_pct, ...(f.mp_access_token ? { mp_access_token: f.mp_access_token } : {}) }), 'Guardado');
-      state.settings = await GET('/settings');
-      route();
-    });
-    $('#mp-off')?.addEventListener('click', async () => {
-      await run(() => PUT('/integration', { mp_disconnect: true }), 'Mercado Pago desconectado');
-      state.settings = await GET('/settings');
-      route();
-    });
-  }
 
   if (tab === 'web') {
     const fromWeb = d.inbox.filter((i) => i.channel === 'web');
@@ -4478,7 +4461,10 @@ on(/^\/empresas$/, async (view) => {
         ) +
         `<div class="card" style="margin-top:14px"><b>¿El administrador no puede entrar?</b>
           <p class="muted" style="margin:4px 0 8px">Le damos una contraseña inicial nueva. La anterior deja de servir y, al entrar, elige una propia.</p>
-          <button type="button" class="btn small" data-reset-pw>Darle una contraseña nueva</button></div>`,
+          <button type="button" class="btn small" data-reset-pw>Darle una contraseña nueva</button></div>
+        <div class="card" style="margin-top:14px"><b>Ejemplo para presentar</b>
+          <p class="muted" style="margin:4px 0 8px">Carga una agencia de Panamá ficticia donde el mismo auto sube de precio según la disponibilidad. Solo funciona en una agencia vacía.</p>
+          <button type="button" class="btn small" data-demand-example>Ver el ejemplo de precios</button></div>`,
       async (f) => {
         await run(() => PUT(`/platform/companies/${c.id}/profile`, { ...f, ...(logo !== undefined ? { logo } : {}) }), 'Datos de la agencia guardados');
         route();
@@ -4498,6 +4484,24 @@ on(/^\/empresas$/, async (view) => {
     $('#modal [data-logo-remove]')?.addEventListener('click', () => {
       logo = '';
       preview.innerHTML = ICON.building;
+    });
+    $('#modal [data-demand-example]').addEventListener('click', async () => {
+      const ex = await run(() => POST(`/platform/companies/${c.id}/demand-example`));
+      if (!ex) return;
+      const fmt = (n, cur) => new Intl.NumberFormat('es-PA', { style: 'currency', currency: cur }).format(n);
+      const sep = ex.booking_url.includes('?') ? '&' : '?';
+      openModal(
+        `Precios según disponibilidad · ${c.name}`,
+        `<p class="muted">El mismo ${esc(ex.scenarios[0].category)}, ${ex.scenarios[0].days} días. Tocá cada fila para abrir el cotizador en esas fechas.</p>
+        <div class="demand-rows">${ex.scenarios
+          .map(
+            (s) => `<a class="demand-row" target="_blank" rel="noopener" href="${esc(`${ex.booking_url}${sep}desde=${s.pickup_at.slice(0, 10)}&dias=${s.days}`)}">
+              <span><b>${esc(s.label)}</b><small>${fmtD(s.pickup_at)} · ${s.booked} de ${s.fleet} reservados</small></span>
+              <span class="demand-price"><b>${esc(fmt(s.total, s.currency))}</b><small class="${s.pct ? 'up' : ''}">${s.pct ? `+${s.pct}%` : 'Precio normal'}</small></span>
+            </a>`,
+          )
+          .join('')}</div>`,
+      );
     });
     $('#modal [data-reset-pw]').addEventListener('click', async () => {
       if (!(await confirmModal({ title: `Contraseña nueva · ${c.name}`, text: `El administrador (${c.admin_email}) va a tener que entrar con la contraseña nueva. La anterior deja de servir.`, ok: 'Darle una nueva' }))) return;
@@ -4975,6 +4979,14 @@ async function bookingPage() {
   const t = new Date();
   let from = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1, 10, 0);
   let to = addDays(from, 3);
+  // Se puede entrar con las fechas elegidas (?desde=AAAA-MM-DD&dias=3): así otro cotizador o un aviso pueden mandar directo acá.
+  const wanted = new URLSearchParams(location.search);
+  const start = /^\d{4}-\d{2}-\d{2}$/.test(wanted.get('desde') || '') ? new Date(`${wanted.get('desde')}T10:00`) : null;
+  if (start && !Number.isNaN(start.getTime()) && start >= new Date(t.getFullYear(), t.getMonth(), t.getDate())) {
+    from = start;
+    to = addDays(from, Math.min(90, Math.max(1, Number(wanted.get('dias')) || 3)));
+  }
+  const picked = new Set();
   let options = [];
   let pick = null;
   const QUICK = [
@@ -4982,39 +4994,50 @@ async function bookingPage() {
     [3, '3 días'],
     [7, '1 semana'],
   ];
+  const placeSelect = (name, label) =>
+    `<label class="qr-field">${label}<select name="${name}">${cfg.branches.map((b) => `<option value="${esc(b.code)}">${esc(b.name)}</option>`).join('')}</select></label>`;
+  const extraPrice = (x) => `${money(x.price)}${x.charge_type === 'fijo' ? '' : ` ${L('por día', 'per day')}`}`;
   const page = publicPage(`
-    <header class="pub-head"><h1>${esc(cfg.company)}</h1><p>${esc(cfg.welcome)}</p></header>
-    <form class="qr" id="bk" novalidate>
-      <section>
-        <h2>¿Cuándo?</h2>
+    <header class="pub-head quoter-head"><h1>${esc(cfg.company)}</h1><p>${esc(cfg.welcome)}</p></header>
+    <form class="qr quoter" id="bk" novalidate>
+      <section class="quoter-step">
+        <h2><span>1</span>${L('¿Cuándo y dónde?', 'When and where?')}</h2>
         <div class="qr-dates">
-          <label class="qr-field">Retiro<input type="datetime-local" name="from" required></label>
-          <label class="qr-field">Devolución<input type="datetime-local" name="to" required></label>
+          <label class="qr-field">${L('Retiro', 'Pick-up')}<input type="datetime-local" name="from" required></label>
+          <label class="qr-field">${L('Devolución', 'Return')}<input type="datetime-local" name="to" required></label>
         </div>
         <div class="chips">${QUICK.map(([n, label]) => `<button type="button" class="chip" data-days="${n}">${label}</button>`).join('')}</div>
-        ${
-          cfg.branches.length > 1
-            ? `<label class="qr-field" style="margin-top:8px">Lugar de retiro<select name="branch">${cfg.branches.map((b) => `<option value="${esc(b.code)}">${esc(b.name)}</option>`).join('')}</select></label>`
-            : ''
-        }
+        ${cfg.branches.length > 1 ? `<div class="qr-dates" style="margin-top:8px">${placeSelect('branch', L('Lugar de retiro', 'Pick-up place'))}${placeSelect('return_branch', L('Lugar de devolución', 'Return place'))}</div>` : ''}
       </section>
-      <section>
-        <h2>Elegí el auto</h2>
-        <div class="cars" id="bk-cars"><p class="muted">Cargando…</p></div>
+      <section class="quoter-step">
+        <h2><span>2</span>${L('Elegí el auto', 'Choose your car')}</h2>
+        <div class="cars" id="bk-cars" aria-live="polite"><div class="car-skeleton"></div><div class="car-skeleton"></div></div>
       </section>
-      <section>
-        <h2>Tus datos</h2>
+      ${
+        cfg.extras.length
+          ? `<section class="quoter-step">
+        <h2><span>3</span>${L('Sumá lo que necesites', 'Add what you need')} <small class="muted">${L('opcional', 'optional')}</small></h2>
+        <div class="quoter-extras">${cfg.extras
+          .map(
+            (x) => `<label class="quoter-extra"><input type="checkbox" value="${esc(x.code)}" data-extra data-kind="${esc(x.kind)}"><span>${esc(x.name)}</span><small>${extraPrice(x)}</small></label>`,
+          )
+          .join('')}</div>
+      </section>`
+          : ''
+      }
+      <section class="quoter-step">
+        <h2><span>${cfg.extras.length ? 4 : 3}</span>${L('Tus datos', 'Your details')}</h2>
         <div style="display:flex;flex-direction:column;gap:8px">
-          <label class="qr-field">Nombre y apellido<input name="name" autocomplete="name" maxlength="120" required></label>
-          <label class="qr-field">WhatsApp (con código de país)<input name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" placeholder="+54 9 2901 555123" required></label>
-          <label class="qr-field">Email (opcional)<input name="email" type="email" autocomplete="email" maxlength="160"></label>
+          <label class="qr-field">${L('Nombre y apellido', 'Full name')}<input name="name" autocomplete="name" maxlength="120" required></label>
+          <label class="qr-field">${L('WhatsApp (con código de país)', 'WhatsApp (with country code)')}<input name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" placeholder="${esc(cfg.phone_hint)}" required></label>
+          <label class="qr-field">${L('Email (opcional)', 'Email (optional)')}<input name="email" type="email" autocomplete="email" maxlength="160"></label>
           <label class="trap" aria-hidden="true">No completar<input name="_gotcha" tabindex="-1" autocomplete="off"></label>
         </div>
       </section>
       <div class="qr-total">
-        <div class="sum"><span class="muted" id="bk-what">Elegí un auto</span><b id="bk-sum"></b></div>
-        <button class="btn primary big" type="submit">Pedir la reserva</button>
-        <small class="muted">No pagás nada ahora. La agencia te confirma por WhatsApp.</small>
+        <div class="sum"><span class="muted" id="bk-what">${L('Elegí un auto', 'Choose a car')}</span><b id="bk-sum"></b></div>
+        <button class="btn primary big" type="submit">${L('Pedir la reserva', 'Request booking')}</button>
+        <small class="muted">${L('No pagás nada ahora. La agencia te confirma por WhatsApp.', 'You pay nothing now. The agency confirms by WhatsApp.')}</small>
       </div>
     </form>
     ${
@@ -5043,8 +5066,12 @@ async function bookingPage() {
           .map((o) => {
             const info = [o.description, o.seats ? `${o.seats} ${L('asientos', 'seats')}` : ''].filter(Boolean).join(' · ');
             return `<button type="button" class="car${o.code === pick ? ' on' : ''}" data-cat="${esc(o.code)}" aria-pressed="${o.code === pick}">
-              <span><b>${esc(o.name)}</b>${info ? `<small>${esc(info)}</small>` : ''}</span>
-              <span class="price">${money(o.total)}<small class="muted">${o.days} ${dayWord(o.days)}</small></span>
+              <span class="car-info"><b>${esc(o.name)}</b>${info ? `<small>${esc(info)}</small>` : ''}${
+                o.high_demand || o.few_left
+                  ? `<span class="car-tags">${o.high_demand ? `<i class="tag-demand">${L('Alta demanda', 'High demand')}</i>` : ''}${o.few_left ? `<i class="tag-few">${L('Último disponible', 'Last one left')}</i>` : ''}</span>`
+                  : ''
+              }</span>
+              <span class="price">${money(o.total)}<small class="muted">${money(o.total / o.days)} ${L('por día', 'per day')}</small></span>
             </button>`;
           })
           .join('')
@@ -5052,11 +5079,20 @@ async function bookingPage() {
     summary();
   };
   // Disponibilidad y precio de cada categoría (al público nunca se le dice cuántos autos quedan).
+  let lastLoad = 0;
   const load = async () => {
+    // Si el cliente cambia algo mientras carga, vale la última consulta: una respuesta vieja no pisa el precio.
+    const mine = ++lastLoad;
+    $('#bk-cars', form).classList.add('loading');
     try {
-      options = (await call('POST', '/quote', { pickup_at: localISO(from), return_at: localISO(to), pickup_branch: form.branch ? form.branch.value : undefined })).options;
+      const found = (await call('POST', '/quote', { pickup_at: localISO(from), return_at: localISO(to), pickup_branch: form.branch ? form.branch.value : undefined, return_branch: form.return_branch ? form.return_branch.value : undefined, extras: [...picked] })).options;
+      if (mine !== lastLoad) return;
+      options = found;
+      $('#bk-cars', form).classList.remove('loading');
       paint();
     } catch (e) {
+      if (mine !== lastLoad) return;
+      $('#bk-cars', form).classList.remove('loading');
       options = [];
       summary();
       $('#bk-cars', form).innerHTML = `<p class="error">${esc(e.message)}</p>`;
@@ -5076,7 +5112,15 @@ async function bookingPage() {
     }
   });
   form.addEventListener('change', (e) => {
-    if (e.target.name === 'branch') return load();
+    if (e.target.name === 'branch' && form.return_branch) form.return_branch.value = form.branch.value; // lo normal: devuelve donde retira
+    if (e.target.name === 'branch' || e.target.name === 'return_branch') return load();
+    if (e.target.matches('[data-extra]')) {
+      // Un solo seguro por reserva.
+      if (e.target.checked && e.target.dataset.kind === 'seguro') $$('[data-extra][data-kind=seguro]', form).forEach((x) => (x.checked = x === e.target));
+      picked.clear();
+      $$('[data-extra]:checked', form).forEach((x) => picked.add(x.value));
+      return load();
+    }
     if (e.target.name !== 'from' && e.target.name !== 'to') return;
     const f = new Date(form.from.value);
     const tt = new Date(form.to.value);
@@ -5103,6 +5147,8 @@ async function bookingPage() {
         pickup_at: localISO(from),
         return_at: localISO(to),
         pickup_branch: form.branch ? form.branch.value : cfg.branches[0] && cfg.branches[0].code,
+        return_branch: form.return_branch ? form.return_branch.value : undefined,
+        extras: [...picked],
         category: o.code,
         name,
         phone,
@@ -5124,7 +5170,7 @@ async function bookingPage() {
           <h1>¡Listo! Te confirmamos por WhatsApp</h1>
           <p>${esc(o.name)} · ${when} · <b>${money(o.total)}</b></p>
           <p class="muted">${L(`${esc(cfg.company)} te va a escribir para confirmar la reserva.`, `${esc(cfg.company)} will message you to confirm the booking.`)}</p>
-          ${r.pay_url ? `<a class="btn primary big" href="${esc(r.pay_url)}" rel="noopener">${ICON.money}${L('Pagar con tarjeta', 'Pay by card')}</a>` : ''}
+          ${r.card_url ? `<a class="btn primary big" href="${esc(r.card_url)}" rel="noopener">${ICON.money}${L('Dejar mi tarjeta', 'Leave my card')}</a>` : ''}
           ${cfg.whatsapp ? `<a class="btn ok big" href="https://wa.me/${esc(cfg.whatsapp)}?text=${encodeURIComponent(text)}" target="_blank" rel="noopener">${WA_ICON}Escribirle a la agencia</a>` : ''}
         </div>`,
       );
@@ -5370,15 +5416,83 @@ async function photosPage() {
     ${d.photos.length ? `<div class="pub-photos">${d.photos.map((p) => `<a href="/api/public/entrega/fotos/${token}/${p.id}${empresaQuery()}" target="_blank" rel="noopener"><img loading="lazy" alt="${esc(p.name || '')}" src="/api/public/entrega/fotos/${token}/${p.id}${empresaQuery()}"/></a>`).join('')}</div>` : `<p>${L('Todavía no hay fotos. La agencia las va a subir enseguida.', 'There are no photos yet. The agency will upload them soon.')}</p>`}</div>`);
 }
 
-/** /pago-listo: adonde vuelve el cliente desde Mercado Pago. Lo que vale es el aviso de Mercado Pago, no esta página. */
-function paidPage() {
-  const status = new URLSearchParams(location.search).get('status');
-  const ok = status === 'approved';
-  publicPage(`<div class="card pub-done">${ok ? '<div class="pub-ok" aria-hidden="true">✓</div>' : ''}<h1>${ok ? L('¡Pago recibido!', 'Payment received!') : status === 'pending' || status === 'in_process' ? L('Tu pago está en revisión', 'Your payment is being reviewed') : L('El pago no se completó', 'The payment was not completed')}</h1>
-    <p class="muted">${ok ? L('La agencia ya tiene tu pago. Ya podés cerrar esta página.', 'The agency has your payment. You can close this page.') : L('Si necesitás ayuda, escribile a la agencia.', 'If you need help, contact the agency.')}</p></div>`);
+/** ¿El número de tarjeta está bien escrito? (dígito verificador) */
+function cardNumberOk(digits) {
+  if (digits.length < 13 || digits.length > 19) return false;
+  let sum = 0;
+  [...digits].reverse().forEach((c, i) => {
+    const n = Number(c) * (i % 2 ? 2 : 1);
+    sum += n > 9 ? n - 9 : n;
+  });
+  return sum % 10 === 0;
+}
+const cardBrand = (digits) => (/^4/.test(digits) ? 'Visa' : /^(5[1-5]|2[2-7])/.test(digits) ? 'Mastercard' : /^3[47]/.test(digits) ? 'American Express' : 'Otra');
+
+/**
+ * /tarjeta/<código>: el cliente deja su tarjeta. El número se comprueba acá y no sale del navegador:
+ * al servidor van la marca y los últimos 4 dígitos. El campo no lleva name para que ningún envío lo incluya.
+ */
+async function cardPage() {
+  const url = `/api/public/entrega/tarjeta/${encodeURIComponent(location.pathname.split('/')[2] || '')}${empresaQuery()}`;
+  let d;
+  try {
+    const res = await fetch(url);
+    d = await res.json();
+    if (!res.ok) throw new Error(d.error);
+  } catch {
+    linkGone(L('Tu tarjeta', 'Your card'));
+    return;
+  }
+  state.settings = { ...state.settings, currency: d.currency, locale: d.locale };
+  document.title = `${d.company} · ${L('Tu tarjeta', 'Your card')}`;
+  const done = (c) => `<div class="card pub-done"><div class="pub-ok" aria-hidden="true">✓</div><h1>${L('¡Listo, gracias!', 'Done, thank you!')}</h1>
+    <p><b>${esc(c.brand)} ${L('terminada en', 'ending in')} ${esc(c.last4)}</b> · ${L('vence', 'expires')} ${esc(c.exp)}</p>
+    <p class="muted">${L('Traé esta tarjeta cuando retires el auto. No se realizó ningún cobro.', 'Bring this card when you pick up the car. No charge was made.')}</p></div>`;
+  const page = publicPage(`<div class="pub-head"><h1>${L('Hola', 'Hi')} ${esc(d.first_name)}</h1><p>${esc(d.company)} · ${L('Reserva', 'Booking')} ${esc(d.code)}</p></div>
+    <form class="card qr" id="card-form" autocomplete="on">
+      <p style="margin:0">${L('Dejá los datos de la tarjeta con la que vas a retirar el auto. <b>No se te cobra nada.</b>', 'Leave the details of the card you will use to pick up the car. <b>You will not be charged.</b>')}${d.deposit ? ` ${L(`La garantía de ${money(d.deposit)} se toma al retirar.`, `The ${money(d.deposit)} deposit is taken at pick-up.`)}` : ''}</p>
+      ${d.card ? `<p class="notice">${L('Ya dejaste', 'You already left')} ${esc(d.card.brand)} ${L('terminada en', 'ending in')} ${esc(d.card.last4)}. ${L('Si cargás otra, reemplaza a esa.', 'A new one replaces it.')}</p>` : ''}
+      <label>${L('Titular, como figura en la tarjeta', 'Cardholder, as shown on the card')}<input name="holder" required maxlength="80" autocomplete="cc-name"/></label>
+      <label>${L('Número de tarjeta', 'Card number')}<input id="card-number" required inputmode="numeric" maxlength="23" autocomplete="cc-number" placeholder="0000 0000 0000 0000" data-notr/></label>
+      <label>${L('Vencimiento (MM/AA)', 'Expiry (MM/YY)')}<input name="exp" required maxlength="5" inputmode="numeric" autocomplete="cc-exp" placeholder="MM/AA" data-notr/></label>
+      <label class="check"><input type="checkbox" name="accepted" required/> ${L('Es mi tarjeta y la voy a presentar al retirar el auto', 'This is my card and I will present it at pick-up')}</label>
+      <button class="btn primary big" type="submit">${L('Guardar', 'Save')}</button>
+      <small class="muted">${L('Por seguridad guardamos solo el titular, la marca, los últimos 4 dígitos y el vencimiento. El número completo no se guarda y no te pedimos el código de seguridad.', 'For security we only keep the cardholder, the brand, the last 4 digits and the expiry. The full number is not stored and we do not ask for the security code.')}</small>
+      <p class="error" id="card-err"></p>
+    </form>`);
+  const form = $('#card-form', page);
+  const number = $('#card-number', page);
+  number.addEventListener('input', () => (number.value = number.value.replace(/\D/g, '').replace(/(\d{4})(?=\d)/g, '$1 ')));
+  form.exp.addEventListener('input', () => (form.exp.value = form.exp.value.replace(/\D/g, '').replace(/^(\d{2})(\d)/, '$1/$2')));
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = $('#card-err', page);
+    err.textContent = '';
+    const digits = number.value.replace(/\D/g, '');
+    if (!cardNumberOk(digits)) {
+      err.textContent = L('Revisá el número de la tarjeta', 'Check the card number');
+      return;
+    }
+    const btn = $('[type=submit]', form);
+    btn.disabled = true;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ holder: form.holder.value, exp: form.exp.value, accepted: form.accepted.checked, brand: cardBrand(digits), last4: digits.slice(-4) }),
+      });
+      const r = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(r.error || `Error ${res.status}`);
+      form.outerHTML = done(r.card);
+      window.scrollTo(0, 0);
+    } catch (ex) {
+      err.textContent = ex.message;
+      btn.disabled = false;
+    }
+  });
 }
 
-const PUBLIC_PAGES = { '/reservar': bookingPage, '/como-funciona': howItWorksPage, '/pago-listo': paidPage };
-const TOKEN_PAGES = [[/^\/hotel\/[\w-]+$/, hotelPage], [/^\/firmar\/[\w-]+$/, signPage], [/^\/fotos\/[\w-]+$/, photosPage]];
+const PUBLIC_PAGES = { '/reservar': bookingPage, '/como-funciona': howItWorksPage };
+const TOKEN_PAGES = [[/^\/hotel\/[\w-]+$/, hotelPage], [/^\/firmar\/[\w-]+$/, signPage], [/^\/fotos\/[\w-]+$/, photosPage], [/^\/tarjeta\/[\w-]+$/, cardPage]];
 const publicPath = location.pathname.replace(/\/+$/, '');
 (PUBLIC_PAGES[publicPath] || (TOKEN_PAGES.find(([re]) => re.test(publicPath)) || [])[1] || startSession)();

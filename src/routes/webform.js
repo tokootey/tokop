@@ -3,7 +3,7 @@
 const express = require('express');
 const { getSettings } = require('../db');
 const { ingestQuote } = require('../integration');
-const { payUrlFor } = require('../payments');
+const { cardUrlFor } = require('../delivery');
 
 /**
  * Recepción del formulario de cotización del sitio web (p. ej. discoverushuaia.com.ar).
@@ -50,7 +50,7 @@ function webformRoutes(db, { publicQuery = '' } = {}) {
 
   function reply(req, res, settings, status, ok, data) {
     if (wantsHtml(req) && !req.get('x-requested-with')) {
-      if (ok && data.pay_url) return res.redirect(303, data.pay_url); // agencia con tarjeta: del formulario pasa a pagar
+      if (ok && data.card_url) return res.redirect(303, data.card_url); // del formulario pasa a dejar la tarjeta
       if (ok && settings.webform_redirect_url) return res.redirect(303, settings.webform_redirect_url);
       const title = ok ? '¡Gracias! Recibimos tu solicitud' : 'No pudimos registrar tu solicitud';
       const msg = ok
@@ -68,7 +68,7 @@ function webformRoutes(db, { publicQuery = '' } = {}) {
     return res.status(status).json({ ok, ...data });
   }
 
-  router.post('/', express.urlencoded({ extended: false, limit: '100kb', parameterLimit: MAX_FIELDS * 2 }), async (req, res) => {
+  router.post('/', express.urlencoded({ extended: false, limit: '100kb', parameterLimit: MAX_FIELDS * 2 }), (req, res) => {
     const settings = getSettings(db);
     if (settings.webform_enabled !== '1') return reply(req, res, settings, 403, false, { error: 'Formulario web deshabilitado' });
 
@@ -96,8 +96,8 @@ function webformRoutes(db, { publicQuery = '' } = {}) {
       // Al público no se le muestran detalles internos.
       return reply(req, res, settings, 202, true, { pending_review: true });
     }
-    const pay_url = await payUrlFor(db, result.reservation.code, req, publicQuery);
-    return reply(req, res, settings, 201, true, { code: result.reservation.code, ...(pay_url ? { pay_url } : {}) });
+    const card_url = cardUrlFor(db, result.reservation.code, req, publicQuery);
+    return reply(req, res, settings, 201, true, { code: result.reservation.code, ...(card_url ? { card_url } : {}) });
   });
 
   return router;
