@@ -3077,6 +3077,7 @@ on(
         <div class="vcard-actions">
           <button class="btn pill small" type="button" data-hist>${ICON.list}Historial</button>
           <button class="btn pill small" type="button" data-edit>Editar</button>
+          ${v.status !== 'alquilado' && branchOptions().length > 1 ? '<button class="btn pill small" type="button" data-branch>Cambiar sucursal</button>' : ''}
           ${v.status === 'alquilado' ? '' : `<button class="btn pill small${v.status === 'mantenimiento' ? ' warm' : ''}" type="button" data-shop>${ICON.wrench}${v.status === 'mantenimiento' ? 'Sacar del taller' : 'Mandar al taller'}</button>`}
           ${isAdmin() ? `<button class="btn icon danger" type="button" data-del aria-label="Borrar ${esc(v.plate)}" title="Borrar">${ICON.trash}</button>` : ''}
         </div>
@@ -3196,6 +3197,16 @@ on(
             },
           );
         }
+      } else if (e.target.closest('[data-branch]')) {
+        openModal(
+          `Cambiar sucursal · ${v.plate}`,
+          formHtml([{ name: 'branch_id', label: 'Sucursal', type: 'select', options: branchOptions, required: true }], v, 'Cambiar sucursal'),
+          async (d) => {
+            await PUT(`/vehicles/${v.id}`, { ...v, branch_id: Number(d.branch_id) });
+            toast('Sucursal cambiada');
+            load();
+          },
+        );
       } else if (e.target.closest('[data-edit]')) {
         openModal(`Editar · ${v.plate}`, formHtml(vehicleFields(v), v), async (d) => {
           await PUT(`/vehicles/${v.id}`, d);

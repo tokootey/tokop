@@ -905,6 +905,8 @@ const EN = {
   'Hotel guardado': 'Hotel saved',
   'Sacar del taller': 'Take out of workshop',
   'Mandar al taller': 'Send to workshop',
+  'Cambiar sucursal': 'Change branch',
+  'Sucursal cambiada': 'Branch changed',
   'Qué se le hace': 'Work to do',
   'Entra el': 'In on',
   'Salió el': 'Out on',
