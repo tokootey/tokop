@@ -225,6 +225,8 @@ h1 .badge { font-size: 12.5px; }
 .pl-days div.today { background: var(--primary-soft); color: var(--primary); font-weight: 700; }
 .pl-days div.weekend { background: #f1f4f8; }
 .pl-bar { position: absolute; top: 6px; height: 24px; border-radius: 6px; font-size: 11px; font-weight: 600; color: #fff; padding: 4px 7px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15); }
+.pl-bar.pl-move { cursor: grab; }
+.pl-bar.pl-moving { cursor: grabbing; z-index: 5; opacity: 0.85; box-shadow: 0 6px 18px rgba(15, 26, 46, 0.35); }
 .pl-bar.pendiente { background: #d99a00; }
 .pl-bar.confirmada { background: #1f6feb; }
 .pl-bar.en_curso { background: #17915a; }
