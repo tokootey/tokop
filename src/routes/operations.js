@@ -171,6 +171,8 @@ function operationsRoutes(db) {
     }
     res.json(R.getReservation(db, r.id));
   });
+  router.get('/reservations/:id/move-options', (req, res) => res.json(R.moveOptions(db, req.params.id)));
+  router.post('/reservations/:id/swap', (req, res) => res.json(R.swapVehicles(db, req.params.id, req.body.reservation_id, req.user.id)));
   router.post('/reservations/:id/assign', (req, res) => res.json(R.assignVehicle(db, req.params.id, req.body.vehicle_id, req.user.id)));
   router.post('/reservations/:id/checkout', (req, res) => res.json(R.checkout(db, req.params.id, req.body, req.user.id)));
   router.post('/reservations/:id/checkin', (req, res) => res.json(R.checkin(db, req.params.id, req.body, req.user.id)));
@@ -256,7 +258,7 @@ function operationsRoutes(db) {
       .all();
     const reservations = db
       .prepare(
-        `SELECT r.id, r.code, r.status, r.source, r.pickup_at, r.return_at, r.vehicle_id, r.category_id, r.pickup_branch_id, r.return_branch_id, cat.code AS category_code, c.full_name AS customer_name
+        `SELECT r.id, r.code, r.status, r.source, r.pickup_at, r.return_at, r.total, r.vehicle_id, r.category_id, r.pickup_branch_id, r.return_branch_id, cat.code AS category_code, c.full_name AS customer_name
          FROM reservations r JOIN customers c ON c.id = r.customer_id JOIN categories cat ON cat.id = r.category_id
          WHERE r.status IN (${[...BLOCKING, 'finalizada'].map((s) => `'${s}'`).join(',')}) AND r.pickup_at < ? AND r.return_at > ?
          ORDER BY r.pickup_at`,

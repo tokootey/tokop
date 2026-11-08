@@ -1488,7 +1488,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   if (r.status === 'pendiente') actions.push(`<button class="btn primary" data-act="confirm">${ICON.check}Confirmar</button>`);
   if (canEdit) {
     actions.push(`<button class="btn ${r.status === 'confirmada' ? 'ok' : ''}" data-act="checkout">${ICON.key}Entregar vehículo</button>`);
-    more.push('<button data-act="assign">Asignar vehículo</button>');
+    more.push(`<button data-act="assign">${r.vehicle_id ? 'Cambiar de auto o intercambiar' : 'Asignar vehículo'}</button>`);
     more.push('<button data-act="edit">Modificar fechas o datos</button>');
   }
   const hotelOpen = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
@@ -1674,13 +1674,21 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       );
     },
     assign: async () => {
-      const list = await GET(`/reservations/${r.id}/available-vehicles`);
+      const { free, swaps } = await GET(`/reservations/${r.id}/move-options`);
+      const car = (v) => `${v.plate} · ${v.brand} ${v.model} · ${v.km} km · ${v.branch_name || ''}`;
+      const options = [
+        ...(r.vehicle_id ? [[r.vehicle_id, `${r.vehicle_plate} · ${L('el que tiene ahora', 'current car')}`]] : []),
+        ...free.map((v) => [v.id, car(v)]),
+        ...swaps.map((v) => [`swap-${v.reservation_id}`, `${L('Intercambiar con', 'Swap with')} ${v.customer_name} · ${v.plate} ${v.brand} ${v.model}`]),
+      ];
       openModal(
-        'Asignar vehículo',
-        formHtml([{ name: 'vehicle_id', label: 'Vehículo disponible', type: 'select', full: true, options: list.map((v) => [v.id, `${v.plate} · ${v.brand} ${v.model} · ${v.km} km · ${v.branch_name || ''}`]) }], { vehicle_id: r.vehicle_id }),
+        r.vehicle_id ? 'Cambiar de auto o intercambiar' : 'Asignar vehículo',
+        formHtml([{ name: 'vehicle_id', label: 'Vehículo', type: 'select', full: true, options }], { vehicle_id: r.vehicle_id }),
         async (d) => {
-          await POST(`/reservations/${r.id}/assign`, { vehicle_id: d.vehicle_id ? Number(d.vehicle_id) : null });
-          toast('Vehículo asignado');
+          const swap = /^swap-(\d+)$/.exec(d.vehicle_id || '');
+          if (swap) await POST(`/reservations/${r.id}/swap`, { reservation_id: Number(swap[1]) });
+          else await POST(`/reservations/${r.id}/assign`, { vehicle_id: d.vehicle_id ? Number(d.vehicle_id) : null });
+          toast(swap ? 'Autos intercambiados' : 'Vehículo asignado');
           reload();
         },
       );
@@ -2077,6 +2085,7 @@ const LOG_LABEL = {
   no_show: 'No se presentó',
   pendiente: 'Reabierta',
   vehiculo_asignado: 'Vehículo asignado',
+  vehiculo_intercambiado: 'Auto intercambiado',
   entregado: 'Auto entregado',
   devuelto: 'Auto devuelto',
   pago: 'Pago registrado',
@@ -2616,7 +2625,7 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
     const l = Math.max(0, pos(r.pickup_at));
     const rr = Math.min(100, pos(r.return_at));
     if (rr <= 0 || l >= 100) return '';
-    return `<div class="pl-bar ${r.status}${String(r.id) === highlight ? ' just-made' : ''}" style="left:${l}%;width:${Math.max(rr - l, 0.8)}%" data-href="#/reservas/${r.id}"
+    return `<div class="pl-bar ${r.status}${String(r.id) === highlight ? ' just-made' : ''}${['pendiente', 'confirmada'].includes(r.status) ? ' pl-move' : ''}" data-id="${r.id}" style="left:${l}%;width:${Math.max(rr - l, 0.8)}%" data-href="#/reservas/${r.id}"
       title="${esc(r.code)} · ${esc(r.customer_name)} · ${fmtDT(r.pickup_at)} → ${fmtDT(r.return_at)}">${esc(r.customer_name)}</div>`;
   };
   const mbar = (m) => {
@@ -2660,7 +2669,7 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
       <div class="actions"><button class="btn" data-nav="-7">◀ Semana</button><button class="btn" data-nav="0">Hoy</button><button class="btn" data-nav="7">Semana ▶</button></div></div>
     <div class="legend" style="margin-bottom:10px">
       <span style="--c:#e0a100">Pendiente</span><span style="--c:#1f6feb">Confirmada</span><span style="--c:#1a9b5b">En curso</span>
-      <span style="--c:#8b94a6">Finalizada</span><span style="--c:#d1373a">En el taller</span><span>· Tocá una barra para abrir la reserva · <b>Para reservar, tocá en la fila de un auto el día de retiro y después el de devolución (con el mouse también podés arrastrar).</b></span></div>
+      <span style="--c:#8b94a6">Finalizada</span><span style="--c:#d1373a">En el taller</span><span>· Tocá una barra para abrir la reserva · <b>Para reservar, tocá en la fila de un auto el día de retiro y después el de devolución (con el mouse también podés arrastrar).</b> <b>Con el mouse, arrastrá una barra para mover la reserva, o soltala sobre otra para intercambiar los autos.</b></span></div>
     <div class="planning">
       <div class="pl-row head"><div class="pl-label"><small>Vehículo</small></div><div class="pl-days" style="grid-template-columns:repeat(${days},1fr)">${dayCells}</div></div>
       ${rows || '<p class="muted" style="padding:16px">No hay vehículos cargados.</p>'}
@@ -2674,6 +2683,7 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
     }),
   );
   enableDragToBook($('.planning', view), p, days);
+  enableDragToMove($('.planning', view), p, days);
   $('.just-made', view)?.scrollIntoView({ block: 'center', inline: 'center' });
 }, 'planning');
 
@@ -2791,6 +2801,86 @@ function enableDragToBook(container, p, days) {
     d.el.remove();
     if (e.type === 'pointercancel') return;
     go(d);
+  };
+  container.addEventListener('pointerup', finish);
+  container.addEventListener('pointercancel', finish);
+}
+
+/**
+ * Mover una reserva arrastrando su barra con el mouse: a otro auto de la categoría, a otros días (días enteros, misma hora),
+ * o sobre otra reserva para intercambiar los autos. En el celular se hace desde la reserva: "Cambiar de auto o intercambiar".
+ */
+function enableDragToMove(container, p, days) {
+  const find = (id) => p.reservations.find((r) => r.id === Number(id));
+  const shift = (at, n) => localISO(addDays(new Date(at), n)).slice(0, 16);
+  let drag = null;
+
+  const move = async (r, vehicleId, delta) => {
+    const before = { vehicle_id: r.vehicle_id, pickup_at: r.pickup_at, return_at: r.return_at };
+    const after = await run(() => PUT(`/reservations/${r.id}`, { vehicle_id: vehicleId, pickup_at: shift(r.pickup_at, delta), return_at: shift(r.return_at, delta) }));
+    const oldTotal = Number(r.total);
+    const changed = Number.isFinite(oldTotal) && Number(after.total) !== oldTotal;
+    await route();
+    toastUndo(changed ? `${L('Reserva movida. Nuevo total:', 'Booking moved. New total:')} ${money(after.total)}` : L('Reserva movida', 'Booking moved'), async () => {
+      await run(() => PUT(`/reservations/${r.id}`, before));
+      route();
+    });
+  };
+  const swap = (r, other) =>
+    openModal(
+      'Intercambiar autos',
+      `<form><p>${esc(r.customer_name)} ${L('se queda con el auto de', 'gets the car of')} ${esc(other.customer_name)}, ${L('y al revés. Las fechas y los precios no cambian.', 'and vice versa. Dates and prices stay the same.')}</p>
+        <div class="actions"><button class="btn primary" type="submit">${L('Intercambiar', 'Swap')}</button></div></form>`,
+      async () => {
+        await POST(`/reservations/${r.id}/swap`, { reservation_id: other.id });
+        toast('Autos intercambiados');
+        route();
+      },
+    );
+
+  container.addEventListener('pointerdown', (e) => {
+    const bar = e.target.closest('.pl-move');
+    if (!bar || e.pointerType !== 'mouse' || e.button !== 0) return;
+    drag = { bar, r: find(bar.dataset.id), x0: e.clientX, y0: e.clientY, moved: false };
+    bar.setPointerCapture(e.pointerId);
+  });
+  container.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x0;
+    const dy = e.clientY - drag.y0;
+    if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+    drag.moved = true;
+    drag.bar.classList.add('pl-moving');
+    drag.bar.style.transform = `translate(${dx}px, ${dy}px)`;
+  });
+  const finish = async (e) => {
+    if (!drag) return;
+    const { bar, r, x0, moved } = drag;
+    drag = null;
+    bar.classList.remove('pl-moving');
+    bar.style.transform = '';
+    if (!moved || e.type === 'pointercancel') return;
+    window.addEventListener('click', (c) => c.stopPropagation(), { capture: true, once: true }); // soltar no abre la reserva
+    setTimeout(() => window.dispatchEvent(new Event('click')), 0); // por si soltó fuera de la barra y no hubo clic
+    bar.style.visibility = 'hidden';
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    bar.style.visibility = '';
+    const otherBar = under && under.closest('.pl-bar[data-id]');
+    const track = under && under.closest('.pl-track[data-vehicle]');
+    if (otherBar && otherBar !== bar) {
+      const other = find(otherBar.dataset.id);
+      if (!['pendiente', 'confirmada'].includes(other.status)) return toast('Ese auto ya está entregado: no se puede intercambiar', true);
+      return swap(r, other);
+    }
+    if (!track) return;
+    const vehicle = p.vehicles.find((v) => v.id === Number(track.dataset.vehicle));
+    if (!vehicle) return;
+    if (vehicle.category_id !== r.category_id) return toast('Sólo se puede mover a un auto de la misma categoría. Para cambiar de categoría, usá "Modificar fechas o datos".', true);
+    if (['mantenimiento', 'fuera_servicio'].includes(vehicle.status)) return toast('Ese auto está en el taller', true);
+    const delta = Math.round((e.clientX - x0) / (track.getBoundingClientRect().width / days));
+    if (!delta && vehicle.id === r.vehicle_id) return;
+    if (delta && shift(r.pickup_at, delta) < localISO(new Date()).slice(0, 16)) return toast('No se puede mover a una fecha que ya pasó', true);
+    move(r, vehicle.id, delta).catch(() => {});
   };
   container.addEventListener('pointerup', finish);
   container.addEventListener('pointercancel', finish);

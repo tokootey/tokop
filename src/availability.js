@@ -28,12 +28,13 @@ function availableVehicles(db, { category_id, pickup_at, return_at, exclude_rese
 function isVehicleFree(db, { vehicle_id, pickup_at, return_at, exclude_reservation_id = 0 }) {
   const v = db.prepare('SELECT status FROM vehicles WHERE id = ?').get(vehicle_id);
   if (!v || OUT_OF_FLEET.includes(v.status)) return false;
+  const skip = [].concat(exclude_reservation_id); // una reserva o, para un intercambio, las dos
   const clash = db
     .prepare(
       `SELECT 1 FROM reservations WHERE vehicle_id = ? AND status IN (${inList(BLOCKING)})
-       AND pickup_at < ? AND return_at > ? AND id <> ? LIMIT 1`,
+       AND pickup_at < ? AND return_at > ? AND id NOT IN (${skip.map(() => '?').join(',')}) LIMIT 1`,
     )
-    .get(vehicle_id, return_at, pickup_at, exclude_reservation_id);
+    .get(vehicle_id, return_at, pickup_at, ...skip);
   return !clash;
 }
 

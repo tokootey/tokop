@@ -287,6 +287,65 @@ function assignVehicle(db, id, vehicleId, userId) {
   return getReservation(db, r.id);
 }
 
+const MOVABLE = ['pendiente', 'confirmada'];
+const swapPlate = (db, id) => db.prepare('SELECT plate FROM vehicles WHERE id = ?').get(id).plate;
+
+/** Por qué no se pueden intercambiar los autos de dos reservas (null si se puede). */
+function swapProblem(db, a, b) {
+  if (a.id === b.id) return 'Elegí otra reserva para intercambiar';
+  if (![a, b].every((r) => MOVABLE.includes(r.status))) return 'Sólo se intercambian reservas pendientes o confirmadas: el auto ya entregado no se puede cambiar';
+  if (!a.vehicle_id || !b.vehicle_id) return 'Las dos reservas tienen que tener un auto asignado';
+  if (a.vehicle_id === b.vehicle_id) return 'Las dos reservas ya usan el mismo auto';
+  if (a.category_id !== b.category_id) return 'Sólo se pueden intercambiar autos de la misma categoría';
+  const ids = [a.id, b.id];
+  if (!isVehicleFree(db, { vehicle_id: b.vehicle_id, pickup_at: a.pickup_at, return_at: a.return_at, exclude_reservation_id: ids })) return `${swapPlate(db, b.vehicle_id)} no está libre en las fechas de ${a.code}`;
+  if (!isVehicleFree(db, { vehicle_id: a.vehicle_id, pickup_at: b.pickup_at, return_at: b.return_at, exclude_reservation_id: ids })) return `${swapPlate(db, a.vehicle_id)} no está libre en las fechas de ${b.code}`;
+  return null;
+}
+
+/** Intercambia los autos de dos reservas; las fechas y los precios no cambian. */
+function swapVehicles(db, idA, idB, userId) {
+  const a = getReservation(db, idA);
+  const b = getReservation(db, idB);
+  if (!a || !b) fail(404, 'Reserva inexistente');
+  const problem = swapProblem(db, a, b);
+  if (problem) fail(409, problem);
+  tx(db, () => {
+    const set = db.prepare('UPDATE reservations SET vehicle_id = ?, updated_at = ? WHERE id = ?');
+    set.run(b.vehicle_id, nowLocal(), a.id);
+    set.run(a.vehicle_id, nowLocal(), b.id);
+    log(db, a.id, userId, 'vehiculo_intercambiado', `${b.vehicle_plate}, antes en ${b.code}`);
+    log(db, b.id, userId, 'vehiculo_intercambiado', `${a.vehicle_plate}, antes en ${a.code}`);
+  });
+  return getReservation(db, a.id);
+}
+
+/** A qué autos se puede mover una reserva: los libres en sus fechas y los ocupados por una sola reserva con la que se puede intercambiar. */
+function moveOptions(db, id) {
+  const r = getReservation(db, id);
+  if (!r) fail(404, 'Reserva inexistente');
+  const cars = db
+    .prepare(
+      `SELECT v.id, v.plate, v.brand, v.model, v.km, b.name AS branch_name FROM vehicles v LEFT JOIN branches b ON b.id = v.branch_id
+       WHERE v.category_id = ? AND v.status NOT IN ('mantenimiento', 'fuera_servicio') AND v.id <> ? ORDER BY v.plate`,
+    )
+    .all(r.category_id, r.vehicle_id || 0);
+  const hits = db.prepare(
+    `SELECT id FROM reservations WHERE vehicle_id = ? AND status IN ('pendiente', 'confirmada', 'en_curso') AND pickup_at < ? AND return_at > ? AND id <> ?`,
+  );
+  const free = [];
+  const swaps = [];
+  for (const car of cars) {
+    const hit = hits.all(car.id, r.return_at, r.pickup_at, r.id);
+    if (!hit.length) free.push(car);
+    else if (hit.length === 1) {
+      const other = getReservation(db, hit[0].id);
+      if (!swapProblem(db, r, other)) swaps.push({ ...car, reservation_id: other.id, code: other.code, customer_name: other.customer_name });
+    }
+  }
+  return { free, swaps };
+}
+
 /** Entrega del vehículo al cliente (check-out): abre el contrato. */
 function checkout(db, id, input, userId) {
   const r = getReservation(db, id);
@@ -430,6 +489,8 @@ module.exports = {
   updateReservation,
   changeStatus,
   assignVehicle,
+  swapVehicles,
+  moveOptions,
   checkout,
   checkin,
   addPayment,
