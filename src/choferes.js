@@ -265,8 +265,11 @@ function addCharge(db, r, input, userId) {
 }
 
 /** Para la pantalla Hoy: quién debe, autos que necesitan service y choferes con la licencia vencida. */
-function dashboardChoferes(db, getReservation, today) {
-  const rentals = db.prepare("SELECT id FROM reservations WHERE status = 'en_curso'").all().map((x) => getReservation(db, x.id));
+function dashboardChoferes(db, getReservation, today, branch = null) {
+  const rentals = db
+    .prepare(`SELECT id FROM reservations WHERE status = 'en_curso'${branch ? ' AND (pickup_branch_id = ? OR return_branch_id = ?)' : ''}`)
+    .all(...(branch ? [branch, branch] : []))
+    .map((x) => getReservation(db, x.id));
   const owing = rentals
     .filter((r) => r.balance.pending > 0.005)
     .map((r) => {
@@ -289,9 +292,9 @@ function dashboardChoferes(db, getReservation, today) {
     .prepare(
       `SELECT v.id, v.plate, v.brand, v.model, v.km, v.service_every_km,
          (SELECT MAX(m.km) FROM maintenance m WHERE m.vehicle_id = v.id AND m.kind = 'service') AS last_service_km
-       FROM vehicles v WHERE v.service_every_km > 0 ORDER BY v.plate`,
+       FROM vehicles v WHERE v.service_every_km > 0${branch ? ' AND v.branch_id = ?' : ''} ORDER BY v.plate`,
     )
-    .all()
+    .all(...(branch ? [branch] : []))
     .map((v) => ({
       ...v,
       next_service_km: v.last_service_km ? v.last_service_km + v.service_every_km : (Math.floor(v.km / v.service_every_km) + 1) * v.service_every_km,

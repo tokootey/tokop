@@ -333,6 +333,16 @@
       setSetting(db, 'company_name', 'Demo Rent a Car');
       scheduleSave();
     }
+    // Situaciones por sucursal (antes del historial, para que el historial termine antes de ellas). Si algo falla, la demo igual abre.
+    if (!PROFILE && getSetting(db, 'demo_simulaciones') !== '1') {
+      try {
+        req('./src/seed.js').seedSimulaciones(db);
+      } catch (e) {
+        console.warn('Demo: no se cargaron las situaciones nuevas', e);
+      }
+      setSetting(db, 'demo_simulaciones', '1');
+      scheduleSave();
+    }
     // Un año de movimiento para que Estadísticas se vea como en una agencia que ya trabaja
     // (también a quien ya tenía la demo guardada en el navegador, una sola vez).
     if (!PROFILE && getSetting(db, 'demo_history') !== '1') {

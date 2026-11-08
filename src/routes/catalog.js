@@ -35,10 +35,17 @@ function crud(db, { table, fields, required = [], order = 'id', search = [], adm
   router.get('/', (req, res) => {
     let sql = listSql || `SELECT * FROM ${table}`;
     const params = [];
+    const where = [];
     if (req.query.q && search.length) {
-      sql = `SELECT * FROM (${sql}) WHERE ${search.map((f) => `${f} LIKE ?`).join(' OR ')}`;
+      where.push(`(${search.map((f) => `${f} LIKE ?`).join(' OR ')})`);
       for (let i = 0; i < search.length; i++) params.push(`%${req.query.q}%`);
     }
+    // Los autos de una sucursal (selector de sucursal).
+    if (req.query.branch && fields.includes('branch_id')) {
+      where.push('branch_id = ?');
+      params.push(req.query.branch);
+    }
+    if (where.length) sql = `SELECT * FROM (${sql}) WHERE ${where.join(' AND ')}`;
     res.json(db.prepare(`${sql} ORDER BY ${order}`).all(...params));
   });
 

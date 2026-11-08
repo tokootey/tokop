@@ -342,7 +342,7 @@ function seedHistory(db, { months = 12 } = {}) {
   // Temporada: verano y vacaciones de invierno se llenan; abril, mayo y octubre son flojos.
   const busy = [0.85, 0.85, 0.6, 0.45, 0.35, 0.45, 0.8, 0.75, 0.45, 0.4, 0.5, 0.75];
 
-  const cars = db.prepare('SELECT id, plate, category_id, km, status FROM vehicles ORDER BY id').all();
+  const cars = db.prepare('SELECT id, plate, category_id, km, status, branch_id FROM vehicles ORDER BY id').all();
   const firstUse = db.prepare('SELECT MIN(pickup_at) AS at FROM reservations WHERE vehicle_id = ?');
   for (const car of cars) {
     const until = firstUse.get(car.id).at ? day(new Date(firstUse.get(car.id).at.replace(' ', 'T')), -2) : day(today, -1);
@@ -394,7 +394,7 @@ function seedHistory(db, { months = 12 } = {}) {
         nextService += 10000;
       }
     }
-    db.prepare('UPDATE vehicles SET status = ?, km = ? WHERE id = ?').run(car.status, car.km, car.id);
+    db.prepare('UPDATE vehicles SET status = ?, km = ?, branch_id = ? WHERE id = ?').run(car.status, car.km, car.branch_id, car.id); // cada devolución lo mueve de sucursal: vuelve a la suya
   }
 
   // Gastos de todos los meses: seguro de la flota, patentes, lavados y, en los autos de trabajo, GNC y repuestos.
@@ -416,6 +416,89 @@ function seedHistory(db, { months = 12 } = {}) {
   return true;
 }
 
+/**
+ * Situaciones de la demo repartidas por sucursal, para probar el selector de sucursal:
+ * autos que vuelven hoy, una devolución atrasada y un pedido web (turismo); una segunda base con choferes (trabajo).
+ * Un auto que el visitante ya tiene en uso se saltea, para no pisar lo que cargó.
+ */
+function seedSimulaciones(db) {
+  const work = (db.prepare("SELECT value FROM settings WHERE key = 'business_mode'").get() || {}).value === 'choferes';
+  const ins = (sql, ...p) => Number(db.prepare(sql).run(...p).lastInsertRowid);
+  const y = new Date().getFullYear();
+  const day = (n, hour = 10) => {
+    const d = new Date();
+    d.setHours(hour, 0, 0, 0);
+    d.setDate(d.getDate() + n);
+    return d;
+  };
+  const at = (n, hour) => fmtLocal(day(n, hour));
+  const person = (name, doc, phone, apps = null) =>
+    ins(
+      "INSERT INTO customers (full_name, doc_type, doc_number, phone, license_number, license_expiry, work_apps) VALUES (?, 'DNI', ?, ?, ?, ?, ?)",
+      name, doc, phone, `LIC-${doc.slice(-5)}`, `${y + 3}-06-30`, apps,
+    );
+  const free = (plate) => db.prepare("SELECT id, category_id, km FROM vehicles WHERE plate = ? AND status = 'disponible'").get(plate);
+  const pay = (rid, amount, n, method = 'transferencia') => {
+    addPayment(db, rid, { amount, method });
+    db.prepare('UPDATE payments SET created_at = ? WHERE id = (SELECT MAX(id) FROM payments)').run(day(n).toISOString().slice(0, 19).replace('T', ' '));
+  };
+
+  if (work) {
+    const first = db.prepare('SELECT id FROM categories ORDER BY id').all();
+    if (first.length < 2 || db.prepare("SELECT 1 FROM branches WHERE code = 'AVE'").get()) return false;
+    const base = ins("INSERT INTO branches (code, name, address) VALUES ('AVE', 'Base Avellaneda', 'Av. Mitre 1500, Avellaneda')");
+    for (const [plate, brand, model, year, c, km] of [
+      ['AH707OP', 'Toyota', 'Etios', 2022, 0, 84200], ['AH808QR', 'Fiat', 'Cronos GNC', 2023, 1, 61500], ['AH909ST', 'Chevrolet', 'Prisma', 2022, 0, 73400],
+    ])
+      ins(
+        'INSERT INTO vehicles (plate, brand, model, year, category_id, branch_id, km, service_every_km, insurance_expiry, vtv_expiry) VALUES (?, ?, ?, ?, ?, ?, ?, 10000, ?, ?)',
+        plate, brand, model, year, first[c].id, base, km, `${y + 1}-03-31`, `${y + 1}-06-30`,
+      );
+    const rent = (plate, customer, from) => {
+      const v = free(plate);
+      const r = createReservation(db, { customer_id: customer, category_id: v.category_id, vehicle_id: v.id, pickup_branch_id: base, pickup_at: at(from), return_at: at(from + 7), status: 'confirmada' });
+      checkout(db, r.id, { out_at: at(from), out_km: v.km, out_fuel: 8 }, null);
+      return r;
+    };
+    // Nicolás debe la última semana; Sofía está al día; Damián pidió un auto para la semana que viene.
+    const nico = rent('AH707OP', person('Nicolás Vega', '34111555', '+54 9 11 6011-2233', 'Uber, DiDi'), -15);
+    pay(nico.id, nico.total, -15);
+    pay(nico.id, nico.total, -8);
+    const sofi = rent('AH808QR', person('Sofía Acosta', '36222666', '+54 9 11 6022-3344', 'Cabify'), -9);
+    pay(sofi.id, sofi.total, -9);
+    pay(sofi.id, sofi.total, -2, 'mercadopago');
+    for (const r of [nico, sofi]) choferes.renew(db, r.id);
+    const next = free('AH909ST');
+    createReservation(db, { customer_id: person('Damián Luna', '38333777', '+54 9 11 6033-4455', 'PedidosYa'), category_id: next.category_id, vehicle_id: next.id, pickup_branch_id: base, pickup_at: at(3), return_at: at(10), status: 'pendiente', notes: 'Trae la licencia profesional el lunes' });
+    ins("INSERT INTO expenses (vehicle_id, date, kind, description, amount) VALUES ((SELECT id FROM vehicles WHERE plate = 'AH707OP'), ?, 'repuestos', 'Batería nueva', 92000)", at(-6).slice(0, 10));
+    return true;
+  }
+
+  const branch = (code) => (db.prepare('SELECT id FROM branches WHERE code = ?').get(code) || {}).id;
+  const [air, center] = [branch('USH'), branch('CEN')];
+  if (!air || !center) return false;
+  for (const [plate, name, doc, phone, from, to, status, hour, pickup, back, source, notes, out, paid] of [
+    ['AF654JK', 'Rocío Blanco', '33444111', '+54 9 2901 44-1020', -3, 0, 'confirmada', 18, center, center, 'manual', '', true, 0.5], // vuelve hoy y debe la mitad
+    ['AF456DE', 'Oliver Grant', '41222888', '+1 646 555 0187', -6, -1, 'confirmada', 11, center, center, 'manual', 'No contesta: avisar antes de cobrar el día extra', true, 1], // atrasada
+    ['AG222PQ', 'Marina Quiroga', '30777222', '+54 9 351 600-4411', 0, 4, 'confirmada', 17, center, center, 'manual', '', false, 0.3], // sale hoy
+    ['AF123BC', 'Hugo Paredes', '27888333', '+54 9 261 600-7788', -4, 0, 'confirmada', 20, air, air, 'manual', '', true, 1], // vuelve hoy, ya pagó
+    ['AG987LM', 'Clara Benzi', '39111444', '+56 9 7766 5544', 1, 6, 'pendiente', 9, air, center, 'cotizador', 'Vuelo AR 1882. Devuelve en el centro', false, 0], // pedido web
+  ]) {
+    const v = free(plate);
+    if (!v) continue;
+    const r = createReservation(db, {
+      customer_id: person(name, doc, phone), category_id: v.category_id, vehicle_id: v.id, pickup_branch_id: pickup, return_branch_id: back,
+      pickup_at: at(from, hour), return_at: at(to, hour), status, source, notes, allow_overbooking: true,
+    });
+    if (out) checkout(db, r.id, { out_at: at(from, hour), out_km: v.km, out_fuel: 8 }, null);
+    if (paid) pay(r.id, Math.round(r.total * paid), Math.min(from, 0), paid === 1 ? 'tarjeta' : 'transferencia');
+  }
+  // Vencimientos cerca, uno en cada sucursal.
+  db.prepare("UPDATE vehicles SET insurance_expiry = ? WHERE plate = 'AG444TU'").run(at(10).slice(0, 10));
+  db.prepare("UPDATE vehicles SET vtv_expiry = ? WHERE plate = 'AE555VW'").run(at(20).slice(0, 10));
+  return true;
+}
+
 if (require.main === module) {
   const db = openDb();
   const admin = ensureAdmin(db);
@@ -423,4 +506,4 @@ if (require.main === module) {
   if (admin) console.log(`Usuario inicial: ${admin.email} / ${admin.password}`);
 }
 
-module.exports = { seed, seedDemo, seedChoferes, seedHistory };
+module.exports = { seed, seedDemo, seedChoferes, seedHistory, seedSimulaciones };
