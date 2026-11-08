@@ -31,6 +31,9 @@ function setupSteps(db) {
   return { steps, done: steps.filter((x) => x.done).length, total: steps.length };
 }
 
+/** Sucursal elegida en el selector (?branch=3). Solo dígitos: el número va directo en las consultas. */
+const branchOf = (req) => (/^\d+$/.test(req.query.branch) ? Number(req.query.branch) : null);
+
 function operationsRoutes(db) {
   const router = express.Router();
 
@@ -74,6 +77,8 @@ function operationsRoutes(db) {
   router.get('/reservations', (req, res) => {
     const where = [];
     const params = [];
+    const branch = branchOf(req);
+    if (branch) where.push(`(r.pickup_branch_id = ${branch} OR r.return_branch_id = ${branch})`);
     if (req.query.status) {
       const list = String(req.query.status).split(',');
       where.push(`r.status IN (${list.map(() => '?').join(',')})`);
@@ -245,13 +250,13 @@ function operationsRoutes(db) {
     const to = fmtLocal(new Date(start.getFullYear(), start.getMonth(), start.getDate() + days));
     const vehicles = db
       .prepare(
-        `SELECT v.id, v.plate, v.brand, v.model, v.status, v.category_id, c.code AS category_code, c.name AS category_name
+        `SELECT v.id, v.plate, v.brand, v.model, v.status, v.category_id, v.branch_id, c.code AS category_code, c.name AS category_name
          FROM vehicles v JOIN categories c ON c.id = v.category_id ORDER BY c.daily_rate, c.code, v.plate`,
       )
       .all();
     const reservations = db
       .prepare(
-        `SELECT r.id, r.code, r.status, r.source, r.pickup_at, r.return_at, r.vehicle_id, r.category_id, cat.code AS category_code, c.full_name AS customer_name
+        `SELECT r.id, r.code, r.status, r.source, r.pickup_at, r.return_at, r.vehicle_id, r.category_id, r.pickup_branch_id, r.return_branch_id, cat.code AS category_code, c.full_name AS customer_name
          FROM reservations r JOIN customers c ON c.id = r.customer_id JOIN categories cat ON cat.id = r.category_id
          WHERE r.status IN (${[...BLOCKING, 'finalizada'].map((s) => `'${s}'`).join(',')}) AND r.pickup_at < ? AND r.return_at > ?
          ORDER BY r.pickup_at`,
@@ -260,15 +265,26 @@ function operationsRoutes(db) {
     const maintenance = db
       .prepare(`SELECT id, vehicle_id, kind, start_date, end_date FROM maintenance WHERE status = 'abierto' OR (end_date >= ? AND start_date <= ?)`)
       .all(from.slice(0, 10), to.slice(0, 10));
-    res.json({ from, to, days, vehicles, reservations, maintenance });
+    const branch = branchOf(req);
+    if (!branch) return res.json({ from, to, days, vehicles, reservations, maintenance });
+    // Con una sucursal elegida: sus autos, más los que salen o vuelven por ella esos días (si no, esa reserva no se vería).
+    const here = (r) => r.pickup_branch_id === branch || r.return_branch_id === branch;
+    const passing = new Set(reservations.filter(here).map((r) => r.vehicle_id));
+    const shown = vehicles.filter((v) => v.branch_id === branch || passing.has(v.id));
+    const ids = new Set(shown.map((v) => v.id));
+    res.json({ from, to, days, vehicles: shown, reservations: reservations.filter((r) => here(r) || ids.has(r.vehicle_id)), maintenance: maintenance.filter((m) => ids.has(m.vehicle_id)) });
   });
 
   // --- Panel ---
-  router.get('/dashboard', (_req, res) => {
+  router.get('/dashboard', (req, res) => {
     const now = nowLocal();
     const today = now.slice(0, 10);
     chargeInsurance(db, today);
-    const fleet = db.prepare('SELECT status, COUNT(*) AS n FROM vehicles GROUP BY status').all();
+    // Con una sucursal elegida, todo se cuenta solo para ella.
+    const branch = branchOf(req);
+    const atR = branch ? ` AND (r.pickup_branch_id = ${branch} OR r.return_branch_id = ${branch})` : '';
+    const atV = branch ? ` AND v.branch_id = ${branch}` : '';
+    const fleet = db.prepare(`SELECT v.status, COUNT(*) AS n FROM vehicles v WHERE 1 = 1${atV} GROUP BY v.status`).all();
     const byStatus = Object.fromEntries(fleet.map((f) => [f.status, f.n]));
     const total = fleet.reduce((a, f) => a + f.n, 0);
     const operational = total - (byStatus.mantenimiento || 0) - (byStatus.fuera_servicio || 0);
@@ -289,40 +305,40 @@ function operationsRoutes(db) {
       now,
       fleet: { total, operational, ...byStatus },
       occupancy: operational ? Math.round(((byStatus.alquilado || 0) / operational) * 100) : 0,
-      pickups_today: db.prepare(`${baseSelect} WHERE r.status IN ('pendiente','confirmada') AND substr(r.pickup_at,1,10) = ? ORDER BY r.pickup_at`).all(today),
+      pickups_today: db.prepare(`${baseSelect} WHERE r.status IN ('pendiente','confirmada') AND substr(r.pickup_at,1,10) = ?${atR} ORDER BY r.pickup_at`).all(today),
       // Choferes: el alquiler es por tiempo indeterminado (se renueva solo); su fin de período no es una devolución.
-      returns_today: db.prepare(`${baseSelect} WHERE r.status = 'en_curso' AND substr(r.return_at,1,10) = ? AND ${FIXED} ORDER BY r.return_at`).all(today),
-      overdue: db.prepare(`${baseSelect} WHERE r.status = 'en_curso' AND r.return_at < ? AND ${FIXED} ORDER BY r.return_at`).all(now),
-      late_pickups: db.prepare(`${baseSelect} WHERE r.status IN ('pendiente','confirmada') AND substr(r.pickup_at,1,10) < ? ORDER BY r.pickup_at`).all(today),
-      pending_confirmation: db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE status = 'pendiente'`).get().n,
+      returns_today: db.prepare(`${baseSelect} WHERE r.status = 'en_curso' AND substr(r.return_at,1,10) = ? AND ${FIXED}${atR} ORDER BY r.return_at`).all(today),
+      overdue: db.prepare(`${baseSelect} WHERE r.status = 'en_curso' AND r.return_at < ? AND ${FIXED}${atR} ORDER BY r.return_at`).all(now),
+      late_pickups: db.prepare(`${baseSelect} WHERE r.status IN ('pendiente','confirmada') AND substr(r.pickup_at,1,10) < ?${atR} ORDER BY r.pickup_at`).all(today),
+      pending_confirmation: db.prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE r.status = 'pendiente'${atR}`).get().n,
       // Pedidos para confirmar (link de reservas, cotizador o cargados como pendientes): la pantalla Hoy los lista.
-      pending: db.prepare(`${baseSelect} WHERE r.status = 'pendiente' ORDER BY r.pickup_at LIMIT 50`).all(),
+      pending: db.prepare(`${baseSelect} WHERE r.status = 'pendiente'${atR} ORDER BY r.pickup_at LIMIT 50`).all(),
       unassigned_next_7d: db
-        .prepare(`SELECT COUNT(*) AS n FROM reservations WHERE status IN ('pendiente','confirmada') AND vehicle_id IS NULL AND pickup_at <= ?`)
+        .prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE r.status IN ('pendiente','confirmada') AND r.vehicle_id IS NULL AND r.pickup_at <= ?${atR}`)
         .get(fmtLocal(new Date(Date.now() + 7 * 86400000))).n,
       month_revenue: db
-        .prepare(`SELECT COALESCE(SUM(CASE WHEN kind='pago' THEN amount WHEN kind='devolucion' THEN -amount ELSE 0 END),0) AS n FROM payments WHERE substr(created_at,1,7) = ?`)
+        .prepare(`SELECT COALESCE(SUM(CASE WHEN p.kind='pago' THEN p.amount WHEN p.kind='devolucion' THEN -p.amount ELSE 0 END),0) AS n FROM payments p JOIN reservations r ON r.id = p.reservation_id WHERE substr(p.created_at,1,7) = ?${atR}`)
         .get(month).n,
-      month_reservations: db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE substr(created_at,1,7) = ? AND status <> 'cancelada'`).get(month).n,
-      from_quoter_month: db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE substr(created_at,1,7) = ? AND source = 'cotizador'`).get(month).n,
+      month_reservations: db.prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE substr(r.created_at,1,7) = ? AND r.status <> 'cancelada'${atR}`).get(month).n,
+      from_quoter_month: db.prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE substr(r.created_at,1,7) = ? AND r.source = 'cotizador'${atR}`).get(month).n,
       tomorrow: {
-        pickups: db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE status IN ('pendiente','confirmada') AND substr(pickup_at,1,10) = ?`).get(tomorrow).n,
-        returns: db.prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE status IN ('pendiente','confirmada','en_curso') AND substr(return_at,1,10) = ? AND ${FIXED}`).get(tomorrow).n,
+        pickups: db.prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE r.status IN ('pendiente','confirmada') AND substr(r.pickup_at,1,10) = ?${atR}`).get(tomorrow).n,
+        returns: db.prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE status IN ('pendiente','confirmada','en_curso') AND substr(return_at,1,10) = ? AND ${FIXED}${atR}`).get(tomorrow).n,
       },
       quote_errors: db.prepare(`SELECT COUNT(*) AS n FROM quote_inbox WHERE status = 'error'`).get().n,
       alerts: {
         documents: db
           .prepare(
-            `SELECT id, plate, insurance_expiry, vtv_expiry, permit_expiry FROM vehicles
-             WHERE (insurance_expiry IS NOT NULL AND insurance_expiry <= date(?, '+30 day')) OR (vtv_expiry IS NOT NULL AND vtv_expiry <= date(?, '+30 day'))
-               OR (permit_expiry IS NOT NULL AND permit_expiry <= date(?, '+30 day'))
-             ORDER BY plate`,
+            `SELECT v.id, v.plate, v.insurance_expiry, v.vtv_expiry, v.permit_expiry FROM vehicles v
+             WHERE ((v.insurance_expiry IS NOT NULL AND v.insurance_expiry <= date(?, '+30 day')) OR (v.vtv_expiry IS NOT NULL AND v.vtv_expiry <= date(?, '+30 day'))
+               OR (v.permit_expiry IS NOT NULL AND v.permit_expiry <= date(?, '+30 day')))${atV}
+             ORDER BY v.plate`,
           )
           .all(today, today, today),
-        maintenance_open: db.prepare(`SELECT COUNT(*) AS n FROM maintenance WHERE status = 'abierto'`).get().n,
+        maintenance_open: db.prepare(`SELECT COUNT(*) AS n FROM maintenance m JOIN vehicles v ON v.id = m.vehicle_id WHERE m.status = 'abierto'${atV}`).get().n,
       },
       setup: setupSteps(db),
-      choferes: choferes.isChoferes(getSettings(db)) ? choferes.dashboardChoferes(db, R.getReservation, today) : null,
+      choferes: choferes.isChoferes(getSettings(db)) ? choferes.dashboardChoferes(db, R.getReservation, today, branch) : null,
     });
   });
 

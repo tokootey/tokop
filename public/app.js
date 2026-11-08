@@ -285,7 +285,29 @@ async function loadCatalogs() {
   logo.src = settings.company_logo || logo.dataset.floty;
   $('.brand small').classList.toggle('hidden', !settings.company_name); // "Floty con Floty" no
   document.title = settings.company_name ? `${settings.company_name} · Floty` : 'Floty · Gestión para rent a car';
+  renderBranchPick();
 }
+
+// Selector de sucursal: con dos o más, Hoy, el calendario, las reservas y los autos muestran solo la elegida. Se recuerda en este navegador.
+const BRANCH_KEY = 'floty-sucursal';
+const branchQS = (sep = '?') => (state.branch ? `${sep}branch=${state.branch}` : '');
+function renderBranchPick() {
+  const list = state.branches.filter((b) => b.active);
+  let saved = null;
+  try {
+    saved = Number(localStorage.getItem(BRANCH_KEY));
+  } catch {}
+  state.branch = list.length > 1 && list.some((b) => b.id === saved) ? saved : null;
+  $('#branch-pick').classList.toggle('hidden', list.length < 2 || !!state.user.owner_mode);
+  $('#branch-select').innerHTML = `<option value="">${L('Todas', 'All')}</option>${list.map((b) => `<option value="${b.id}"${b.id === state.branch ? ' selected' : ''}>${esc(b.name)}</option>`).join('')}`;
+}
+$('#branch-select').addEventListener('change', (e) => {
+  state.branch = Number(e.target.value) || null;
+  try {
+    localStorage.setItem(BRANCH_KEY, state.branch || '');
+  } catch {}
+  route();
+});
 
 async function startSession() {
   try {
@@ -540,7 +562,7 @@ const waLink = (phone) => {
 };
 
 on(/^\/panel$/, async (view) => {
-  const d = await GET('/dashboard');
+  const d = await GET(`/dashboard${branchQS()}`);
   const car = (r) => (r.vehicle_plate ? `${esc([r.vehicle_brand, r.vehicle_model].filter(Boolean).join(' ') || r.category_name)} · ${esc(r.vehicle_plate)}` : `${esc(r.category_name)} · sin auto asignado`);
   const owes = (r) => {
     const due = Math.round((Number(r.total) - Number(r.paid)) * 100) / 100;
@@ -755,6 +777,7 @@ on(/^\/reservas$/, async (view) => {
     if (f.source) qs.set('source', f.source);
     if (f.from) qs.set('from', f.from);
     if (f.to) qs.set('to', f.to);
+    if (state.branch) qs.set('branch', state.branch);
     const rows = await GET(`/reservations?${qs}`);
     $('#res-table').innerHTML = rows.length
       ? `<table><thead><tr><th>Código</th><th>Cliente</th><th>Retiro</th><th>Devolución</th><th>Cat.</th><th>Vehículo</th><th>Estado</th><th class="right">Total</th></tr></thead><tbody>
@@ -900,6 +923,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
     </form>`;
   const form = $('#new-res');
   const pb = form.pickup_branch_id;
+  if (state.branch && [...pb.options].some((o) => Number(o.value) === state.branch)) pb.value = state.branch;
   if (preVehicle && preVehicle.branch_id && branchOptions().some(([id]) => id === preVehicle.branch_id)) pb.value = preVehicle.branch_id;
   if (pre.get('lugar') && [...pb.options].some((o) => o.value === pre.get('lugar'))) pb.value = pre.get('lugar');
   form.return_branch_id.value = pb.value;
@@ -1182,7 +1206,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         </div>
         <p class="field-warn hidden" id="qr-past">${ICON.alert}El retiro es en el pasado. Revisá la fecha antes de guardar.</p>
         <div class="chips">${QUICK.map(([n, label]) => `<button type="button" class="chip" data-days="${n}">${label}</button>`).join('')}</div>
-        <label class="qr-field" style="margin-top:8px">Lugar de retiro<select name="place">${branches.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('')}${choferesMode() ? '' : '<option value="hotel">Hotel (se lo llevamos)</option>'}</select></label>
+        <label class="qr-field" style="margin-top:8px">Lugar de retiro<select name="place">${branches.map((b) => `<option value="${b.id}"${b.id === state.branch ? ' selected' : ''}>${esc(b.name)}</option>`).join('')}${choferesMode() ? '' : '<option value="hotel">Hotel (se lo llevamos)</option>'}</select></label>
         <div class="qr-hotel hidden" id="qr-hotel">
           ${
             hotelFee()
@@ -2579,7 +2603,7 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
   }
   const days = 14;
   const fromStr = localISO(planningFrom).slice(0, 10);
-  const p = await GET(`/planning?from=${fromStr}&days=${days}`);
+  const p = await GET(`/planning?from=${fromStr}&days=${days}${branchQS('&')}`);
   const start = planningFrom.getTime();
   const span = days * 86400000;
   const pos = (s) => {
@@ -2980,7 +3004,7 @@ on(
     };
     const load = async () => {
       const q = $('#fleet-q').value.trim();
-      rows = await GET(`/vehicles${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+      rows = await GET(`/vehicles${q ? `?q=${encodeURIComponent(q)}${branchQS('&')}` : branchQS()}`);
       paint();
     };
     $('#fleet-chips').addEventListener('click', (e) => {
