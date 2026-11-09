@@ -159,6 +159,11 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     '/extras',
     crud(db, { table: 'extras', fields: ['code', 'name', 'price', 'charge_type', 'max_price', 'aliases', 'active', 'kind', 'deductible'], required: ['name'], order: 'name', adminWrite: true }),
   );
+  router.use('/seasons', (req, _res, next) => {
+    const m = (req.body || {}).multiplier;
+    if (['POST', 'PUT'].includes(req.method) && m !== undefined && !(Number(m) > 0)) fail(400, 'El multiplicador tiene que ser mayor que 0 (0.8 = 20 % de descuento)');
+    next();
+  });
   router.use(
     '/seasons',
     crud(db, {

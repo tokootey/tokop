@@ -38,11 +38,16 @@ function rentalDays(pickupAt, returnAt, graceHours = 2) {
 }
 
 function seasonMultiplier(seasons, dateStr) {
-  let mult = 1;
+  // Vale el mayor recargo y la mayor promoción de ese día (0.8 = 20 % menos): una promo también baja la temporada alta.
+  let up = 1;
+  let down = 1;
   for (const s of seasons) {
-    if (dateStr >= s.start_date && dateStr <= s.end_date) mult = Math.max(mult, s.multiplier);
+    if (dateStr >= s.start_date && dateStr <= s.end_date) {
+      up = Math.max(up, s.multiplier);
+      down = Math.min(down, s.multiplier);
+    }
   }
-  return mult;
+  return up * down;
 }
 
 /**
