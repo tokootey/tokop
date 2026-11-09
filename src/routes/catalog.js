@@ -243,6 +243,12 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     if (!/^[+\d\s().-]+$/.test(phone) || digits < 8 || digits > 15) fail(400, 'El WhatsApp tiene que ser un número con código de país, por ejemplo +54 9 2901 555123');
     next();
   });
+  // Licencia vencida: no se guarda, así no queda un cliente que después no puede retirar el auto.
+  router.use('/customers', (req, _res, next) => {
+    const expiry = ['POST', 'PUT'].includes(req.method) ? normDate((req.body || {}).license_expiry) : null;
+    if (expiry && expiry < nowLocal().slice(0, 10)) fail(400, 'La licencia está vencida: cargá una vigente');
+    next();
+  });
   router.use(
     '/customers',
     crud(db, {

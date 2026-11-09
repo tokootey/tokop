@@ -1583,7 +1583,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       <div class="card">
         <h2>Datos de la reserva</h2>
         <dl class="info">
-          <dt>Cliente</dt><dd><b>${esc(r.customer_name)}</b><br><small>${esc(r.customer_doc || '')} · ${esc(r.customer_phone || '')} · ${esc(r.customer_email || '')}</small>
+          <dt>Cliente</dt><dd><b>${esc(r.customer_name)}</b>${r.customer_id ? ' <button class="btn small no-print" type="button" data-edit-customer style="margin-left:6px">Editar datos</button>' : ''}<br><small>${esc(r.customer_doc || '')} · ${esc(r.customer_phone || '')} · ${esc(r.customer_email || '')}</small>
             <br><button class="btn small no-print" type="button" data-docs style="margin-top:6px">Documentación</button></dd>
           <dt>Retiro</dt><dd>${fmtDT(r.pickup_at)} · ${esc(r.pickup_branch_name || '')}</dd>
           <dt>Devolución</dt><dd>${fmtDT(r.return_at)} · ${esc(r.return_branch_name || '')}</dd>
@@ -1767,16 +1767,18 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         formHtml(
           [
             { name: 'vehicle_id', label: 'Vehículo', type: 'select', options: vOpts, required: true, full: true },
+            ...licenseFields(r),
             { name: 'out_at', label: 'Fecha y hora de salida', type: 'datetime-local', required: true },
             { name: 'out_km', label: 'Km de salida', type: 'number', required: true },
             { name: 'out_fuel', label: 'Combustible (octavos)', type: 'select', options: FUEL_OPTS, required: true },
             { name: 'out_notes', label: 'Observaciones / estado del vehículo', type: 'textarea', full: true },
             { name: 'fotos', label: 'Fotos del auto al entregarlo (frente, laterales, cola, interior, tablero con km y combustible)', type: 'photos' },
           ],
-          { vehicle_id: first.id, out_at: localISO(new Date()), out_km: first.km, out_fuel: first.fuel ?? 8 },
+          { vehicle_id: first.id, ...licenseValues(r), out_at: localISO(new Date()), out_km: first.km, out_fuel: first.fuel ?? 8 },
           'Entregar y abrir contrato',
         ),
-        async (d, form) => {
+        async (data, form) => {
+          const d = await saveLicense(r, data);
           await POST(`/reservations/${r.id}/checkout`, { ...d, vehicle_id: Number(d.vehicle_id), out_fuel: Number(d.out_fuel) });
           toast('Vehículo entregado. Contrato abierto.');
           try {
@@ -1807,15 +1809,17 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           [
             { name: 'vehicle_id', label: 'Vehículo', type: 'select', options: list.map((v) => [v.id, `${v.plate} · ${v.brand} ${v.model}${v.km !== '' ? ` · ${v.km} km` : ''}`]), required: true, full: true },
             { name: 'left_place', label: 'Dónde queda el auto (el cliente lo ve recién al firmar)', required: true, full: true },
+            ...licenseFields(r),
             { name: 'out_km', label: 'Km de salida', type: 'number', required: true },
             { name: 'out_fuel', label: 'Combustible (octavos)', type: 'select', options: FUEL_OPTS, required: true },
             { name: 'out_notes', label: 'Observaciones / estado del vehículo', type: 'textarea', full: true },
             { name: 'fotos', label: 'Fotos del auto (frente, laterales, cola, interior, tablero con km y combustible)', type: 'photos' },
           ],
-          { vehicle_id: first.id, left_place: (r.signature && r.signature.left_place) || '', out_km: pre ? pre.out_km : first.km, out_fuel: pre ? pre.out_fuel : first.fuel ?? 8, out_notes: (pre && pre.out_notes) || '' },
+          { vehicle_id: first.id, ...licenseValues(r), left_place: (r.signature && r.signature.left_place) || '', out_km: pre ? pre.out_km : first.km, out_fuel: pre ? pre.out_fuel : first.fuel ?? 8, out_notes: (pre && pre.out_notes) || '' },
           'Guardar pre-entrega',
         ),
-        async (d, form) => {
+        async (data, form) => {
+          const d = await saveLicense(r, data);
           await POST(`/reservations/${r.id}/pre-delivery`, { ...d, vehicle_id: Number(d.vehicle_id), out_fuel: Number(d.out_fuel), terms: contractTermsList(r) });
           toast('Pre-entrega guardada. El alquiler arranca cuando el cliente firme.');
           try {
@@ -2065,6 +2069,15 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   );
   wireFiles(view, r, reload);
   $('[data-docs]', view)?.addEventListener('click', () => openDocuments(r.customer_id, r.customer_name));
+  // Los datos del cliente también se completan desde la reserva (p. ej. al entregar), sin ir a Clientes.
+  $('[data-edit-customer]', view)?.addEventListener('click', async () => {
+    const cust = await run(() => GET(`/customers/${r.customer_id}`));
+    openModal(`Datos de ${cust.full_name}`, formHtml(CUSTOMER_FIELDS, cust), async (d) => {
+      await PUT(`/customers/${cust.id}`, d);
+      toast('Datos del cliente guardados');
+      reload();
+    });
+  });
   // Con ?accion=checkout|checkin|pay se abre ese paso directo si el estado lo permite (pay: sólo si queda saldo).
   if (accion) {
     history.replaceState(null, '', `#/reservas/${r.id}`);
@@ -3047,6 +3060,22 @@ function enableDragToMove(container, p, days) {
 /* ============================================================
    Pantallas de ABM (flota, clientes, tarifas, mantenimiento)
    ============================================================ */
+// Entrega y pre-entrega piden la licencia del cliente: sin ella, o vencida antes de la devolución, no se entrega.
+function licenseFields(r) {
+  return [
+    { name: 'license_number', label: 'Licencia del cliente N°', required: true },
+    { name: 'license_expiry', label: 'Vencimiento de la licencia', type: 'date', required: true, attrs: `min="${String(r.return_at).slice(0, 10)}"` },
+  ];
+}
+const licenseValues = (r) => ({ license_number: r.customer_license || '', license_expiry: r.customer_license_expiry || '' });
+// Guarda la licencia en el cliente si cambió y devuelve el resto de los datos del formulario.
+async function saveLicense(r, d) {
+  const { license_number, license_expiry, ...rest } = d;
+  if (license_number !== (r.customer_license || '') || license_expiry !== (r.customer_license_expiry || ''))
+    await PUT(`/customers/${r.customer_id}`, { license_number, license_expiry });
+  return rest;
+}
+
 const CUSTOMER_FIELDS = [
   { name: 'full_name', label: 'Nombre y apellido', required: true, full: true },
   { name: 'doc_type', label: 'Tipo doc.', type: 'select', options: ['DNI', 'Pasaporte', 'CI', 'CUIT', 'RUT', 'Otro'].map((x) => [x, x]), default: 'DNI' },
