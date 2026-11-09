@@ -405,3 +405,31 @@ test('cotizador: los adicionales y el lugar de devolución cambian el precio y l
     db.close();
   }
 });
+
+test('whatsapp: sin conectar no manda; conectado manda la plantilla con el texto en una línea', async () => {
+  const W = require('../src/whatsapp');
+  const { db } = setup();
+  await assert.rejects(W.send(db, '+507 6000 0000', 'Hola'), /no está conectado/);
+  setSetting(db, 'wa_phone_id', '123456');
+  setSetting(db, 'wa_token', 'TOKEN');
+  setSetting(db, 'wa_template', 'floty_aviso');
+  const real = global.fetch;
+  let call;
+  global.fetch = async (url, opts) => {
+    call = { url, opts, body: JSON.parse(opts.body) };
+    return { ok: true, json: async () => ({ messages: [{ id: 'wamid.1' }] }) };
+  };
+  try {
+    await assert.rejects(W.send(db, '12', 'Hola'), /WhatsApp válido/);
+    assert.deepEqual(await W.send(db, '+507 6000-0000', 'Hola Ana!\nContrato: https://x/1\n  Fotos: https://x/2'), { id: 'wamid.1' });
+    assert.equal(call.url, 'https://graph.facebook.com/v21.0/123456/messages');
+    assert.equal(call.opts.headers.Authorization, 'Bearer TOKEN');
+    assert.equal(call.body.to, '50760000000');
+    assert.equal(call.body.template.name, 'floty_aviso');
+    assert.equal(call.body.template.components[0].parameters[0].text, 'Hola Ana! · Contrato: https://x/1 · Fotos: https://x/2');
+    global.fetch = async () => ({ ok: false, status: 400, json: async () => ({ error: { message: 'Template not found' } }) });
+    await assert.rejects(W.send(db, '50760000000', 'Hola'), /Template not found/);
+  } finally {
+    global.fetch = real;
+  }
+});

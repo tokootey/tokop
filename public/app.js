@@ -1181,12 +1181,32 @@ const signedMessage = (r, contract, photos, place) =>
   `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L('Tu contrato firmado', 'Your signed agreement')}: ${contract}\n${L('Fotos del auto', 'Car photos')}: ${photos}${place ? `\n${L('El auto quedó en', 'The car is at')}: ${place}` : ''}`;
 const returnMessage = (r, link) =>
   `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Cuando dejes el auto${r.vehicle_plate ? ` ${r.vehicle_plate}` : ''}, sacale fotos y subilas acá`, `When you leave the car${r.vehicle_plate ? ` ${r.vehicle_plate}` : ''}, take photos of it and upload them here`)}: ${link}`;
-/** Un envío: su propio botón de WhatsApp, para que salga en un mensaje aparte. */
+/** Un envío: su propio botón de WhatsApp, para que salga en un mensaje aparte. Con el WhatsApp de la agencia conectado, sale solo. */
 const sendStep = (title, hint, r, text, link) => `<div class="send-step stack">
     <b>${esc(title)}</b><small class="muted">${esc(hint)}</small>
-    ${r.customer_phone ? `<a class="btn ok" href="${esc(waText(r, text))}" target="_blank" rel="noopener">${WA_ICON}Mandarlo por WhatsApp</a>` : '<small class="error">El cliente no tiene teléfono cargado: copiá el link.</small>'}
+    ${
+      !r.customer_phone
+        ? '<small class="error">El cliente no tiene teléfono cargado: copiá el link.</small>'
+        : state.settings.whatsapp_api
+          ? `<button class="btn ok" type="button" data-wa-send="${r.id}" data-text="${esc(text)}">${WA_ICON}Mandarlo por WhatsApp</button><a class="muted" href="${esc(waText(r, text))}" target="_blank" rel="noopener"><small>o mandarlo desde tu WhatsApp</small></a>`
+          : `<a class="btn ok" href="${esc(waText(r, text))}" target="_blank" rel="noopener">${WA_ICON}Mandarlo por WhatsApp</a>`
+    }
     <input readonly value="${esc(link)}" data-notr aria-label="Link"/>
   </div>`;
+
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-wa-send]');
+  if (!b || b.disabled) return;
+  b.disabled = true;
+  try {
+    await POST(`/reservations/${b.dataset.waSend}/whatsapp`, { text: b.dataset.text });
+    b.textContent = 'Enviado ✓';
+    toast('Mensaje enviado por WhatsApp');
+  } catch (err) {
+    b.disabled = false;
+    toast(err.message, true);
+  }
+});
 
 /** La tarjeta que dejó el cliente: identifica la tarjeta, no permite cobrar. */
 function clientCardHtml(r) {
@@ -3665,7 +3685,7 @@ on(/^\/cotizador$/, async (view) => {
     ['web', 'Formulario web'],
     ['api', 'API del cotizador'],
     ['inbox', `Bandeja (${d.inbox.filter((x) => x.status === 'error').length} con error)`],
-    ['out', 'Avisos salientes'],
+    ['out', 'Avisos salientes y WhatsApp'],
   ];
   view.innerHTML = `
     <div class="page-head"><h1>Integración con el cotizador</h1></div>
@@ -3870,6 +3890,16 @@ on(/^\/cotizador$/, async (view) => {
           <label>Secreto de firma${copy('wh-secret', d.webhook_secret)}</label>
           <div class="actions"><button class="btn primary">Guardar</button><button class="btn" type="button" id="wh-test">Enviar prueba</button><button class="btn danger" type="button" id="wh-regen">Regenerar secreto</button></div>
         </form>
+        <form class="card stack" id="wa-form">
+          <h2>WhatsApp automático</h2>
+          <p class="muted">Con el WhatsApp Business de la agencia conectado (Cloud API de Meta), los links de firma, fotos, devolución y tarjeta salen solos, sin abrir WhatsApp. Va con una plantilla aprobada por Meta, con una sola variable <code>{{1}}</code> para el mensaje. Por ejemplo: <i>Mensaje de tu alquiler: {{1}} Cualquier duda, respondé este mensaje.</i></p>
+          <label>Identificador del número (Phone number ID)<input name="wa_phone_id" inputmode="numeric" value="${esc(d.whatsapp.phone_id)}"/></label>
+          <label>Token de acceso<input name="wa_token" type="password" autocomplete="off" placeholder="${d.whatsapp.has_token ? 'Cargado. Dejalo vacío para no cambiarlo' : 'EAAG…'}"/></label>
+          <label>Nombre de la plantilla<input name="wa_template" value="${esc(d.whatsapp.template)}" placeholder="floty_aviso"/></label>
+          <label>Idioma de la plantilla<input name="wa_template_lang" value="${esc(d.whatsapp.lang || 'es')}"/></label>
+          <p>${d.whatsapp.phone_id && d.whatsapp.has_token && d.whatsapp.template ? badge('confirmada') + ' Conectado' : '<span class="muted">Sin conectar: los mensajes salen con tu WhatsApp, como siempre.</span>'}</p>
+          <div class="actions"><button class="btn primary">Guardar</button></div>
+        </form>
         <div class="card"><h2>Últimos envíos</h2>${
           d.webhook_log.length
             ? `<table><tbody>${d.webhook_log
@@ -3881,6 +3911,12 @@ on(/^\/cotizador$/, async (view) => {
     $('#out-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       await run(() => PUT('/integration', { webhook_url: formData(e.target).webhook_url || '' }), 'Guardado');
+    });
+    $('#wa-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await run(() => PUT('/integration', formData(e.target)), 'Guardado');
+      state.settings = await GET('/settings');
+      route();
     });
     $('#wh-test').addEventListener('click', async () => {
       const r = await run(() => POST('/integration/test-webhook'));
