@@ -355,10 +355,8 @@ function moveOptions(db, id) {
   return { free, swaps };
 }
 
-/** Entrega del vehículo al cliente (check-out): abre el contrato. */
-function checkout(db, id, input, userId) {
-  const r = getReservation(db, id);
-  if (!r) fail(404, 'Reserva inexistente');
+/** ¿Se puede entregar? Lo comprueba la entrega y también la pre-entrega, para no enterarse recién cuando firma el cliente. */
+function checkoutCheck(db, r, input) {
   if (!['pendiente', 'confirmada'].includes(r.status)) fail(409, 'La reserva no está en condiciones de ser entregada');
   const vehicleId = Number(input.vehicle_id || r.vehicle_id);
   if (!vehicleId) fail(400, 'Asigná un vehículo antes de entregar');
@@ -375,6 +373,14 @@ function checkout(db, id, input, userId) {
   const outFuel = input.out_fuel !== undefined && input.out_fuel !== '' ? Number(input.out_fuel) : vehicle.fuel;
   if (outKm < vehicle.km) fail(400, `El km de salida no puede ser menor al registrado (${vehicle.km})`);
   if (!(outFuel >= 0 && outFuel <= 8)) fail(400, 'Combustible: valor entre 0 y 8 (octavos)');
+  return { vehicleId, outKm, outFuel };
+}
+
+/** Entrega del vehículo al cliente (check-out): abre el contrato. */
+function checkout(db, id, input, userId) {
+  const r = getReservation(db, id);
+  if (!r) fail(404, 'Reserva inexistente');
+  const { vehicleId, outKm, outFuel } = checkoutCheck(db, r, input);
 
   tx(db, () => {
     if (vehicleId !== r.vehicle_id) assertAvailability(db, { ...r, vehicle_id: vehicleId }, r.id);
@@ -500,6 +506,7 @@ module.exports = {
   assignVehicle,
   swapVehicles,
   moveOptions,
+  checkoutCheck,
   checkout,
   checkin,
   addPayment,

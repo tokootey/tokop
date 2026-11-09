@@ -72,6 +72,21 @@ function sendStored(res, abs, f) {
   res.sendFile(path.resolve(abs)); // la carpeta puede venir relativa (DB_FILE relativo)
 }
 
+/** Guarda un archivo ya validado en la reserva y lo deja en su historial. userId vacío: lo subió el cliente con su link. */
+function saveReservationFile(db, uploadsDir, reservationId, { stage, name, mime, body, userId }) {
+  const rel = path.join(String(reservationId), `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${TYPES[mime]}`);
+  const abs = path.join(uploadsDir, rel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, body);
+  const id = Number(
+    db
+      .prepare('INSERT INTO reservation_files (reservation_id, stage, name, mime, size, path, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(reservationId, stage, name, mime, body.length, rel, userId || null, nowLocal().replace('T', ' ')).lastInsertRowid,
+  );
+  db.prepare('INSERT INTO reservation_log (reservation_id, user_id, action, detail) VALUES (?, ?, ?, ?)').run(reservationId, userId || null, 'archivo_subido', `${stage}: ${name}`);
+  return db.prepare('SELECT id, stage, name, mime, size, created_at FROM reservation_files WHERE id = ?').get(id);
+}
+
 /**
  * Fotos y documentación de cada alquiler (estado del auto en la entrega y en la devolución).
  * El archivo se envía tal cual en el cuerpo del POST, con su Content-Type; los datos van en la URL.
@@ -88,18 +103,7 @@ function fileRoutes(db, uploadsDir) {
     const mime = uploadedType(req);
     const stage = STAGES.includes(req.query.stage) ? req.query.stage : 'otro';
     const name = String(req.query.name || `foto.${TYPES[mime]}`).replace(/[\\/\r\n]/g, '_').slice(0, 120);
-
-    const rel = path.join(String(r.id), `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${TYPES[mime]}`);
-    const abs = path.join(uploadsDir, rel);
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, req.body);
-    const id = Number(
-      db
-        .prepare('INSERT INTO reservation_files (reservation_id, stage, name, mime, size, path, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(r.id, stage, name, mime, req.body.length, rel, req.user.id, nowLocal().replace('T', ' ')).lastInsertRowid,
-    );
-    logAction(r.id, req.user.id, 'archivo_subido', `${stage}: ${name}`);
-    res.status(201).json(db.prepare('SELECT id, stage, name, mime, size, created_at FROM reservation_files WHERE id = ?').get(id));
+    res.status(201).json(saveReservationFile(db, uploadsDir, r.id, { stage, name, mime, body: req.body, userId: req.user.id }));
   });
 
   router.get('/reservations/:id/files', (req, res) => {
@@ -174,4 +178,4 @@ function fileRoutes(db, uploadsDir) {
   return router;
 }
 
-module.exports = { fileRoutes, sendStored, looksLike, TYPES, STAGES, DOC_KINDS, removeCustomerDocuments };
+module.exports = { fileRoutes, sendStored, uploadedType, saveReservationFile, MAX_PDF, looksLike, TYPES, STAGES, DOC_KINDS, removeCustomerDocuments };
