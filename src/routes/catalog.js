@@ -2,7 +2,7 @@
 
 const express = require('express');
 const { requireAdmin, audit } = require('../auth');
-const { fail, pick, normDate, nowLocal } = require('../util');
+const { fail, pick, normDate, nowLocal, fmtLocal } = require('../util');
 const { removeCustomerDocuments } = require('./files');
 
 /**
@@ -158,6 +158,39 @@ function catalogRoutes(db, { uploadsDir } = {}) {
   router.use(
     '/extras',
     crud(db, { table: 'extras', fields: ['code', 'name', 'price', 'charge_type', 'max_price', 'aliases', 'active', 'kind', 'deductible'], required: ['name'], order: 'name', adminWrite: true }),
+  );
+  router.use('/seasons', (req, _res, next) => {
+    const m = (req.body || {}).multiplier;
+    if (['POST', 'PUT'].includes(req.method) && m !== undefined && !(Number(m) >= 1)) fail(400, 'Una temporada solo sube el precio: para bajarlo, cargá una promoción');
+    next();
+  });
+  // La promo se carga por cantidad de días o por fechas fijas; se guarda siempre como fechas.
+  router.use('/promotions', (req, _res, next) => {
+    if (!['POST', 'PUT'].includes(req.method)) return next();
+    const b = req.body || {};
+    const start = normDate(b.start_date);
+    if (Number(b.days) > 0) {
+      const d = new Date(`${start}T12:00`);
+      d.setDate(d.getDate() + Math.floor(Number(b.days)) - 1);
+      b.end_date = fmtLocal(d).slice(0, 10);
+    }
+    if (!b.end_date) fail(400, 'Poné la cantidad de días o hasta qué fecha dura la promo');
+    if (normDate(b.end_date) < start) fail(400, 'La promo termina antes de empezar');
+    const category = db.prepare('SELECT daily_rate FROM categories WHERE id = ?').get(Number(b.category_id));
+    if (!category) fail(400, 'Elegí el auto de la promo');
+    if (!(Number(b.promo_rate) > 0) || Number(b.promo_rate) >= category.daily_rate) fail(400, `El precio de promo tiene que ser mayor que 0 y menor que la tarifa del auto (${category.daily_rate})`);
+    next();
+  });
+  router.use(
+    '/promotions',
+    crud(db, {
+      table: 'promotions',
+      fields: ['name', 'category_id', 'start_date', 'end_date', 'promo_rate', 'active'],
+      required: ['name', 'category_id', 'start_date', 'end_date', 'promo_rate'],
+      order: 'start_date DESC',
+      adminWrite: true,
+      dateFields: ['start_date', 'end_date'],
+    }),
   );
   router.use(
     '/seasons',

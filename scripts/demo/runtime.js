@@ -11,7 +11,9 @@
   const PROFILE = __PROFILE__;
   // Demo general: al entrar se elige "alquiler turístico" o "autos para trabajo" (?tipo=trabajo); cada una guarda sus datos aparte.
   let TIPO = 'turismo';
-  if (!PROFILE) {
+  // ?tipo=precios: el ejemplo de precios según disponibilidad, con datos aparte. No se recuerda: la demo general sigue igual.
+  const PRECIOS = !PROFILE && new URLSearchParams(location.search).get('tipo') === 'precios';
+  if (!PROFILE && !PRECIOS) {
     try {
       const pedido = new URLSearchParams(location.search).get('tipo');
       if (pedido) localStorage.setItem('rentacar-demo-tipo', pedido);
@@ -19,7 +21,7 @@
     } catch {}
     window.__demoTipo = TIPO;
   }
-  const SUFFIX = PROFILE ? `-${PROFILE}` : TIPO === 'trabajo' ? '-trabajo' : '';
+  const SUFFIX = PROFILE ? `-${PROFILE}` : PRECIOS ? '-precios3' : TIPO === 'trabajo' ? '-trabajo' : '';
   const STORE_KEY = `rentacar-demo-db-v1${SUFFIX}`;
   const COOKIE_KEY = `rentacar-demo-cookies${SUFFIX}`;
 
@@ -322,7 +324,13 @@
     if (!initialBytes) {
       ensureAdmin(db);
       if (PROFILE) req('./src/perfil.js').seed(db);
-      else if (TIPO === 'trabajo') req('./src/seed.js').seedChoferes(db);
+      else if (PRECIOS) {
+        req('./src/demand-example.js').demandExample(db);
+        setSetting(db, 'company_name', 'Agencia de ejemplo (Panamá)');
+        // A cuatro semanas, una promoción del SUV: de USD 65 a USD 50 por día.
+        const inDays = (n) => req('./src/util.js').fmtLocal(new Date(Date.now() + n * 864e5)).slice(0, 10);
+        db.prepare("INSERT INTO promotions (name, category_id, start_date, end_date, promo_rate) SELECT 'Promo diciembre', id, ?, ?, 50 FROM categories WHERE code = 'EJS'").run(inDays(28), inDays(35));
+      } else if (TIPO === 'trabajo') req('./src/seed.js').seedChoferes(db);
       else {
         req('./src/seed.js').seed(db);
         setSetting(db, 'company_name', 'Demo Rent a Car');
@@ -334,7 +342,7 @@
       scheduleSave();
     }
     // Situaciones por sucursal (antes del historial, para que el historial termine antes de ellas). Si algo falla, la demo igual abre.
-    if (!PROFILE && getSetting(db, 'demo_simulaciones') !== '1') {
+    if (!PROFILE && !PRECIOS && getSetting(db, 'demo_simulaciones') !== '1') {
       try {
         req('./src/seed.js').seedSimulaciones(db);
       } catch (e) {
@@ -345,7 +353,7 @@
     }
     // Un año de movimiento para que Estadísticas se vea como en una agencia que ya trabaja
     // (también a quien ya tenía la demo guardada en el navegador, una sola vez).
-    if (!PROFILE && getSetting(db, 'demo_history') !== '1') {
+    if (!PROFILE && !PRECIOS && getSetting(db, 'demo_history') !== '1') {
       req('./src/seed.js').seedHistory(db);
       setSetting(db, 'demo_history', '1');
       scheduleSave();

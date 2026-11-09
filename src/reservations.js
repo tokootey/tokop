@@ -209,9 +209,16 @@ function updateReservation(db, id, input, userId) {
     assertAvailability(db, data, current.id);
     const sameTrip = data.pickup_at === current.pickup_at && data.return_at === current.return_at && Number(data.category_id) === current.category_id;
     const quote = computeQuote(db, { ...data, exclude_reservation_id: current.id, dynamic_pct: sameTrip ? (current.pricing && current.pricing.dynamic_pct) || 0 : undefined });
+    const agreed = input.price_override;
+    const hasAgreed = agreed !== undefined && agreed !== null && agreed !== '';
+    if (hasAgreed && !(Number(agreed) >= 0)) fail(400, 'El precio final tiene que ser un número mayor o igual a 0');
     const keepExternalPrice = current.pricing && current.pricing.calculated_total !== undefined && input.recalculate !== true;
-    const total = keepExternalPrice ? current.total : quote.total;
-    const pricing = keepExternalPrice ? { ...quote, source: current.pricing.source, calculated_total: quote.total, total } : quote;
+    const total = hasAgreed ? round2(agreed) : keepExternalPrice ? current.total : quote.total;
+    const pricing = hasAgreed
+      ? { ...quote, source: 'acordado', calculated_total: quote.total, total }
+      : keepExternalPrice
+        ? { ...quote, source: current.pricing.source, calculated_total: quote.total, total }
+        : quote;
     db.prepare(
       `UPDATE reservations SET customer_id=?, category_id=?, vehicle_id=?, pickup_branch_id=?, return_branch_id=?, pickup_at=?, return_at=?,
         days=?, pricing=?, total=?, deposit=?, discount_pct=?, discount_amount=?, flight=?, notes=?, updated_at=? WHERE id=?`,
@@ -239,7 +246,7 @@ function updateReservation(db, id, input, userId) {
       const ins = db.prepare('INSERT INTO reservation_extras (reservation_id, extra_id, quantity) VALUES (?, ?, ?)');
       for (const e of input.extras) ins.run(current.id, e.extra_id, Math.max(1, Number(e.quantity) || 1));
     }
-    log(db, current.id, userId, 'modificada');
+    log(db, current.id, userId, 'modificada', hasAgreed ? { precio_final: total, antes: current.total } : undefined);
   });
   const r = getReservation(db, current.id);
   emit(db, 'reservation.updated', publicView(r));
