@@ -11,6 +11,7 @@ const { refundFor } = require('../refunds');
 const choferes = require('../choferes');
 const { requireAdmin } = require('../auth');
 const { chargeInsurance } = require('./catalog');
+const delivery = require('../delivery');
 const { fail, normDateTime, nowLocal, parseLocal, fmtLocal } = require('../util');
 
 /**
@@ -136,7 +137,7 @@ function operationsRoutes(db) {
   router.get('/reservations/:id', (req, res) => {
     const r = R.getReservation(db, req.params.id);
     if (!r) fail(404, 'Reserva inexistente');
-    res.json({ ...r, invoices: invoicing.listInvoices(db, r.id) });
+    res.json({ ...r, invoices: invoicing.listInvoices(db, r.id), signature: delivery.stateOf(db, r) });
   });
 
   // --- Factura electrónica (sólo prueba) ---
@@ -171,6 +172,10 @@ function operationsRoutes(db) {
     }
     res.json(R.getReservation(db, r.id));
   });
+  // Firma del contrato, fotos para la entrega express y tarjeta del cliente.
+  router.post('/reservations/:id/signature', (req, res) => res.json(delivery.requestSignature(db, req.params.id, (req.body || {}).terms, getSettings(db), req.user.id)));
+  router.post('/reservations/:id/photos-link', (req, res) => res.json(delivery.photosLink(db, req.params.id)));
+  router.post('/reservations/:id/card-link', (req, res) => res.json(delivery.cardLink(db, req.params.id)));
   router.get('/reservations/:id/move-options', (req, res) => res.json(R.moveOptions(db, req.params.id)));
   router.post('/reservations/:id/swap', (req, res) => res.json(R.swapVehicles(db, req.params.id, req.body.reservation_id, req.user.id)));
   router.post('/reservations/:id/assign', (req, res) => res.json(R.assignVehicle(db, req.params.id, req.body.vehicle_id, req.user.id)));

@@ -3,6 +3,7 @@
 const express = require('express');
 const { getSettings } = require('../db');
 const { ingestQuote } = require('../integration');
+const { cardUrlFor } = require('../delivery');
 
 /**
  * Recepción del formulario de cotización del sitio web (p. ej. discoverushuaia.com.ar).
@@ -28,7 +29,7 @@ function clean(body) {
   return out;
 }
 
-function webformRoutes(db) {
+function webformRoutes(db, { publicQuery = '' } = {}) {
   const router = express.Router();
   const hits = new Map();
   const LIMIT = 20;
@@ -49,6 +50,7 @@ function webformRoutes(db) {
 
   function reply(req, res, settings, status, ok, data) {
     if (wantsHtml(req) && !req.get('x-requested-with')) {
+      if (ok && data.card_url) return res.redirect(303, data.card_url); // del formulario pasa a dejar la tarjeta
       if (ok && settings.webform_redirect_url) return res.redirect(303, settings.webform_redirect_url);
       const title = ok ? '¡Gracias! Recibimos tu solicitud' : 'No pudimos registrar tu solicitud';
       const msg = ok
@@ -86,14 +88,16 @@ function webformRoutes(db) {
     if (payload._gotcha) return reply(req, res, settings, 200, true, {});
     delete payload._gotcha;
 
+    let result;
     try {
-      const result = ingestQuote(db, payload, undefined, 'web');
-      return reply(req, res, settings, 201, true, { code: result.reservation.code });
+      result = ingestQuote(db, payload, undefined, 'web');
     } catch (err) {
       // La solicitud queda igual en la bandeja (con error) para que el mostrador la gestione a mano.
       // Al público no se le muestran detalles internos.
       return reply(req, res, settings, 202, true, { pending_review: true });
     }
+    const card_url = cardUrlFor(db, result.reservation.code, req, publicQuery);
+    return reply(req, res, settings, 201, true, { code: result.reservation.code, ...(card_url ? { card_url } : {}) });
   });
 
   return router;

@@ -174,4 +174,4 @@ function fileRoutes(db, uploadsDir) {
   return router;
 }
 
-module.exports = { fileRoutes, looksLike, TYPES, STAGES, DOC_KINDS, removeCustomerDocuments };
+module.exports = { fileRoutes, sendStored, looksLike, TYPES, STAGES, DOC_KINDS, removeCustomerDocuments };

@@ -131,6 +131,7 @@ function catalogRoutes(db, { uploadsDir } = {}) {
         guarantor_name = NULL, guarantor_doc = NULL, guarantor_phone = NULL, guarantor_address = NULL, anonymized_at = ? WHERE id = ?`,
     ).run(`Cliente anonimizado #${c.id}`, new Date().toISOString(), c.id);
     db.prepare("UPDATE reservations SET notes = NULL, flight = NULL WHERE customer_id = ?").run(c.id);
+    db.prepare('DELETE FROM delivery_links WHERE reservation_id IN (SELECT id FROM reservations WHERE customer_id = ?)').run(c.id);
     dropDocuments(c.id);
     // Las solicitudes del sitio web guardan el formulario original, que también tiene sus datos.
     db.prepare(

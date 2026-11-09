@@ -71,6 +71,8 @@ const fuel = (n) => (n === null || n === undefined ? '' : `${n}/8`);
 const choferesMode = () => state.settings.business_mode === 'choferes';
 // Solo las agencias a las que el dueño de Floty se lo activa: cada auto elige si paga cada 24 o cada 12 horas.
 const payModes = () => choferesMode() && state.settings.rent_period === 'dia' && String(state.settings.pay_modes) === '1';
+// Funciones en prueba: las activa el dueño de Floty por agencia, desde el panel.
+const proOn = () => String(state.settings.pro_features) === '1';
 const PERIOD_LABEL = { dia: ['día', 'días'], semana: ['semana', 'semanas'], mes: ['mes', 'meses'] };
 const periodWord = (n = 1) => (PERIOD_LABEL[state.settings.rent_period] || PERIOD_LABEL.semana)[Number(n) === 1 ? 0 : 1];
 /** Primera línea del precio: "3 días × $ 20.000" o, por períodos, "1 semana × $ 100.000". */
@@ -1165,6 +1167,51 @@ function hotelLink(r) {
   const co = state.user && state.user.company;
   return `${location.origin}/hotel/${r.hotel_token}${co && !co.principal ? `?empresa=${encodeURIComponent(co.slug)}` : ''}`;
 }
+/** Links del cliente (firma y fotos): llevan la agencia si no es la principal. */
+const clientLink = (path, token) => {
+  const co = state.user && state.user.company;
+  return `${location.origin}/${path}/${token}${co && !co.principal ? `?empresa=${encodeURIComponent(co.slug)}` : ''}`;
+};
+const waText = (r, text) => `https://wa.me/${String(r.customer_phone || '').replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
+const contractMessage = (r, link) =>
+  `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Este es el contrato de tu alquiler con ${state.settings.company_name}. Leelo y firmalo desde el celular`, `This is your rental agreement with ${state.settings.company_name}. Read and sign it from your phone`)}: ${link}`;
+const photosMessage = (r, link) =>
+  `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Estas son las fotos del auto${r.vehicle_plate ? ` ${r.vehicle_plate}` : ''} al momento de la entrega`, `These are the photos of the car${r.vehicle_plate ? ` ${r.vehicle_plate}` : ''} at delivery`)}: ${link}`;
+/** Un envío: su propio botón de WhatsApp, para que salga en un mensaje aparte. */
+const sendStep = (title, hint, r, text, link) => `<div class="send-step stack">
+    <b>${esc(title)}</b><small class="muted">${esc(hint)}</small>
+    ${r.customer_phone ? `<a class="btn ok" href="${esc(waText(r, text))}" target="_blank" rel="noopener">${WA_ICON}Mandarlo por WhatsApp</a>` : '<small class="error">El cliente no tiene teléfono cargado: copiá el link.</small>'}
+    <input readonly value="${esc(link)}" data-notr aria-label="Link"/>
+  </div>`;
+
+/** La tarjeta que dejó el cliente: identifica la tarjeta, no permite cobrar. */
+function clientCardHtml(r) {
+  if (!proOn() || choferesMode() || ['cancelada', 'no_show'].includes(r.status)) return '';
+  const c = r.signature && r.signature.card;
+  const open = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
+  const ask = open ? `<div class="actions no-print" style="margin-top:12px"><button class="btn" type="button" data-act="card">${c ? 'Pedirle otra tarjeta' : 'Pedirle la tarjeta'}</button></div>` : '';
+  return `<div class="card"><h2>Tarjeta del cliente</h2>${
+    c
+      ? `<p><b>${esc(c.brand)} terminada en ${esc(c.last4)}</b> · vence ${esc(c.exp)}<br><small class="muted">${esc(c.holder)} · ${fmtDT(stampLocal(c.at))}</small></p><p class="muted">Pedile esta tarjeta al entregar el auto. Con estos datos no se le puede cobrar: el cobro o la garantía se hacen con tu terminal.</p>`
+      : '<p class="muted">Todavía no dejó ninguna.</p>'
+  }${ask}</div>`;
+}
+
+function signatureCardHtml(r) {
+  if (!proOn() || choferesMode() || ['cancelada', 'no_show'].includes(r.status)) return '';
+  const s = r.signature;
+  const open = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
+  const ask = open ? `<div class="actions no-print" style="margin-top:12px"><button class="btn" type="button" data-act="sign">${s && s.requested ? 'Volver a mandar el link de firma' : 'Pedir la firma del cliente'}</button></div>` : '';
+  if (s && s.signed_at && !s.stale) {
+    return `<div class="card"><h2>Firma del contrato</h2>
+      <p><span class="badge b-confirmada">Firmado</span> por <b>${esc(s.name)}</b> · ${esc(s.doc)}</p>
+      <img class="sign-image" src="${esc(s.image)}" alt="Firma del cliente"/>
+      <small class="muted">${fmtDT(stampLocal(s.signed_at))} · IP ${esc(s.ip || '')} · Huella ${esc(String(s.hash).slice(0, 16))}</small></div>`;
+  }
+  if (s && s.signed_at) return `<div class="card"><h2>Firma del contrato</h2><p class="notice warn">Firmó ${esc(s.name)}, pero la reserva cambió después. Pedile la firma de nuevo.</p>${ask}</div>`;
+  return `<div class="card"><h2>Firma del contrato</h2><p class="muted">${s && s.requested ? 'Le pediste la firma: todavía no firmó.' : 'El cliente lo firma desde el celular, con el dedo.'}</p>${ask}</div>`;
+}
+
 const hotelAsk = (r) => {
   const text = `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L('Para llevarte el auto al hotel necesitamos unos datos. Completalos acá', 'To bring the car to your hotel we need a few details. Fill them in here')}: ${hotelLink(r)}`;
   const n = String(r.customer_phone || '').replace(/\D/g, '');
@@ -1465,6 +1512,7 @@ function breakdownHtml(q) {
   return `<table class="breakdown"><tbody>
     ${row(`${esc(q.category ? q.category.name : '')} · ${baseLabel(q, q.days)}`, money(q.base))}
     ${q.season_extra ? row('Recargo de temporada', money(q.season_extra)) : ''}
+    ${q.dynamic_extra ? row(`Recargo por alta demanda ${q.dynamic_pct}%`, money(q.dynamic_extra)) : ''}
     ${(q.extras || []).map((x) => row(`${esc(x.name)}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount))).join('')}
     ${q.one_way_fee ? row('Devolución en otra sucursal', money(q.one_way_fee)) : ''}
     ${q.discount ? row(`Descuento${q.discount_pct ? ` ${q.discount_pct}%` : ''}`, '−' + money(q.discount)) : ''}
@@ -1494,6 +1542,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   const hotelOpen = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
   if (hotelOpen && !r.hotel && !choferesMode()) more.push('<button data-act="hotel">Entregar o retirar en un hotel</button>');
   if (r.status === 'en_curso') actions.push(`<button class="btn ok" data-act="checkin">${ICON.in}Registrar devolución</button>`);
+  if (proOn() && !choferesMode() && ['confirmada', 'en_curso'].includes(r.status)) actions.push(`<button class="btn" data-act="express">${ICON.send}Entrega express</button>`);
   // Saldo a cobrar a la vista, con el importe: un toque abre el cobro ya completado.
   if (['confirmada', 'en_curso', 'finalizada'].includes(r.status) && r.balance.pending > 0)
     actions.push(`<button class="btn ${r.status === 'finalizada' ? 'primary' : ''}" data-act="pay">${ICON.money}Cobrar ${money(r.balance.pending)}</button>`);
@@ -1581,6 +1630,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         }</div>`
           : ''
       }
+      ${signatureCardHtml(r)}
+      ${clientCardHtml(r)}
       ${rentalCardHtml(r)}
       ${invoicesCardHtml(r)}
       ${filesCardHtml(r)}
@@ -1710,6 +1761,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'out_fuel', label: 'Combustible (octavos)', type: 'select', options: FUEL_OPTS, required: true },
             { name: 'out_notes', label: 'Observaciones / estado del vehículo', type: 'textarea', full: true },
             { name: 'fotos', label: 'Fotos del auto al entregarlo (frente, laterales, cola, interior, tablero con km y combustible)', type: 'photos' },
+            { name: 'express', label: 'Entrega express: el cliente no pasa por el mostrador (después le mandás el contrato y las fotos por separado)', type: 'checkbox', full: true, when: () => proOn() && !choferesMode() },
           ],
           { vehicle_id: first.id, out_at: localISO(new Date()), out_km: first.km, out_fuel: first.fuel ?? 8 },
           'Entregar y abrir contrato',
@@ -1722,7 +1774,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           } catch (e) {
             toast(`La entrega quedó registrada, pero falló una foto: ${e.message}. Podés subirla desde la reserva.`, true);
           }
-          reload();
+          if (d.express) location.hash = `#/reservas/${r.id}?accion=express`;
+          else reload();
         },
       );
       const sel = $('#modal-body [name=vehicle_id]');
@@ -1858,6 +1911,34 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       ),
     print: () => printContract(r),
     voucher: () => sendVoucher(r),
+    sign: async () => {
+      const s = await run(() => POST(`/reservations/${r.id}/signature`, { terms: contractTermsList(r) }));
+      if (!s) return;
+      const link = clientLink('firmar', s.token);
+      openModal(`Firma del contrato · ${r.code}`, sendStep('Contrato para firmar', 'Le llega un link: lee el contrato y firma con el dedo. La firma aparece sola en la reserva.', r, contractMessage(r, link), link));
+    },
+    express: async () => {
+      const s = await run(() => POST(`/reservations/${r.id}/signature`, { terms: contractTermsList(r) }));
+      if (!s) return;
+      const contract = clientLink('firmar', s.token);
+      const photos = clientLink('fotos', s.photos_token);
+      const count = r.files.filter((f) => f.stage === 'entrega' && f.mime.startsWith('image/')).length;
+      openModal(
+        `Entrega express · ${r.code}`,
+        `<p class="muted">Son dos mensajes separados: mandá primero uno y después el otro.</p>
+         <div class="stack">
+           ${sendStep('1. Contrato', 'Lee el contrato y lo firma desde el celular.', r, contractMessage(r, contract), contract)}
+           ${sendStep('2. Fotos del auto', count ? `${count} foto${count === 1 ? '' : 's'} de la entrega.` : 'Todavía no hay fotos de la entrega: agregalas desde la reserva antes de mandar este link.', r, photosMessage(r, photos), photos)}
+         </div>`,
+      );
+    },
+    card: async () => {
+      const c = await run(() => POST(`/reservations/${r.id}/card-link`));
+      if (!c) return;
+      const link = clientLink('tarjeta', c.card_token);
+      const text = `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Para tu reserva ${r.code} en ${state.settings.company_name}, dejá acá los datos de tu tarjeta`, `For your booking ${r.code} at ${state.settings.company_name}, please leave your card details here`)}: ${link}`;
+      openModal(`Tarjeta del cliente · ${r.code}`, sendStep('Dejar la tarjeta', 'Carga los datos desde el celular. Queda guardada la marca, los últimos 4 dígitos, el titular y el vencimiento.', r, text, link));
+    },
     pdf: async () => {
       if (!window.jspdf) return toast('No se pudo cargar el generador de PDF. Recargá la página e intentá de nuevo.', true);
       let built;
@@ -1949,6 +2030,7 @@ function voucherLines(r) {
   const price = [
     q.base !== undefined ? [`Tarifa ${days}${q.per_day ? ` × ${money(q.per_day)}` : ''}`, money(q.base)] : null,
     q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
+    q.dynamic_extra ? [`Recargo por alta demanda ${q.dynamic_pct}%`, money(q.dynamic_extra)] : null,
     ...(q.extras || []).map((x) => [`${x.name}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct} %` : ''}`, `−${money(q.discount)}`] : null,
@@ -2078,6 +2160,10 @@ function sendVoucher(r) {
 }
 
 const LOG_LABEL = {
+  firma_pedida: 'Firma pedida al cliente',
+  firma_cliente: 'El cliente firmó el contrato',
+  firma_anulada: 'Firma anulada: la reserva cambió',
+  tarjeta_dejada: 'El cliente dejó su tarjeta',
   creada: 'Reserva creada',
   modificada: 'Reserva modificada',
   confirmada: 'Confirmada',
@@ -3503,7 +3589,21 @@ on(/^\/cotizador$/, async (view) => {
   const body = $('#cot-body');
 
   if (tab === 'web') {
-    body.innerHTML = `
+    const fromWeb = d.inbox.filter((i) => i.channel === 'web');
+    const siteSet = d.webform.allowed_origins && !/discoverushuaia/.test(d.webform.allowed_origins);
+    const devNote = `Hola! Necesito conectar el formulario de cotización de mi página con mi sistema de reservas. Pegá esta línea antes de </body> en la página del cotizador:\n\n${d.webform.script_tag}\n\nEl formulario sigue funcionando igual: solo manda una copia de cada pedido al sistema. Si la página tiene más de un formulario, cambiá data-form="form" por el selector del cotizador.`;
+    const guide = proOn()
+      ? `<div class="card stack" style="margin-bottom:16px">
+        <h2>Dejar tu página conectada</h2>
+        <form id="site-form" class="stack"><label><b>1.</b> Dirección de tu página<input name="webform_site" required placeholder="mipagina.com" value="${siteSet ? esc(d.webform.allowed_origins.split(',').pop()) : ''}"/></label>
+          ${siteSet ? '<small class="muted">Ya acepta pedidos de esa página.</small>' : '<small class="error">Falta: sin esto, los pedidos de tu página no entran.</small>'}
+          <div class="actions"><button class="btn">Guardar la dirección</button></div></form>
+        <label><b>2.</b> Mandale esto a quien hace tu página<textarea id="dev-note" readonly rows="7" data-notr>${esc(devNote)}</textarea></label>
+        <div class="actions"><button class="btn" type="button" data-copy="dev-note">Copiar</button></div>
+        <p><b>3.</b> Mandá una cotización de prueba desde tu página. ${fromWeb.length ? `<span class="badge b-confirmada">Conectada</span> Último pedido: ${esc(fromWeb[0].received_at)}` : '<span class="badge b-pendiente">Todavía no llegó ningún pedido</span>'}</p>
+      </div>`
+      : '';
+    body.innerHTML = `${guide}
       <div class="grid cols-2">
         <div class="card stack">
           <h2>Conectar el formulario del sitio</h2>
@@ -3557,6 +3657,11 @@ on(/^\/cotizador$/, async (view) => {
       if (raw.startsWith('{')) return JSON.parse(raw);
       return Object.fromEntries(new URLSearchParams(raw));
     };
+    $('#site-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await run(() => PUT('/integration', { webform_site: formData(e.target).webform_site }), 'Dirección guardada');
+      route();
+    });
     $('#wf-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const f = formData(e.target);
@@ -3744,6 +3849,8 @@ on(/^\/config$/, async (view) => {
       { name: 'grace_hours', label: 'Tolerancia (horas) antes de cobrar un día más', type: 'number' },
       { name: 'one_way_fee', label: 'Recargo por devolver en otro lugar', type: 'number', when: () => !choferesMode() },
       { name: 'fuel_charge_per_eighth', label: 'Cargo por cada 1/8 de combustible faltante', type: 'number' },
+      { name: 'turnaround_minutes', label: 'Minutos libres entre la devolución de un auto y su próximo alquiler', type: 'number', attrs: 'min="0"', when: () => proOn() },
+      { name: 'dynamic_pricing_rules', label: 'Subir precios según ocupación (ocupación:recargo, por ejemplo 70:10, 90:20)', when: () => proOn() && !choferesMode() },
       { name: 'min_driver_age', label: 'Edad mínima del conductor', type: 'number' },
       { name: 'deductible_amount', label: 'Franquicia del seguro (vacío = la de la póliza)', type: 'number' },
       { name: 'jurisdiction', label: 'Jurisdicción del contrato (tribunales de...)', full: true },
@@ -4345,15 +4452,19 @@ on(/^\/empresas$/, async (view) => {
             { name: 'name', label: 'Nombre de la agencia', required: true, full: true },
             { name: 'business_mode', label: 'Tipo de negocio', type: 'select', required: true, options: [['turismo', 'Alquiler turístico'], ['choferes', 'Autos para trabajo (choferes de apps)']] },
             { name: 'pay_modes', label: 'Modalidad de pago por auto: cada 24 o cada 12 horas (autos para trabajo, cobro por día)', type: 'checkbox', full: true },
+            { name: 'pro_features', label: 'Funciones en prueba: precios por demanda, intervalo entre alquileres, firma, entrega express y tarjeta', type: 'checkbox', full: true },
             { name: 'admin_name', label: 'Nombre del administrador' },
             { name: 'admin_email', label: 'Email del administrador (con el que entra)', type: 'email', required: true, full: true },
           ],
-          { name: c.name, business_mode: c.business_mode || 'turismo', pay_modes: c.pay_modes || 0, admin_name: c.admin_name || '', admin_email: c.admin_email || '' },
+          { name: c.name, business_mode: c.business_mode || 'turismo', pay_modes: c.pay_modes || 0, pro_features: c.pro_features || 0, admin_name: c.admin_name || '', admin_email: c.admin_email || '' },
           'Guardar',
         ) +
         `<div class="card" style="margin-top:14px"><b>¿El administrador no puede entrar?</b>
           <p class="muted" style="margin:4px 0 8px">Le damos una contraseña inicial nueva. La anterior deja de servir y, al entrar, elige una propia.</p>
-          <button type="button" class="btn small" data-reset-pw>Darle una contraseña nueva</button></div>`,
+          <button type="button" class="btn small" data-reset-pw>Darle una contraseña nueva</button></div>
+        <div class="card" style="margin-top:14px"><b>Ejemplo para presentar</b>
+          <p class="muted" style="margin:4px 0 8px">Carga una agencia de Panamá ficticia donde el mismo auto sube de precio según la disponibilidad. Solo funciona en una agencia vacía.</p>
+          <button type="button" class="btn small" data-demand-example>Ver el ejemplo de precios</button></div>`,
       async (f) => {
         await run(() => PUT(`/platform/companies/${c.id}/profile`, { ...f, ...(logo !== undefined ? { logo } : {}) }), 'Datos de la agencia guardados');
         route();
@@ -4373,6 +4484,24 @@ on(/^\/empresas$/, async (view) => {
     $('#modal [data-logo-remove]')?.addEventListener('click', () => {
       logo = '';
       preview.innerHTML = ICON.building;
+    });
+    $('#modal [data-demand-example]').addEventListener('click', async () => {
+      const ex = await run(() => POST(`/platform/companies/${c.id}/demand-example`));
+      if (!ex) return;
+      const fmt = (n, cur) => new Intl.NumberFormat('es-PA', { style: 'currency', currency: cur }).format(n);
+      const sep = ex.booking_url.includes('?') ? '&' : '?';
+      openModal(
+        `Precios según disponibilidad · ${c.name}`,
+        `<p class="muted">El mismo ${esc(ex.scenarios[0].category)}, ${ex.scenarios[0].days} días. Tocá cada fila para abrir el cotizador en esas fechas.</p>
+        <div class="demand-rows">${ex.scenarios
+          .map(
+            (s) => `<a class="demand-row" target="_blank" rel="noopener" href="${esc(`${ex.booking_url}${sep}desde=${s.pickup_at.slice(0, 10)}&dias=${s.days}`)}">
+              <span><b>${esc(s.label)}</b><small>${fmtD(s.pickup_at)} · ${s.booked} de ${s.fleet} reservados</small></span>
+              <span class="demand-price"><b>${esc(fmt(s.total, s.currency))}</b><small class="${s.pct ? 'up' : ''}">${s.pct ? `+${s.pct}%` : 'Precio normal'}</small></span>
+            </a>`,
+          )
+          .join('')}</div>`,
+      );
     });
     $('#modal [data-reset-pw]').addEventListener('click', async () => {
       if (!(await confirmModal({ title: `Contraseña nueva · ${c.name}`, text: `El administrador (${c.admin_email}) va a tener que entrar con la contraseña nueva. La anterior deja de servir.`, ok: 'Darle una nueva' }))) return;
@@ -4850,6 +4979,14 @@ async function bookingPage() {
   const t = new Date();
   let from = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1, 10, 0);
   let to = addDays(from, 3);
+  // Se puede entrar con las fechas elegidas (?desde=AAAA-MM-DD&dias=3): así otro cotizador o un aviso pueden mandar directo acá.
+  const wanted = new URLSearchParams(location.search);
+  const start = /^\d{4}-\d{2}-\d{2}$/.test(wanted.get('desde') || '') ? new Date(`${wanted.get('desde')}T10:00`) : null;
+  if (start && !Number.isNaN(start.getTime()) && start >= new Date(t.getFullYear(), t.getMonth(), t.getDate())) {
+    from = start;
+    to = addDays(from, Math.min(90, Math.max(1, Number(wanted.get('dias')) || 3)));
+  }
+  const picked = new Set();
   let options = [];
   let pick = null;
   const QUICK = [
@@ -4857,39 +4994,50 @@ async function bookingPage() {
     [3, '3 días'],
     [7, '1 semana'],
   ];
+  const placeSelect = (name, label) =>
+    `<label class="qr-field">${label}<select name="${name}">${cfg.branches.map((b) => `<option value="${esc(b.code)}">${esc(b.name)}</option>`).join('')}</select></label>`;
+  const extraPrice = (x) => `${money(x.price)}${x.charge_type === 'fijo' ? '' : ` ${L('por día', 'per day')}`}`;
   const page = publicPage(`
-    <header class="pub-head"><h1>${esc(cfg.company)}</h1><p>${esc(cfg.welcome)}</p></header>
-    <form class="qr" id="bk" novalidate>
-      <section>
-        <h2>¿Cuándo?</h2>
+    <header class="pub-head quoter-head"><h1>${esc(cfg.company)}</h1><p>${esc(cfg.welcome)}</p></header>
+    <form class="qr quoter" id="bk" novalidate>
+      <section class="quoter-step">
+        <h2><span>1</span>${L('¿Cuándo y dónde?', 'When and where?')}</h2>
         <div class="qr-dates">
-          <label class="qr-field">Retiro<input type="datetime-local" name="from" required></label>
-          <label class="qr-field">Devolución<input type="datetime-local" name="to" required></label>
+          <label class="qr-field">${L('Retiro', 'Pick-up')}<input type="datetime-local" name="from" required></label>
+          <label class="qr-field">${L('Devolución', 'Return')}<input type="datetime-local" name="to" required></label>
         </div>
         <div class="chips">${QUICK.map(([n, label]) => `<button type="button" class="chip" data-days="${n}">${label}</button>`).join('')}</div>
-        ${
-          cfg.branches.length > 1
-            ? `<label class="qr-field" style="margin-top:8px">Lugar de retiro<select name="branch">${cfg.branches.map((b) => `<option value="${esc(b.code)}">${esc(b.name)}</option>`).join('')}</select></label>`
-            : ''
-        }
+        ${cfg.branches.length > 1 ? `<div class="qr-dates" style="margin-top:8px">${placeSelect('branch', L('Lugar de retiro', 'Pick-up place'))}${placeSelect('return_branch', L('Lugar de devolución', 'Return place'))}</div>` : ''}
       </section>
-      <section>
-        <h2>Elegí el auto</h2>
-        <div class="cars" id="bk-cars"><p class="muted">Cargando…</p></div>
+      <section class="quoter-step">
+        <h2><span>2</span>${L('Elegí el auto', 'Choose your car')}</h2>
+        <div class="cars" id="bk-cars" aria-live="polite"><div class="car-skeleton"></div><div class="car-skeleton"></div></div>
       </section>
-      <section>
-        <h2>Tus datos</h2>
+      ${
+        cfg.extras.length
+          ? `<section class="quoter-step">
+        <h2><span>3</span>${L('Sumá lo que necesites', 'Add what you need')} <small class="muted">${L('opcional', 'optional')}</small></h2>
+        <div class="quoter-extras">${cfg.extras
+          .map(
+            (x) => `<label class="quoter-extra"><input type="checkbox" value="${esc(x.code)}" data-extra data-kind="${esc(x.kind)}"><span>${esc(x.name)}</span><small>${extraPrice(x)}</small></label>`,
+          )
+          .join('')}</div>
+      </section>`
+          : ''
+      }
+      <section class="quoter-step">
+        <h2><span>${cfg.extras.length ? 4 : 3}</span>${L('Tus datos', 'Your details')}</h2>
         <div style="display:flex;flex-direction:column;gap:8px">
-          <label class="qr-field">Nombre y apellido<input name="name" autocomplete="name" maxlength="120" required></label>
-          <label class="qr-field">WhatsApp (con código de país)<input name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" placeholder="+54 9 2901 555123" required></label>
-          <label class="qr-field">Email (opcional)<input name="email" type="email" autocomplete="email" maxlength="160"></label>
+          <label class="qr-field">${L('Nombre y apellido', 'Full name')}<input name="name" autocomplete="name" maxlength="120" required></label>
+          <label class="qr-field">${L('WhatsApp (con código de país)', 'WhatsApp (with country code)')}<input name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" placeholder="${esc(cfg.phone_hint)}" required></label>
+          <label class="qr-field">${L('Email (opcional)', 'Email (optional)')}<input name="email" type="email" autocomplete="email" maxlength="160"></label>
           <label class="trap" aria-hidden="true">No completar<input name="_gotcha" tabindex="-1" autocomplete="off"></label>
         </div>
       </section>
       <div class="qr-total">
-        <div class="sum"><span class="muted" id="bk-what">Elegí un auto</span><b id="bk-sum"></b></div>
-        <button class="btn primary big" type="submit">Pedir la reserva</button>
-        <small class="muted">No pagás nada ahora. La agencia te confirma por WhatsApp.</small>
+        <div class="sum"><span class="muted" id="bk-what">${L('Elegí un auto', 'Choose a car')}</span><b id="bk-sum"></b></div>
+        <button class="btn primary big" type="submit">${L('Pedir la reserva', 'Request booking')}</button>
+        <small class="muted">${L('No pagás nada ahora. La agencia te confirma por WhatsApp.', 'You pay nothing now. The agency confirms by WhatsApp.')}</small>
       </div>
     </form>
     ${
@@ -4918,8 +5066,12 @@ async function bookingPage() {
           .map((o) => {
             const info = [o.description, o.seats ? `${o.seats} ${L('asientos', 'seats')}` : ''].filter(Boolean).join(' · ');
             return `<button type="button" class="car${o.code === pick ? ' on' : ''}" data-cat="${esc(o.code)}" aria-pressed="${o.code === pick}">
-              <span><b>${esc(o.name)}</b>${info ? `<small>${esc(info)}</small>` : ''}</span>
-              <span class="price">${money(o.total)}<small class="muted">${o.days} ${dayWord(o.days)}</small></span>
+              <span class="car-info"><b>${esc(o.name)}</b>${info ? `<small>${esc(info)}</small>` : ''}${
+                o.high_demand || o.few_left
+                  ? `<span class="car-tags">${o.high_demand ? `<i class="tag-demand">${L('Alta demanda', 'High demand')}</i>` : ''}${o.few_left ? `<i class="tag-few">${L('Último disponible', 'Last one left')}</i>` : ''}</span>`
+                  : ''
+              }</span>
+              <span class="price">${money(o.total)}<small class="muted">${money(o.total / o.days)} ${L('por día', 'per day')}</small></span>
             </button>`;
           })
           .join('')
@@ -4927,11 +5079,20 @@ async function bookingPage() {
     summary();
   };
   // Disponibilidad y precio de cada categoría (al público nunca se le dice cuántos autos quedan).
+  let lastLoad = 0;
   const load = async () => {
+    // Si el cliente cambia algo mientras carga, vale la última consulta: una respuesta vieja no pisa el precio.
+    const mine = ++lastLoad;
+    $('#bk-cars', form).classList.add('loading');
     try {
-      options = (await call('POST', '/quote', { pickup_at: localISO(from), return_at: localISO(to), pickup_branch: form.branch ? form.branch.value : undefined })).options;
+      const found = (await call('POST', '/quote', { pickup_at: localISO(from), return_at: localISO(to), pickup_branch: form.branch ? form.branch.value : undefined, return_branch: form.return_branch ? form.return_branch.value : undefined, extras: [...picked] })).options;
+      if (mine !== lastLoad) return;
+      options = found;
+      $('#bk-cars', form).classList.remove('loading');
       paint();
     } catch (e) {
+      if (mine !== lastLoad) return;
+      $('#bk-cars', form).classList.remove('loading');
       options = [];
       summary();
       $('#bk-cars', form).innerHTML = `<p class="error">${esc(e.message)}</p>`;
@@ -4951,7 +5112,15 @@ async function bookingPage() {
     }
   });
   form.addEventListener('change', (e) => {
-    if (e.target.name === 'branch') return load();
+    if (e.target.name === 'branch' && form.return_branch) form.return_branch.value = form.branch.value; // lo normal: devuelve donde retira
+    if (e.target.name === 'branch' || e.target.name === 'return_branch') return load();
+    if (e.target.matches('[data-extra]')) {
+      // Un solo seguro por reserva.
+      if (e.target.checked && e.target.dataset.kind === 'seguro') $$('[data-extra][data-kind=seguro]', form).forEach((x) => (x.checked = x === e.target));
+      picked.clear();
+      $$('[data-extra]:checked', form).forEach((x) => picked.add(x.value));
+      return load();
+    }
     if (e.target.name !== 'from' && e.target.name !== 'to') return;
     const f = new Date(form.from.value);
     const tt = new Date(form.to.value);
@@ -4978,6 +5147,8 @@ async function bookingPage() {
         pickup_at: localISO(from),
         return_at: localISO(to),
         pickup_branch: form.branch ? form.branch.value : cfg.branches[0] && cfg.branches[0].code,
+        return_branch: form.return_branch ? form.return_branch.value : undefined,
+        extras: [...picked],
         category: o.code,
         name,
         phone,
@@ -4999,6 +5170,7 @@ async function bookingPage() {
           <h1>¡Listo! Te confirmamos por WhatsApp</h1>
           <p>${esc(o.name)} · ${when} · <b>${money(o.total)}</b></p>
           <p class="muted">${L(`${esc(cfg.company)} te va a escribir para confirmar la reserva.`, `${esc(cfg.company)} will message you to confirm the booking.`)}</p>
+          ${r.card_url ? `<a class="btn primary big" href="${esc(r.card_url)}" rel="noopener">${ICON.money}${L('Dejar mi tarjeta', 'Leave my card')}</a>` : ''}
           ${cfg.whatsapp ? `<a class="btn ok big" href="https://wa.me/${esc(cfg.whatsapp)}?text=${encodeURIComponent(text)}" target="_blank" rel="noopener">${WA_ICON}Escribirle a la agencia</a>` : ''}
         </div>`,
       );
@@ -5097,6 +5269,230 @@ async function hotelPage() {
   });
 }
 
+const empresaQuery = () => {
+  const empresa = new URLSearchParams(location.search).get('empresa');
+  return empresa ? `?empresa=${encodeURIComponent(empresa)}` : '';
+};
+const linkGone = (title) =>
+  publicPage(`<div class="card pub-done"><h1>${title}</h1><p class="muted">${L('Este link ya no está disponible. Escribile a la agencia.', 'This link is no longer available. Please contact the agency.')}</p></div>`);
+
+/** Dibujar la firma con el dedo o el mouse. Devuelve cómo saber si firmó y cómo limpiarla. */
+function signaturePad(canvas) {
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = canvas.clientWidth * ratio;
+  canvas.height = canvas.clientHeight * ratio;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(ratio, ratio);
+  ctx.lineWidth = 2.2;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = '#111';
+  let drawing = false;
+  let length = 0;
+  let last = null;
+  const at = (e) => {
+    const b = canvas.getBoundingClientRect();
+    return [e.clientX - b.left, e.clientY - b.top];
+  };
+  canvas.addEventListener('pointerdown', (e) => {
+    drawing = true;
+    last = at(e);
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drawing) return;
+    const p = at(e);
+    ctx.beginPath();
+    ctx.moveTo(...last);
+    ctx.lineTo(...p);
+    ctx.stroke();
+    length += Math.hypot(p[0] - last[0], p[1] - last[1]);
+    last = p;
+  });
+  const stop = () => (drawing = false);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+  return {
+    signed: () => length > 40, // un punto o una rayita no es una firma
+    clear: () => {
+      ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+      length = 0;
+    },
+  };
+}
+
+/** /firmar/<código>: el cliente lee el contrato y lo firma desde el celular. */
+async function signPage() {
+  const url = `/api/public/entrega/contrato/${encodeURIComponent(location.pathname.split('/')[2] || '')}${empresaQuery()}`;
+  let d;
+  try {
+    const res = await fetch(url);
+    d = await res.json();
+    if (!res.ok) throw new Error(d.error);
+  } catch {
+    linkGone(L('Contrato', 'Agreement'));
+    return;
+  }
+  state.settings = { ...state.settings, currency: d.currency, locale: d.locale };
+  document.title = `${d.company} · ${L('Contrato', 'Agreement')} ${d.code}`;
+  const row = (l, v) => (v ? `<dt>${esc(l)}</dt><dd>${v}</dd>` : '');
+  const summary = `<dl class="info">
+      ${row(L('Cliente', 'Customer'), `${esc(d.customer_name)}${d.customer_doc ? ` · ${esc(d.customer_doc)}` : ''}`)}
+      ${row(L('Auto', 'Car'), d.plate ? `${esc(d.vehicle)} · ${esc(d.plate)}` : esc(d.category_name))}
+      ${row(L('Retiro', 'Pick-up'), `${fmtDT(d.pickup_at)}${d.pickup_place ? ` · ${esc(d.pickup_place)}` : ''}`)}
+      ${row(L('Devolución', 'Return'), `${fmtDT(d.return_at)}${d.return_place ? ` · ${esc(d.return_place)}` : ''}`)}
+      ${row(L('Total', 'Total'), `<b>${money(d.total)}</b>`)}
+      ${row(L('Garantía', 'Deposit'), money(d.deposit))}
+    </dl>`;
+  const terms = `<div class="sign-terms">${d.terms.map((t) => `<p>${t.title ? `<b>${esc(t.title)}</b> ` : ''}${esc(t.body)}</p>`).join('')}</div>`;
+  const signedHtml = (s) => `<div class="card stack"><div class="pub-ok" aria-hidden="true">✓</div><h2>${L('Contrato firmado', 'Agreement signed')}</h2>
+      <img class="sign-image" src="${esc(s.image)}" alt=""/>
+      <p>${esc(s.name)} · ${esc(s.doc)}<br><small class="muted">${fmtDT(stampLocal(s.at))} · ${L('Huella', 'Fingerprint')} ${esc(String(s.hash).slice(0, 16))}</small></p>
+      <div class="actions no-print"><button class="btn" type="button" id="sign-print">${L('Imprimir o guardar', 'Print or save')}</button></div></div>`;
+  const head = `<div class="pub-head"><h1>${L('Contrato de alquiler', 'Rental agreement')}</h1><p>${esc(d.company)} · ${esc(d.code)}</p></div>
+    <div class="card stack">${summary}${terms}</div>`;
+  const bindPrint = (page) => $('#sign-print', page)?.addEventListener('click', () => window.print());
+  if (!d.can_sign) {
+    const page = publicPage(`${head}${d.signed ? signedHtml(d.signed) : `<div class="card"><p class="notice warn">${L('Este contrato cambió o ya no se puede firmar. Pedile a la agencia un link nuevo.', 'This agreement has changed or can no longer be signed. Ask the agency for a new link.')}</p></div>`}`);
+    bindPrint(page);
+    return;
+  }
+  const page = publicPage(`${head}
+    <form class="card qr" id="sign-form">
+      <label>${L('Nombre y apellido', 'Full name')}<input name="name" required maxlength="120" value="${esc(d.customer_name || '')}"/></label>
+      <label>${L('Documento', 'ID or passport')}<input name="doc" required maxlength="40" value="${esc(d.customer_doc || '')}"/></label>
+      <label class="check"><input type="checkbox" name="accepted" required/> ${L('Leí y acepto este contrato y sus condiciones', 'I have read and accept this agreement and its terms')}</label>
+      <div><b>${L('Firmá acá con el dedo', 'Sign here with your finger')}</b><canvas class="sign-pad" id="sign-pad" aria-label="${L('Espacio para firmar', 'Signature area')}"></canvas>
+      <button class="btn small link" type="button" id="sign-clear">${L('Borrar y volver a firmar', 'Clear and sign again')}</button></div>
+      <button class="btn primary big" type="submit">${L('Firmar el contrato', 'Sign the agreement')}</button>
+      <p class="error" id="sign-err"></p>
+    </form>`);
+  const form = $('#sign-form', page);
+  const canvas = $('#sign-pad', page);
+  const pad = signaturePad(canvas);
+  $('#sign-clear', page).addEventListener('click', pad.clear);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = $('#sign-err', page);
+    err.textContent = '';
+    if (!pad.signed()) {
+      err.textContent = L('Dibujá tu firma en el recuadro', 'Draw your signature in the box');
+      return;
+    }
+    const btn = $('[type=submit]', form);
+    btn.disabled = true;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: form.name.value, doc: form.doc.value, accepted: form.accepted.checked, image: canvas.toDataURL('image/png') }),
+      });
+      const r = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(r.error || `Error ${res.status}`);
+      form.outerHTML = signedHtml({ at: r.at, hash: r.hash, name: form.name.value, doc: form.doc.value, image: canvas.toDataURL('image/png') });
+      bindPrint(page);
+      window.scrollTo(0, 0);
+    } catch (ex) {
+      err.textContent = ex.message;
+      btn.disabled = false;
+    }
+  });
+}
+
+/** /fotos/<código>: las fotos del auto al entregarlo, para que el cliente las tenga. */
+async function photosPage() {
+  const token = encodeURIComponent(location.pathname.split('/')[2] || '');
+  let d;
+  try {
+    const res = await fetch(`/api/public/entrega/fotos/${token}${empresaQuery()}`);
+    d = await res.json();
+    if (!res.ok) throw new Error(d.error);
+  } catch {
+    linkGone(L('Fotos del auto', 'Car photos'));
+    return;
+  }
+  document.title = `${d.company} · ${L('Fotos del auto', 'Car photos')}`;
+  publicPage(`<div class="pub-head"><h1>${L('Fotos del auto', 'Car photos')}</h1><p>${esc(d.company)} · ${esc(d.code)}</p></div>
+    <div class="card stack"><p class="muted">${L('Así estaba el auto al momento de la entrega.', 'This is how the car was at delivery.')}</p>
+    ${d.photos.length ? `<div class="pub-photos">${d.photos.map((p) => `<a href="/api/public/entrega/fotos/${token}/${p.id}${empresaQuery()}" target="_blank" rel="noopener"><img loading="lazy" alt="${esc(p.name || '')}" src="/api/public/entrega/fotos/${token}/${p.id}${empresaQuery()}"/></a>`).join('')}</div>` : `<p>${L('Todavía no hay fotos. La agencia las va a subir enseguida.', 'There are no photos yet. The agency will upload them soon.')}</p>`}</div>`);
+}
+
+/** ¿El número de tarjeta está bien escrito? (dígito verificador) */
+function cardNumberOk(digits) {
+  if (digits.length < 13 || digits.length > 19) return false;
+  let sum = 0;
+  [...digits].reverse().forEach((c, i) => {
+    const n = Number(c) * (i % 2 ? 2 : 1);
+    sum += n > 9 ? n - 9 : n;
+  });
+  return sum % 10 === 0;
+}
+const cardBrand = (digits) => (/^4/.test(digits) ? 'Visa' : /^(5[1-5]|2[2-7])/.test(digits) ? 'Mastercard' : /^3[47]/.test(digits) ? 'American Express' : 'Otra');
+
+/**
+ * /tarjeta/<código>: el cliente deja su tarjeta. El número se comprueba acá y no sale del navegador:
+ * al servidor van la marca y los últimos 4 dígitos. El campo no lleva name para que ningún envío lo incluya.
+ */
+async function cardPage() {
+  const url = `/api/public/entrega/tarjeta/${encodeURIComponent(location.pathname.split('/')[2] || '')}${empresaQuery()}`;
+  let d;
+  try {
+    const res = await fetch(url);
+    d = await res.json();
+    if (!res.ok) throw new Error(d.error);
+  } catch {
+    linkGone(L('Tu tarjeta', 'Your card'));
+    return;
+  }
+  state.settings = { ...state.settings, currency: d.currency, locale: d.locale };
+  document.title = `${d.company} · ${L('Tu tarjeta', 'Your card')}`;
+  const done = (c) => `<div class="card pub-done"><div class="pub-ok" aria-hidden="true">✓</div><h1>${L('¡Listo, gracias!', 'Done, thank you!')}</h1>
+    <p><b>${esc(c.brand)} ${L('terminada en', 'ending in')} ${esc(c.last4)}</b> · ${L('vence', 'expires')} ${esc(c.exp)}</p>
+    <p class="muted">${L('Traé esta tarjeta cuando retires el auto. No se realizó ningún cobro.', 'Bring this card when you pick up the car. No charge was made.')}</p></div>`;
+  const page = publicPage(`<div class="pub-head"><h1>${L('Hola', 'Hi')} ${esc(d.first_name)}</h1><p>${esc(d.company)} · ${L('Reserva', 'Booking')} ${esc(d.code)}</p></div>
+    <form class="card qr" id="card-form" autocomplete="on">
+      <p style="margin:0">${L('Dejá los datos de la tarjeta con la que vas a retirar el auto. <b>No se te cobra nada.</b>', 'Leave the details of the card you will use to pick up the car. <b>You will not be charged.</b>')}${d.deposit ? ` ${L(`La garantía de ${money(d.deposit)} se toma al retirar.`, `The ${money(d.deposit)} deposit is taken at pick-up.`)}` : ''}</p>
+      ${d.card ? `<p class="notice">${L('Ya dejaste', 'You already left')} ${esc(d.card.brand)} ${L('terminada en', 'ending in')} ${esc(d.card.last4)}. ${L('Si cargás otra, reemplaza a esa.', 'A new one replaces it.')}</p>` : ''}
+      <label>${L('Titular, como figura en la tarjeta', 'Cardholder, as shown on the card')}<input name="holder" required maxlength="80" autocomplete="cc-name"/></label>
+      <label>${L('Número de tarjeta', 'Card number')}<input id="card-number" required inputmode="numeric" maxlength="23" autocomplete="cc-number" placeholder="0000 0000 0000 0000" data-notr/></label>
+      <label>${L('Vencimiento (MM/AA)', 'Expiry (MM/YY)')}<input name="exp" required maxlength="5" inputmode="numeric" autocomplete="cc-exp" placeholder="MM/AA" data-notr/></label>
+      <label class="check"><input type="checkbox" name="accepted" required/> ${L('Es mi tarjeta y la voy a presentar al retirar el auto', 'This is my card and I will present it at pick-up')}</label>
+      <button class="btn primary big" type="submit">${L('Guardar', 'Save')}</button>
+      <small class="muted">${L('Por seguridad guardamos solo el titular, la marca, los últimos 4 dígitos y el vencimiento. El número completo no se guarda y no te pedimos el código de seguridad.', 'For security we only keep the cardholder, the brand, the last 4 digits and the expiry. The full number is not stored and we do not ask for the security code.')}</small>
+      <p class="error" id="card-err"></p>
+    </form>`);
+  const form = $('#card-form', page);
+  const number = $('#card-number', page);
+  number.addEventListener('input', () => (number.value = number.value.replace(/\D/g, '').replace(/(\d{4})(?=\d)/g, '$1 ')));
+  form.exp.addEventListener('input', () => (form.exp.value = form.exp.value.replace(/\D/g, '').replace(/^(\d{2})(\d)/, '$1/$2')));
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = $('#card-err', page);
+    err.textContent = '';
+    const digits = number.value.replace(/\D/g, '');
+    if (!cardNumberOk(digits)) {
+      err.textContent = L('Revisá el número de la tarjeta', 'Check the card number');
+      return;
+    }
+    const btn = $('[type=submit]', form);
+    btn.disabled = true;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ holder: form.holder.value, exp: form.exp.value, accepted: form.accepted.checked, brand: cardBrand(digits), last4: digits.slice(-4) }),
+      });
+      const r = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(r.error || `Error ${res.status}`);
+      form.outerHTML = done(r.card);
+      window.scrollTo(0, 0);
+    } catch (ex) {
+      err.textContent = ex.message;
+      btn.disabled = false;
+    }
+  });
+}
+
 const PUBLIC_PAGES = { '/reservar': bookingPage, '/como-funciona': howItWorksPage };
+const TOKEN_PAGES = [[/^\/hotel\/[\w-]+$/, hotelPage], [/^\/firmar\/[\w-]+$/, signPage], [/^\/fotos\/[\w-]+$/, photosPage], [/^\/tarjeta\/[\w-]+$/, cardPage]];
 const publicPath = location.pathname.replace(/\/+$/, '');
-(PUBLIC_PAGES[publicPath] || (/^\/hotel\/[\w-]+$/.test(publicPath) ? hotelPage : startSession))();
+(PUBLIC_PAGES[publicPath] || (TOKEN_PAGES.find(([re]) => re.test(publicPath)) || [])[1] || startSession)();

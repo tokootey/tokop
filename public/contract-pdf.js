@@ -165,6 +165,7 @@ function buildContractPdf(r) {
   const priceRows = [
     q.base !== undefined ? [`Alquiler ${baseLabel(q, r.days)}`, money(q.base)] : null,
     q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
+    q.dynamic_extra ? [`Recargo por alta demanda ${q.dynamic_pct}%`, money(q.dynamic_extra)] : null,
     ...(q.extras || []).map((x) => [`${x.name}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct}%` : ''}`, `- ${money(q.discount)}`] : null,
@@ -272,6 +273,13 @@ function buildContractPdf(r) {
     labels.forEach((label, i) => {
       const x = M + i * (w + gap);
       doc.line(x, sy, x + w, sy);
+      // Firma electrónica del cliente, si firmó este mismo contrato.
+      const sig = r.signature && r.signature.signed_at && !r.signature.stale ? r.signature : null;
+      if (sig && label.startsWith('Firma del cliente')) {
+        doc.addImage(sig.image, 'PNG', x, sy - 12, 31, 11.5);
+        doc.setFont('helvetica', 'normal').setFontSize(6).setTextColor(90).text(['Firma electrónica', `${sig.signed_at.slice(0, 16).replace('T', ' ')} UTC`, sig.hash.slice(0, 16)], x + 32, sy - 8);
+        doc.setFontSize(7).setTextColor(17).text([sig.name, sig.doc], x + 15, sy + 9);
+      }
       doc.setFont('helvetica', 'normal').setFontSize(8).text(label, x + w / 2, sy + 4, { align: 'center' });
       doc.setFontSize(7).setTextColor(90).text(label.startsWith('Por ') ? ['Aclaración:'] : ['Aclaración:', 'DNI:'], x, sy + 9);
       doc.setTextColor(17);

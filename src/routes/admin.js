@@ -8,8 +8,11 @@ const { getMapping, getWebformMapping, interpret, ingestQuote, reprocessInbox } 
 const { emit } = require('../webhooks');
 const { FAQ_DEFAULT } = require('./chat');
 const { fail } = require('../util');
+const { parseDynamicRules } = require('../pricing');
 
 const SECRET_KEYS = ['api_key', 'webhook_secret'];
+// Sólo los cambia el dueño de Floty, desde el panel.
+const OWNER_KEYS = ['pro_features'];
 const INTEGRATION_KEYS = [
   'quote_mapping',
   'quote_price_source',
@@ -34,6 +37,19 @@ function validCurrency(v) {
   } catch {
     return false;
   }
+}
+
+/** "mipagina.com/cotizar" → los dos orígenes que puede mandar el navegador: con y sin www. */
+function siteOrigins(site) {
+  let url;
+  try {
+    url = new URL(/^https?:\/\//i.test(String(site).trim()) ? String(site).trim() : `https://${String(site).trim()}`);
+  } catch {
+    fail(400, 'Esa dirección de página no es válida');
+  }
+  if (!url.hostname.includes('.')) fail(400, 'Esa dirección de página no es válida');
+  const host = url.hostname.replace(/^www\./, '');
+  return [`${url.protocol}//www.${host}`, `${url.protocol}//${host}`].join(',');
 }
 
 /**
@@ -71,8 +87,10 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
     }
     if (body.refund_partial_pct !== undefined && Number(body.refund_partial_pct) > 100) fail(400, 'El porcentaje de devolución no puede pasar de 100');
     if (hrs('refund_partial_hours') > hrs('refund_full_hours')) fail(400, 'Las horas de la devolución parcial tienen que ser menos que las de la devolución total');
+    if (body.turnaround_minutes !== undefined && !(Number(body.turnaround_minutes) >= 0)) fail(400, 'El intervalo entre alquileres tiene que ser un número positivo');
+    if (body.dynamic_pricing_rules !== undefined && !parseDynamicRules(body.dynamic_pricing_rules)) fail(400, 'Escribí el recargo como ocupación:recargo, por ejemplo 70:10, 90:20');
     for (const [k, v] of Object.entries(body)) {
-      if (k in DEFAULT_SETTINGS && !SECRET_KEYS.includes(k) && !INTEGRATION_KEYS.includes(k)) setSetting(db, k, v);
+      if (k in DEFAULT_SETTINGS && !SECRET_KEYS.includes(k) && !INTEGRATION_KEYS.includes(k) && !OWNER_KEYS.includes(k)) setSetting(db, k, v);
     }
     audit(db, req, 'configuracion_modificada', Object.keys(req.body || {}).join(', '));
     res.json({ ok: true });
@@ -176,6 +194,7 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
       if (!m || typeof m !== 'object' || Array.isArray(m)) fail(400, 'El mapeo del formulario debe ser un objeto JSON');
       setSetting(db, 'webform_mapping', JSON.stringify(m, null, 2));
     }
+    if (b.webform_site !== undefined) setSetting(db, 'webform_allowed_origins', siteOrigins(b.webform_site));
     if (b.webform_enabled !== undefined) setSetting(db, 'webform_enabled', b.webform_enabled ? '1' : '0');
     if (b.webform_allowed_origins !== undefined) setSetting(db, 'webform_allowed_origins', b.webform_allowed_origins);
     if (b.webform_redirect_url !== undefined) {

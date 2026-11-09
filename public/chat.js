@@ -217,7 +217,7 @@ input, select, textarea { font: inherit; font-size: 14px; padding: 8px 9px; bord
               ? `¡Listo! Recibimos tu pedido de reserva ${r.code}. En breve te confirmamos por ${email.value ? 'email' : 'teléfono'}.`
               : '¡Listo! Recibimos tu pedido. En breve te contactamos para confirmarlo.',
           );
-          chips([['Hacer otra consulta', menu]]);
+          chips([...(r.card_url ? [['Dejar mi tarjeta', () => window.open(r.card_url, '_blank', 'noopener')]] : []), ['Hacer otra consulta', menu]]);
         } catch (ex) {
           err.textContent = ex.message;
           btn.disabled = false;

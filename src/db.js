@@ -213,6 +213,27 @@ CREATE TABLE IF NOT EXISTS reservation_files (
 );
 CREATE INDEX IF NOT EXISTS ix_reservation_files ON reservation_files(reservation_id);
 
+CREATE TABLE IF NOT EXISTS delivery_links (
+  reservation_id INTEGER PRIMARY KEY REFERENCES reservations(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  photos_token TEXT NOT NULL UNIQUE,
+  card_token TEXT NOT NULL UNIQUE,
+  snapshot TEXT,
+  signed_at TEXT,
+  signed_name TEXT,
+  signed_doc TEXT,
+  signed_ip TEXT,
+  signed_ua TEXT,
+  signed_image TEXT,
+  signed_hash TEXT,
+  card_holder TEXT,
+  card_brand TEXT,
+  card_last4 TEXT,
+  card_exp TEXT,
+  card_at TEXT,
+  card_ip TEXT
+);
+
 -- Carnet y DNI de cada cliente (frente y dorso): de la persona, no de un alquiler.
 CREATE TABLE IF NOT EXISTS customer_files (
   id INTEGER PRIMARY KEY,
@@ -502,6 +523,10 @@ const DEFAULT_SETTINGS = {
   // Tipo de negocio: 'turismo' (alquiler por días, el de siempre) o 'choferes' (autos de trabajo para choferes de apps, src/choferes.js).
   business_mode: 'turismo',
   rent_period: 'semana', // 'dia', 'semana' o 'mes': cada cuánto se cobra y se renueva el alquiler
+  // Funciones en prueba: las activa el dueño de Floty por agencia, desde el panel. Apagadas no cambian nada.
+  pro_features: '0',
+  turnaround_minutes: '0', // minutos entre la devolución de un auto y su próximo alquiler
+  dynamic_pricing_rules: '', // recargo según ocupación de la categoría, "ocupación:recargo": 70:10, 90:20
   pay_modes: '0', // '1': cobrando por día, cada auto elige si paga cada 24 o cada 12 horas (lo activa el dueño de Floty por agencia)
   late_fee_per_day: '0', // recargo por cada día de atraso en el pago
   late_grace_days: '0', // días de tolerancia antes de cobrar el recargo
@@ -620,6 +645,8 @@ function getSettings(db) {
   return out;
 }
 
+const proOn = (db) => getSetting(db, 'pro_features') === '1';
+
 function setSetting(db, key, value) {
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(
     key,
@@ -627,4 +654,4 @@ function setSetting(db, key, value) {
   );
 }
 
-module.exports = { COUNTRY_PRESETS, openDb, getSetting, getSettings, setSetting, newApiKey, DEFAULT_MAPPING, WEBFORM_MAPPING, DEFAULT_SETTINGS, CONTRACT_TERMS, CONTRACT_TERMS_EN, CONTRACT_TERMS_CHOFERES };
+module.exports = { COUNTRY_PRESETS, openDb, proOn, getSetting, getSettings, setSetting, newApiKey, DEFAULT_MAPPING, WEBFORM_MAPPING, DEFAULT_SETTINGS, CONTRACT_TERMS, CONTRACT_TERMS_EN, CONTRACT_TERMS_CHOFERES };

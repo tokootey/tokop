@@ -18,6 +18,8 @@ const { HttpError, fail } = require('./util');
 const { backupStatus } = require('./backup');
 const { COMPANY_FIELDS } = require('./owner-book');
 const { hotelRoutes } = require('./hotel');
+const { deliveryPublicRoutes } = require('./routes/delivery-public');
+const { demandExample } = require('./demand-example');
 const { log: reservationLog } = require('./reservations');
 
 /** Crea el usuario administrador inicial si no hay ninguno. */
@@ -71,10 +73,12 @@ function companyApi(db, { uploadsDir, company, platform }) {
   const prefix = company ? `${company.id}.` : '';
   const emailTaken = platform ? (email) => platform.emailTaken(email, company.id) : () => false;
 
-  app.use('/api/public/webform', webformRoutes(db));
-  app.use('/api/public/chat', chatRoutes(db));
-  app.use('/api/public/v1', publicRoutes(db));
+  const publicQuery = company && !company.principal ? `?empresa=${company.slug}` : '';
+  app.use('/api/public/webform', webformRoutes(db, { publicQuery }));
+  app.use('/api/public/chat', chatRoutes(db, { publicQuery }));
+  app.use('/api/public/v1', publicRoutes(db, { publicQuery }));
   app.use('/api/public/hotel', hotelRoutes(db, reservationLog));
+  app.use('/api/public/entrega', deliveryPublicRoutes(db, uploadsDir));
 
   app.post('/api/auth/login', sameOrigin, (req, res) => res.json(login(db, req, res, prefix)));
   const auth = requireUser(db);
@@ -105,7 +109,7 @@ function companyApi(db, { uploadsDir, company, platform }) {
     catalogRoutes(db, { uploadsDir }),
     operationsRoutes(db),
     fileRoutes(db, uploadsDir),
-    adminRoutes(db, { emailTaken, publicQuery: company && !company.principal ? `?empresa=${company.slug}` : '' }),
+    adminRoutes(db, { emailTaken, publicQuery }),
     importRoutes(db),
     statsRoutes(db),
   );
@@ -208,6 +212,14 @@ function platformRoutes(platform, company) {
     const r = platform.remove(req.params.id);
     audit(company.db, req, 'agencia_eliminada', `empresa #${r.id} (${r.name})`);
     res.json(r);
+  });
+  // Caso de ejemplo para presentar los precios según disponibilidad. Sólo se carga en una agencia vacía.
+  router.post('/companies/:id/demand-example', (req, res) => {
+    const c = platform.list().find((x) => x.id === Number(req.params.id));
+    if (!c) fail(404, 'Empresa inexistente');
+    const scenarios = demandExample(platform.get(c.id).db);
+    audit(company.db, req, 'agencia_ejemplo_precios', `empresa #${c.id}`);
+    res.json({ scenarios, booking_url: c.address ? `${c.address}/reservar` : `/reservar?empresa=${encodeURIComponent(c.slug)}` });
   });
   // Estadísticas de una agencia (las mismas que ve su administrador), sin entrar a su cuenta.
   router.get('/companies/:id/stats', (req, res) => {
