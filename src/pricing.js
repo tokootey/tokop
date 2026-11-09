@@ -38,16 +38,11 @@ function rentalDays(pickupAt, returnAt, graceHours = 2) {
 }
 
 function seasonMultiplier(seasons, dateStr) {
-  // Vale el mayor recargo y la mayor promoción de ese día (0.8 = 20 % menos): una promo también baja la temporada alta.
-  let up = 1;
-  let down = 1;
+  let mult = 1;
   for (const s of seasons) {
-    if (dateStr >= s.start_date && dateStr <= s.end_date) {
-      up = Math.max(up, s.multiplier);
-      down = Math.min(down, s.multiplier);
-    }
+    if (dateStr >= s.start_date && dateStr <= s.end_date) mult = Math.max(mult, s.multiplier);
   }
-  return up * down;
+  return mult;
 }
 
 /**
@@ -84,11 +79,25 @@ function computeQuote(db, input) {
       perDay = base / periods;
     }
   }
+  const promos = choferes ? [] : db.prepare('SELECT * FROM promotions WHERE active = 1 AND category_id = ? ORDER BY promo_rate').all(category.id);
+  let promo = null;
+  let promoDays = 0;
+  let promoDiscount = 0;
+  let promoSaving = 0; // contra el precio de "antes" que cargó la agencia
   for (let i = 0; i < (choferes ? 0 : days); i++) {
     const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
-    const mult = seasonMultiplier(seasons, fmtLocal(d).slice(0, 10));
+    const day = fmtLocal(d).slice(0, 10);
     base += perDay;
-    seasonExtra += perDay * (mult - 1);
+    // El precio de promo es final: esos días no suman temporada ni demanda. Si la tarifa semanal ya es más barata, queda esa.
+    const p = promos.find((x) => day >= x.start_date && day <= x.end_date && x.promo_rate < perDay);
+    if (p) {
+      promo ??= p;
+      promoDays++;
+      promoDiscount += perDay - p.promo_rate;
+      promoSaving += p.regular_rate - p.promo_rate;
+    } else {
+      seasonExtra += perDay * (seasonMultiplier(seasons, day) - 1);
+    }
   }
 
   const extrasLines = [];
@@ -110,9 +119,9 @@ function computeQuote(db, input) {
 
   // Una reserva ya hecha conserva su recargo mientras no cambie de fechas o categoría (dynamic_pct viene de updateReservation).
   const demandPct = input.dynamic_pct !== undefined ? Number(input.dynamic_pct) || 0 : dynamicPct(db, settings, input);
-  const demandExtra = ((base + seasonExtra) * demandPct) / 100;
+  const demandExtra = ((base - promoDays * perDay + seasonExtra) * demandPct) / 100;
 
-  const subtotal = base + seasonExtra + demandExtra + extrasTotal + oneWay;
+  const subtotal = base + seasonExtra + demandExtra - promoDiscount + extrasTotal + oneWay;
   const discountPct = Math.min(100, Math.max(0, Number(input.discount_pct) || 0));
   // El porcentaje y el monto fijo (por ejemplo 10.000 para redondear) se suman; nunca más que el subtotal.
   const discountAmount = Math.max(0, Number(input.discount_amount) || 0);
@@ -132,6 +141,8 @@ function computeQuote(db, input) {
     season_extra: round2(seasonExtra),
     dynamic_pct: demandPct,
     dynamic_extra: round2(demandExtra),
+    promo_discount: round2(promoDiscount),
+    promo: promo ? { name: promo.name, days: promoDays, before_total: round2(total + promoSaving * (included ? 1 : 1 + taxRate / 100)) } : null,
     extras: extrasLines,
     extras_total: round2(extrasTotal),
     one_way_fee: round2(oneWay),

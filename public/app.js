@@ -1511,7 +1511,8 @@ function breakdownHtml(q) {
   const row = (l, v, cls = '') => `<tr class="${cls}"><td>${l}</td><td class="right">${v}</td></tr>`;
   return `<table class="breakdown"><tbody>
     ${row(`${esc(q.category ? q.category.name : '')} · ${baseLabel(q, q.days)}`, money(q.base))}
-    ${q.season_extra ? row(q.season_extra < 0 ? 'Promoción' : 'Recargo de temporada', money(q.season_extra)) : ''}
+    ${q.season_extra ? row('Recargo de temporada', money(q.season_extra)) : ''}
+    ${q.promo_discount ? row(`Promoción: ${esc(q.promo.name)}`, '−' + money(q.promo_discount)) : ''}
     ${q.dynamic_extra ? row(`Recargo por alta demanda ${q.dynamic_pct}%`, money(q.dynamic_extra)) : ''}
     ${(q.extras || []).map((x) => row(`${esc(x.name)}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount))).join('')}
     ${q.one_way_fee ? row('Devolución en otra sucursal', money(q.one_way_fee)) : ''}
@@ -2030,7 +2031,8 @@ function voucherLines(r) {
   }`;
   const price = [
     q.base !== undefined ? [`Tarifa ${days}${q.per_day ? ` × ${money(q.per_day)}` : ''}`, money(q.base)] : null,
-    q.season_extra ? [q.season_extra < 0 ? 'Promoción' : 'Recargo de temporada', money(q.season_extra)] : null,
+    q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
+    q.promo_discount ? [`Promoción: ${q.promo.name}`, '−' + money(q.promo_discount)] : null,
     q.dynamic_extra ? [`Recargo por alta demanda ${q.dynamic_pct}%`, money(q.dynamic_extra)] : null,
     ...(q.extras || []).map((x) => [`${x.name}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
@@ -2549,7 +2551,8 @@ function printContract(r) {
   const line = (label, value) => `<tr><th>${label}</th><td>${value || '<span class="blank"></span>'}</td></tr>`;
   const priceRows = [
     q.base !== undefined ? [`Alquiler ${baseLabel(q, r.days)}`, money(q.base)] : null,
-    q.season_extra ? [q.season_extra < 0 ? 'Promoción' : 'Recargo de temporada', money(q.season_extra)] : null,
+    q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
+    q.promo_discount ? [`Promoción: ${q.promo.name}`, '−' + money(q.promo_discount)] : null,
     ...(q.extras || []).map((x) => [esc(x.name) + (x.quantity > 1 ? ` ×${esc(x.quantity)}` : ''), money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${esc(q.discount_pct)}%` : ''}`, '−' + money(q.discount)] : null,
@@ -3514,18 +3517,39 @@ on(/^\/tarifas$/, async (view) => {
     },
     {
       key: 'seasons',
-      label: 'Temporadas y promociones',
+      label: 'Temporadas',
       fields: [
         { name: 'name', label: 'Nombre', required: true, full: true },
         { name: 'start_date', label: 'Desde', type: 'date', required: true },
         { name: 'end_date', label: 'Hasta', type: 'date', required: true },
-        { name: 'multiplier', label: 'Multiplicador (1.3 = 30% más · 0.8 = promoción del 20%)', type: 'number', default: 1 },
+        { name: 'multiplier', label: 'Multiplicador (1.3 = +30%)', type: 'number', default: 1 },
       ],
       columns: [
-        { label: 'Nombre', key: 'name' },
+        { label: 'Temporada', key: 'name' },
         { label: 'Desde', render: (r) => fmtD(r.start_date) },
         { label: 'Hasta', render: (r) => fmtD(r.end_date) },
         { label: 'Ajuste', render: (r) => `${r.multiplier >= 1 ? '+' : ''}${Math.round((r.multiplier - 1) * 100)}%` },
+      ],
+    },
+    {
+      key: 'promotions',
+      label: 'Promociones',
+      intro: 'Elegí el auto, el precio y los días. El cotizador la muestra sola, con el precio de antes tachado.',
+      fields: [
+        { name: 'name', label: 'Nombre de la promo', required: true, full: true },
+        { name: 'category_id', label: 'Auto', type: 'select', required: true, options: () => state.categories.map((x) => [x.id, x.name]) },
+        { name: 'regular_rate', label: 'Precio por día antes (vacío = tu tarifa)', type: 'number' },
+        { name: 'promo_rate', label: 'Precio por día con la promo', type: 'number', required: true },
+        { name: 'start_date', label: 'Desde', type: 'date', required: true },
+        { name: 'days', label: 'Cantidad de días', type: 'number' },
+        { name: 'end_date', label: 'O hasta esta fecha', type: 'date' },
+        { name: 'active', label: 'Activa', type: 'checkbox', default: 1 },
+      ],
+      columns: [
+        { label: 'Promo', render: (r) => `<b>${esc(r.name)}</b>${r.active ? '' : ' <span class="badge">pausada</span>'}` },
+        { label: 'Auto', render: (r) => esc((state.categories.find((x) => x.id === r.category_id) || {}).name || '—') },
+        { label: 'Precio por día', render: (r) => `<s>${money(r.regular_rate)}</s> ${money(r.promo_rate)}` },
+        { label: 'Días', render: (r) => `${fmtD(r.start_date)} → ${fmtD(r.end_date)}` },
       ],
     },
     {
@@ -5069,10 +5093,10 @@ async function bookingPage() {
             return `<button type="button" class="car${o.code === pick ? ' on' : ''}" data-cat="${esc(o.code)}" aria-pressed="${o.code === pick}">
               <span class="car-info"><b>${esc(o.name)}</b>${info ? `<small>${esc(info)}</small>` : ''}${
                 o.promo || o.high_demand || o.few_left
-                  ? `<span class="car-tags">${o.promo ? `<i class="tag-promo">${L('Promoción', 'Promotion')}</i>` : ''}${o.high_demand ? `<i class="tag-demand">${L('Alta demanda', 'High demand')}</i>` : ''}${o.few_left ? `<i class="tag-few">${L('Último disponible', 'Last one left')}</i>` : ''}</span>`
+                  ? `<span class="car-tags">${o.promo ? `<i class="tag-promo">${esc(o.promo.name)}</i>` : ''}${o.high_demand ? `<i class="tag-demand">${L('Alta demanda', 'High demand')}</i>` : ''}${o.few_left ? `<i class="tag-few">${L('Último disponible', 'Last one left')}</i>` : ''}</span>`
                   : ''
               }</span>
-              <span class="price">${money(o.total)}<small class="muted">${money(o.total / o.days)} ${L('por día', 'per day')}</small></span>
+              <span class="price">${o.promo ? `<s class="price-before">${money(o.promo.before_total)}</s>` : ''}${money(o.total)}<small class="muted">${money(o.total / o.days)} ${L('por día', 'per day')}</small></span>
             </button>`;
           })
           .join('')

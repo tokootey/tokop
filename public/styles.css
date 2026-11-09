@@ -981,6 +981,7 @@ input[aria-invalid="true"] { border-color: #c62828 !important; box-shadow: 0 0 0
 .quoter .car-tags i { font-style: normal; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
 .tag-demand { background: #fff4e5; color: #9a5b00; }
 .tag-promo { background: #e6f6ec; color: #17693a; }
+.price-before { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
 .tag-few { background: #fdecec; color: #a12626; }
 .cars.loading { opacity: 0.55; pointer-events: none; transition: opacity 0.12s; }
 .car-skeleton { height: 72px; border-radius: 14px; background: var(--soft, #f1f4f8); }

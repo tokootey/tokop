@@ -21,7 +21,7 @@
     } catch {}
     window.__demoTipo = TIPO;
   }
-  const SUFFIX = PROFILE ? `-${PROFILE}` : PRECIOS ? '-precios' : TIPO === 'trabajo' ? '-trabajo' : '';
+  const SUFFIX = PROFILE ? `-${PROFILE}` : PRECIOS ? '-precios2' : TIPO === 'trabajo' ? '-trabajo' : '';
   const STORE_KEY = `rentacar-demo-db-v1${SUFFIX}`;
   const COOKIE_KEY = `rentacar-demo-cookies${SUFFIX}`;
 
@@ -327,9 +327,9 @@
       else if (PRECIOS) {
         req('./src/demand-example.js').demandExample(db);
         setSetting(db, 'company_name', 'Agencia de ejemplo (Panamá)');
-        // A cuatro semanas, una promoción: la misma tarifa con 20 % menos.
+        // A cuatro semanas, una promoción del SUV: de USD 65 a USD 50 por día.
         const inDays = (n) => req('./src/util.js').fmtLocal(new Date(Date.now() + n * 864e5)).slice(0, 10);
-        db.prepare('INSERT INTO seasons (name, start_date, end_date, multiplier) VALUES (?, ?, ?, ?)').run('Promo de ejemplo', inDays(28), inDays(35), 0.8);
+        db.prepare("INSERT INTO promotions (name, category_id, start_date, end_date, regular_rate, promo_rate) SELECT 'Promo diciembre', id, ?, ?, 65, 50 FROM categories WHERE code = 'EJS'").run(inDays(28), inDays(35));
       } else if (TIPO === 'trabajo') req('./src/seed.js').seedChoferes(db);
       else {
         req('./src/seed.js').seed(db);

@@ -1,9 +1,9 @@
 'use strict';
 
-/* La agencia maneja sola sus precios: promociones por fechas y precio final de cada reserva. */
+/* La agencia maneja sola sus precios: promociones por días y precio final de cada reserva. */
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { openDb } = require('../src/db');
+const { openDb, setSetting } = require('../src/db');
 const { ensureAdmin } = require('../src/app');
 const { seed } = require('../src/seed');
 const { computeQuote } = require('../src/pricing');
@@ -16,27 +16,57 @@ function setup() {
   const db = openDb(':memory:');
   ensureAdmin(db);
   seed(db);
+  setSetting(db, 'prices_include_tax', '1');
   const car = db.prepare("SELECT id, category_id FROM vehicles WHERE plate = 'AF123BC'").get();
   const customer = db.prepare('SELECT id FROM customers ORDER BY id').get().id;
-  const season = (multiplier) =>
-    db.prepare("INSERT INTO seasons (name, start_date, end_date, multiplier) VALUES ('Prueba', '2099-05-01', '2099-05-31', ?)").run(multiplier);
-  return { db, car, customer, season };
+  const rate = db.prepare('SELECT daily_rate FROM categories WHERE id = ?').get(car.category_id).daily_rate;
+  const promo = (from, to, promoRate, regularRate = rate, category = car.category_id) =>
+    db.prepare("INSERT INTO promotions (name, category_id, start_date, end_date, regular_rate, promo_rate) VALUES ('Promo', ?, ?, ?, ?, ?)").run(category, from, to, regularRate, promoRate);
+  return { db, car, customer, rate, promo };
 }
 
-test('promoción: un multiplicador menor a 1 baja el precio y se combina con un recargo', () => {
-  const { db, car, season } = setup();
+test('promoción: esos días salen al precio de promo y el cotizador sabe el de antes', () => {
+  const { db, car, rate, promo } = setup();
   const range = { category_id: car.category_id, ...TRIP };
   const normal = computeQuote(db, range);
-  assert.equal(normal.season_extra, 0);
+  assert.equal(normal.promo, null);
 
-  season(0.8);
-  const promo = computeQuote(db, range);
-  assert.equal(promo.season_extra, Math.round(normal.base * -20) / 100);
-  assert.ok(promo.total < normal.total);
+  promo('2099-05-01', '2099-05-31', rate / 2);
+  const all = computeQuote(db, range);
+  assert.equal(all.total, normal.total / 2);
+  assert.equal(all.promo.days, 3);
+  assert.equal(all.promo.before_total, normal.total);
+});
 
-  season(1.5);
-  const both = computeQuote(db, range);
-  assert.equal(both.season_extra, Math.round(normal.base * 20) / 100, '1.5 × 0.8 = 20 % más');
+test('promoción: solo cuenta los días que caen adentro, del auto elegido', () => {
+  const { db, car, rate, promo } = setup();
+  const range = { category_id: car.category_id, ...TRIP };
+  const normal = computeQuote(db, range);
+  const other = db.prepare('SELECT id FROM categories WHERE id <> ? ORDER BY id').get(car.category_id).id;
+  promo('2099-05-01', '2099-05-31', 1, 100, other);
+  assert.equal(computeQuote(db, range).promo, null, 'la promo de otro auto no cambia nada');
+
+  promo('2099-05-10', '2099-05-10', rate / 2);
+  const oneDay = computeQuote(db, range);
+  assert.equal(oneDay.promo.days, 1);
+  assert.equal(oneDay.total, normal.total - rate / 2);
+});
+
+test('promoción: el precio fijado no suma temporada ni demanda, y pausada no se aplica', () => {
+  const { db, car, rate, promo } = setup();
+  const range = { category_id: car.category_id, ...TRIP };
+  db.prepare("INSERT INTO seasons (name, start_date, end_date, multiplier) VALUES ('Alta', '2099-05-01', '2099-05-31', 2)").run();
+  const high = computeQuote(db, range);
+  assert.equal(high.total, rate * 6);
+
+  promo('2099-05-01', '2099-05-31', rate / 2);
+  const fixed = computeQuote(db, { ...range, dynamic_pct: 20 });
+  assert.equal(fixed.total, (rate / 2) * 3);
+  assert.equal(fixed.season_extra, 0);
+  assert.equal(fixed.dynamic_extra, 0);
+
+  db.prepare('UPDATE promotions SET active = 0').run();
+  assert.equal(computeQuote(db, range).total, rate * 6);
 });
 
 test('precio final: reemplaza al calculado, se conserva al editar y se puede volver a las tarifas', () => {
