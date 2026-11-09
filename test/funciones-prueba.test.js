@@ -433,3 +433,49 @@ test('whatsapp: sin conectar no manda; conectado manda la plantilla con el texto
     global.fetch = real;
   }
 });
+
+test('links del cliente: la vista previa muestra el nombre de la agencia, no Floty', async () => {
+  const title = async (server, p) => (await (await fetch(`http://127.0.0.1:${server.address().port}${p}`)).text()).match(/<title>([^<]*)<\/title>/)[1];
+  const { db } = setup();
+  setSetting(db, 'company_name', 'Rent <Sur> & Co');
+  const one = createApp(db).listen(0);
+  try {
+    assert.equal(await title(one, '/firmar/abc'), 'Rent &lt;Sur&gt; &amp; Co');
+    assert.equal(await title(one, '/fotos/abc'), 'Rent &lt;Sur&gt; &amp; Co');
+    assert.match(await title(one, '/panel'), /Floty/, 'la app de la agencia no cambia');
+  } finally {
+    one.close();
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'titulo-'));
+  const file = path.join(dir, 'rentacar.db');
+  const platform = openPlatform(openDb(file), file);
+  const b = platform.get(platform.create({ name: 'Prueba Dos', country: 'AR', admin_name: 'Beto', admin_email: 'beto@dos.test' }).company.id);
+  setSetting(b.db, 'company_name', 'Autos Panamá');
+  const many = createApp(platform.principal().db, { platform, uploadsDir: dir }).listen(0);
+  try {
+    assert.equal(await title(many, `/firmar/abc?empresa=${b.slug}`), 'Autos Panamá');
+    assert.doesNotMatch(await title(many, '/firmar/abc?empresa=no-existe'), /Floty/);
+  } finally {
+    many.close();
+  }
+});
+
+test('dominio propio: la pantalla recibe el dominio para armar los links del cliente sin la dirección de Floty', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dominio-'));
+  const file = path.join(dir, 'rentacar.db');
+  const platform = openPlatform(openDb(file), file);
+  const made = platform.create({ name: 'Ancon', country: 'PA', admin_name: 'Fer', admin_email: 'fer@ancon.test' });
+  const server = createApp(platform.principal().db, { platform, uploadsDir: dir }).listen(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const login = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify(made.admin) });
+    assert.equal(login.status, 200);
+    const cookie = login.headers.get('set-cookie').split(';')[0];
+    const me = async () => (await (await fetch(`${base}/api/auth/me`, { headers: { cookie } })).json()).company;
+    assert.equal((await me()).domain, null);
+    platform.setDomain(made.company.id, 'reservas.ancon.test');
+    assert.equal((await me()).domain, 'reservas.ancon.test', 'sin reiniciar el servidor');
+  } finally {
+    server.close();
+  }
+});

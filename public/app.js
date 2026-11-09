@@ -1164,13 +1164,13 @@ const hotelFee = () => {
 const hotelFrom = (form) => Object.fromEntries(HOTEL_FIELDS.map(([k]) => [k, (form.elements[`h_${k}`] || {}).value || '']));
 /** Link para que el cliente complete los datos del hotel (lleva la agencia si no es la principal). */
 function hotelLink(r) {
-  const co = state.user && state.user.company;
-  return `${location.origin}/hotel/${r.hotel_token}${co && !co.principal ? `?empresa=${encodeURIComponent(co.slug)}` : ''}`;
+  return clientLink('hotel', r.hotel_token);
 }
-/** Links del cliente (firma y fotos): llevan la agencia si no es la principal. */
+/** Links del cliente: con dominio propio van por ese dominio (sin la dirección de Floty); si no, llevan la agencia si no es la principal. */
 const clientLink = (path, token) => {
   const co = state.user && state.user.company;
-  return `${location.origin}/${path}/${token}${co && !co.principal ? `?empresa=${encodeURIComponent(co.slug)}` : ''}`;
+  if (co && co.domain) return `https://${co.domain}/${path}${token ? `/${token}` : ''}`;
+  return `${location.origin}/${path}${token ? `/${token}` : ''}${co && !co.principal ? `?empresa=${encodeURIComponent(co.slug)}` : ''}`;
 };
 const waText = (r, text) => `https://wa.me/${String(r.customer_phone || '').replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
 const contractMessage = (r, link) =>
@@ -4999,7 +4999,7 @@ on(/^\/asistente$/, async (view) => {
   // En una instalación con varias empresas, el link y el código llevan la empresa (salvo la principal).
   const co = state.user.company;
   const empresa = co && !co.principal ? co.slug : '';
-  const link = `${location.origin}/reservar${empresa ? `?empresa=${encodeURIComponent(empresa)}` : ''}`;
+  const link = clientLink('reservar');
   const share = `https://wa.me/?text=${encodeURIComponent(`${L('Reservá tu auto acá', 'Book your car here')}: ${link}`)}`;
   const snippet = `<script src="${location.origin}/chat.js"${empresa ? ` data-empresa="${empresa}"` : ''} async></script>`;
   const copy = (text) =>
