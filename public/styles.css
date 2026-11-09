@@ -959,6 +959,7 @@ input[aria-invalid="true"] { border-color: #c62828 !important; box-shadow: 0 0 0
 .trip.pend .trip-actions .btn { flex: 1 1 auto; }
 .doc-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
 .doc-slot { display: flex; flex-direction: column; gap: 6px; }
+.doc-slot b { min-height: 2.9em; } /* los títulos de uno y dos renglones dejan las fotos alineadas */
 .doc-slot .thumb { width: 100%; aspect-ratio: 1.58; }
 .doc-slot .thumb.empty { cursor: default; border-style: dashed; }
 

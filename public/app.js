@@ -1574,7 +1574,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         <h2>Datos de la reserva</h2>
         <dl class="info">
           <dt>Cliente</dt><dd><b>${esc(r.customer_name)}</b><br><small>${esc(r.customer_doc || '')} · ${esc(r.customer_phone || '')} · ${esc(r.customer_email || '')}</small>
-            <br><button class="btn small no-print" type="button" data-docs style="margin-top:6px">Carnet y DNI</button></dd>
+            <br><button class="btn small no-print" type="button" data-docs style="margin-top:6px">Documentación</button></dd>
           <dt>Retiro</dt><dd>${fmtDT(r.pickup_at)} · ${esc(r.pickup_branch_name || '')}</dd>
           <dt>Devolución</dt><dd>${fmtDT(r.return_at)} · ${esc(r.return_branch_name || '')}</dd>
           <dt>Categoría</dt><dd>${esc(r.category_code)} · ${esc(r.category_name)}</dd>
@@ -2335,12 +2335,12 @@ function wireFiles(view, r, reload) {
   );
 }
 
-/* ---------- Carnet y DNI del cliente ---------- */
+/* ---------- Documentación del cliente ---------- */
 const DOC_KINDS = [
-  ['carnet_frente', 'Carnet · frente'],
-  ['carnet_dorso', 'Carnet · dorso'],
-  ['dni_frente', 'DNI · frente'],
-  ['dni_dorso', 'DNI · dorso'],
+  ['carnet_frente', 'Licencia de conducir · frente'],
+  ['carnet_dorso', 'Licencia de conducir · dorso'],
+  ['dni_frente', 'Identificación · frente'],
+  ['dni_dorso', 'Identificación · dorso'],
 ];
 /** Los documentos de la persona: se cargan una vez y se ven desde todas sus reservas. Subir otro reemplaza al anterior. */
 async function openDocuments(customerId, name) {
@@ -2354,7 +2354,7 @@ async function openDocuments(customerId, name) {
       ${d ? `<button type="button" class="btn small danger" data-del="${d.id}">Borrar</button>` : ''}</div>
     </div>`;
   };
-  openModal(`Carnet y DNI · ${name}`, `<p class="muted">Se cargan una vez y quedan en la ficha del cliente para todos sus alquileres.</p><div class="doc-slots">${DOC_KINDS.map(slot).join('')}</div>`);
+  openModal(`Documentación · ${name}`, `<p class="muted">Se cargan una vez y quedan en la ficha del cliente para todos sus alquileres.</p><div class="doc-slots">${DOC_KINDS.map(slot).join('')}</div>`);
   const box = $('#modal-body');
   const blobOf = (id) => fetch(`/api/documents/${id}`, { credentials: 'same-origin' }).then((r) => (r.ok ? r.blob() : Promise.reject(new Error('No se pudo abrir el archivo'))));
   $$('[data-doc-img]', box).forEach((img) =>
@@ -3338,7 +3338,7 @@ on(
       { label: 'Licencia', render: (r) => (r.license_number ? `${esc(r.license_number)} <small class="muted">${fmtD(r.license_expiry)}</small>` : '<span class="badge b-pendiente">Falta</span>') },
     ],
     extraActions: (r) =>
-      `<button class="btn small" data-hist="${r.id}">Reservas</button> ${r.anonymized_at ? '' : `<button class="btn small" data-docs="${r.id}">Carnet y DNI</button> `}${isAdmin() && !r.anonymized_at ? `<button class="btn small" data-anon="${r.id}">Anonimizar</button> ` : ''}`,
+      `<button class="btn small" data-hist="${r.id}">Reservas</button> ${r.anonymized_at ? '' : `<button class="btn small" data-docs="${r.id}">Documentación</button> `}${isAdmin() && !r.anonymized_at ? `<button class="btn small" data-anon="${r.id}">Anonimizar</button> ` : ''}`,
     nav: (tr, r) => {
       const b = tr.querySelector('[data-hist]');
       if (b)
