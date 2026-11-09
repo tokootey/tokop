@@ -175,6 +175,9 @@ function operationsRoutes(db) {
   // Firma del contrato, fotos para la entrega express y tarjeta del cliente.
   router.post('/reservations/:id/signature', (req, res) => res.json(delivery.requestSignature(db, req.params.id, (req.body || {}).terms, getSettings(db), req.user.id)));
   router.post('/reservations/:id/photos-link', (req, res) => res.json(delivery.photosLink(db, req.params.id)));
+  router.post('/reservations/:id/pre-delivery', (req, res) => res.json(delivery.preDeliver(db, req.params.id, req.body || {}, getSettings(db), req.user.id)));
+  router.post('/reservations/:id/left-place', (req, res) => res.json(delivery.setLeftPlace(db, req.params.id, (req.body || {}).place, req.user.id)));
+  router.post('/reservations/:id/return-link', (req, res) => res.json(delivery.returnLink(db, req.params.id)));
   router.post('/reservations/:id/card-link', (req, res) => res.json(delivery.cardLink(db, req.params.id)));
   router.get('/reservations/:id/move-options', (req, res) => res.json(R.moveOptions(db, req.params.id)));
   router.post('/reservations/:id/swap', (req, res) => res.json(R.swapVehicles(db, req.params.id, req.body.reservation_id, req.user.id)));

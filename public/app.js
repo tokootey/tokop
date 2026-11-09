@@ -1175,8 +1175,12 @@ const clientLink = (path, token) => {
 const waText = (r, text) => `https://wa.me/${String(r.customer_phone || '').replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
 const contractMessage = (r, link) =>
   `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Este es el contrato de tu alquiler con ${state.settings.company_name}. Leelo y firmalo desde el celular`, `This is your rental agreement with ${state.settings.company_name}. Read and sign it from your phone`)}: ${link}`;
-const photosMessage = (r, link) =>
-  `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Estas son las fotos del auto${r.vehicle_plate ? ` ${r.vehicle_plate}` : ''} al momento de la entrega`, `These are the photos of the car${r.vehicle_plate ? ` ${r.vehicle_plate}` : ''} at delivery`)}: ${link}`;
+const expressMessage = (r, link) =>
+  `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Tu auto de ${state.settings.company_name} ya está listo. Mirá las fotos y el estado del auto y firmá el contrato desde el celular. Al firmar vas a ver dónde está`, `Your car from ${state.settings.company_name} is ready. Check the photos and condition of the car and sign the agreement from your phone. Once you sign, you will see where it is`)}: ${link}`;
+const signedMessage = (r, contract, photos, place) =>
+  `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L('Tu contrato firmado', 'Your signed agreement')}: ${contract}\n${L('Fotos del auto', 'Car photos')}: ${photos}${place ? `\n${L('El auto quedó en', 'The car is at')}: ${place}` : ''}`;
+const returnMessage = (r, link) =>
+  `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Cuando dejes el auto${r.vehicle_plate ? ` ${r.vehicle_plate}` : ''}, sacale fotos y subilas acá`, `When you leave the car${r.vehicle_plate ? ` ${r.vehicle_plate}` : ''}, take photos of it and upload them here`)}: ${link}`;
 /** Un envío: su propio botón de WhatsApp, para que salga en un mensaje aparte. */
 const sendStep = (title, hint, r, text, link) => `<div class="send-step stack">
     <b>${esc(title)}</b><small class="muted">${esc(hint)}</small>
@@ -1206,9 +1210,11 @@ function signatureCardHtml(r) {
     return `<div class="card"><h2>Firma del contrato</h2>
       <p><span class="badge b-confirmada">Firmado</span> por <b>${esc(s.name)}</b> · ${esc(s.doc)}</p>
       <img class="sign-image" src="${esc(s.image)}" alt="Firma del cliente"/>
-      <small class="muted">${fmtDT(stampLocal(s.signed_at))} · IP ${esc(s.ip || '')} · Huella ${esc(String(s.hash).slice(0, 16))}</small></div>`;
+      <small class="muted">${fmtDT(stampLocal(s.signed_at))} · IP ${esc(s.ip || '')} · Huella ${esc(String(s.hash).slice(0, 16))}</small>
+      <div class="actions no-print" style="margin-top:12px"><button class="btn" type="button" data-act="sendSigned">${ICON.send}Mandar contrato firmado y fotos</button></div></div>`;
   }
   if (s && s.signed_at) return `<div class="card"><h2>Firma del contrato</h2><p class="notice warn">Firmó ${esc(s.name)}, pero la reserva cambió después. Pedile la firma de nuevo.</p>${ask}</div>`;
+  if (s && s.pre_delivery) return `<div class="card"><h2>Firma del contrato</h2><p class="notice warn">Pre-entrega lista: el auto quedó en ${esc(s.left_place || '')}. El alquiler arranca cuando el cliente firme.</p></div>`;
   return `<div class="card"><h2>Firma del contrato</h2><p class="muted">${s && s.requested ? 'Le pediste la firma: todavía no firmó.' : 'El cliente lo firma desde el celular, con el dedo.'}</p>${ask}</div>`;
 }
 
@@ -1543,7 +1549,11 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   const hotelOpen = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
   if (hotelOpen && !r.hotel && !choferesMode()) more.push('<button data-act="hotel">Entregar o retirar en un hotel</button>');
   if (r.status === 'en_curso') actions.push(`<button class="btn ok" data-act="checkin">${ICON.in}Registrar devolución</button>`);
-  if (proOn() && !choferesMode() && ['confirmada', 'en_curso'].includes(r.status)) actions.push(`<button class="btn" data-act="express">${ICON.send}Entrega express</button>`);
+  if (proOn() && !choferesMode() && r.status === 'confirmada') {
+    actions.push(`<button class="btn" data-act="preDelivery">${ICON.key}${r.signature && r.signature.pre_delivery ? 'Cambiar la pre-entrega' : 'Pre-entrega'}</button>`);
+    if (r.signature && r.signature.pre_delivery) actions.push(`<button class="btn" data-act="express">${ICON.send}Mandar link de firma</button>`);
+  }
+  if (proOn() && !choferesMode() && r.status === 'en_curso') actions.push(`<button class="btn" data-act="returnPhotos">${ICON.send}Fotos de la devolución</button>`);
   // Saldo a cobrar a la vista, con el importe: un toque abre el cobro ya completado.
   if (['confirmada', 'en_curso', 'finalizada'].includes(r.status) && r.balance.pending > 0)
     actions.push(`<button class="btn ${r.status === 'finalizada' ? 'primary' : ''}" data-act="pay">${ICON.money}Cobrar ${money(r.balance.pending)}</button>`);
@@ -1762,7 +1772,6 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'out_fuel', label: 'Combustible (octavos)', type: 'select', options: FUEL_OPTS, required: true },
             { name: 'out_notes', label: 'Observaciones / estado del vehículo', type: 'textarea', full: true },
             { name: 'fotos', label: 'Fotos del auto al entregarlo (frente, laterales, cola, interior, tablero con km y combustible)', type: 'photos' },
-            { name: 'express', label: 'Entrega express: el cliente no pasa por el mostrador (después le mandás el contrato y las fotos por separado)', type: 'checkbox', full: true, when: () => proOn() && !choferesMode() },
           ],
           { vehicle_id: first.id, out_at: localISO(new Date()), out_km: first.km, out_fuel: first.fuel ?? 8 },
           'Entregar y abrir contrato',
@@ -1775,8 +1784,46 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           } catch (e) {
             toast(`La entrega quedó registrada, pero falló una foto: ${e.message}. Podés subirla desde la reserva.`, true);
           }
-          if (d.express) location.hash = `#/reservas/${r.id}?accion=express`;
-          else reload();
+          reload();
+        },
+      );
+      const sel = $('#modal-body [name=vehicle_id]');
+      sel.addEventListener('change', () => {
+        const v = list.find((x) => x.id === Number(sel.value));
+        if (v && v.km !== '') $('#modal-body [name=out_km]').value = v.km;
+        if (v && v.fuel !== undefined) $('#modal-body [name=out_fuel]').value = v.fuel;
+      });
+    },
+    // Pre-entrega: el auto queda listo sin que arranque el alquiler. La entrega se completa cuando el cliente firma.
+    preDelivery: async () => {
+      const list = (await GET(`/reservations/${r.id}/available-vehicles`)).filter((v) => v.status !== 'alquilado' || v.id === r.vehicle_id);
+      if (r.vehicle_id && !list.some((v) => v.id === r.vehicle_id)) list.unshift({ id: r.vehicle_id, plate: r.vehicle_plate, brand: r.vehicle_brand, model: r.vehicle_model, km: '' });
+      if (!list.length) return toast('No hay vehículos libres de esta categoría', true);
+      const pre = r.signature && r.signature.pre_delivery;
+      const first = list.find((v) => v.id === (pre ? pre.vehicle_id : r.vehicle_id)) || list[0];
+      openModal(
+        `Pre-entrega · ${r.code}`,
+        formHtml(
+          [
+            { name: 'vehicle_id', label: 'Vehículo', type: 'select', options: list.map((v) => [v.id, `${v.plate} · ${v.brand} ${v.model}${v.km !== '' ? ` · ${v.km} km` : ''}`]), required: true, full: true },
+            { name: 'left_place', label: 'Dónde queda el auto (el cliente lo ve recién al firmar)', required: true, full: true },
+            { name: 'out_km', label: 'Km de salida', type: 'number', required: true },
+            { name: 'out_fuel', label: 'Combustible (octavos)', type: 'select', options: FUEL_OPTS, required: true },
+            { name: 'out_notes', label: 'Observaciones / estado del vehículo', type: 'textarea', full: true },
+            { name: 'fotos', label: 'Fotos del auto (frente, laterales, cola, interior, tablero con km y combustible)', type: 'photos' },
+          ],
+          { vehicle_id: first.id, left_place: (r.signature && r.signature.left_place) || '', out_km: pre ? pre.out_km : first.km, out_fuel: pre ? pre.out_fuel : first.fuel ?? 8, out_notes: (pre && pre.out_notes) || '' },
+          'Guardar pre-entrega',
+        ),
+        async (d, form) => {
+          await POST(`/reservations/${r.id}/pre-delivery`, { ...d, vehicle_id: Number(d.vehicle_id), out_fuel: Number(d.out_fuel), terms: contractTermsList(r) });
+          toast('Pre-entrega guardada. El alquiler arranca cuando el cliente firme.');
+          try {
+            await uploadFiles(r.id, 'entrega', form.fotos.files);
+          } catch (e) {
+            toast(`La pre-entrega quedó guardada, pero falló una foto: ${e.message}. Podés subirla desde la reserva.`, true);
+          }
+          location.hash = `#/reservas/${r.id}?accion=express`;
         },
       );
       const sel = $('#modal-body [name=vehicle_id]');
@@ -1925,14 +1972,35 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       const contract = clientLink('firmar', s.token);
       const photos = clientLink('fotos', s.photos_token);
       const count = r.files.filter((f) => f.stage === 'entrega' && f.mime.startsWith('image/')).length;
+      const signed = s.signed_at && !s.stale;
       openModal(
-        `Entrega express · ${r.code}`,
-        `<p class="muted">Son dos mensajes separados: mandá primero uno y después el otro.</p>
-         <div class="stack">
-           ${sendStep('1. Contrato', 'Lee el contrato y lo firma desde el celular.', r, contractMessage(r, contract), contract)}
-           ${sendStep('2. Fotos del auto', count ? `${count} foto${count === 1 ? '' : 's'} de la entrega.` : 'Todavía no hay fotos de la entrega: agregalas desde la reserva antes de mandar este link.', r, photosMessage(r, photos), photos)}
-         </div>`,
+        `Pre-entrega · ${r.code}`,
+        `<label>Dónde quedó el auto<input id="left-place" maxlength="300" placeholder="Ej.: Estacionamiento del aeropuerto, nivel 2, lugar 45" value="${esc(s.left_place || '')}"/></label>
+         <p class="muted">El cliente lo ve recién después de firmar.</p>
+         ${count ? '' : '<p class="notice warn">Todavía no hay fotos de la entrega: agregalas desde la reserva antes de mandar el link, así las ve al firmar.</p>'}
+         <div id="express-send">${
+           signed
+             ? sendStep('Contrato firmado y fotos', 'Ya firmó. Le llegan los links del contrato firmado y de las fotos.', r, signedMessage(r, contract, photos, s.left_place), contract)
+             : sendStep('Contrato y fotos', `Ve ${count} foto${count === 1 ? '' : 's'} y el estado del auto en la misma pantalla donde firma.`, r, expressMessage(r, contract), contract)
+         }</div>`,
       );
+      const place = $('#left-place');
+      place.addEventListener('input', () => {
+        const wa = $('#express-send a');
+        if (wa && signed) wa.href = waText(r, signedMessage(r, contract, photos, place.value.trim()));
+      });
+      place.addEventListener('change', () => run(() => POST(`/reservations/${r.id}/left-place`, { place: place.value })));
+    },
+    sendSigned: () => {
+      const s = r.signature;
+      const contract = clientLink('firmar', s.token);
+      openModal(`Contrato firmado · ${r.code}`, sendStep('Contrato firmado y fotos', 'Le llegan los links del contrato firmado y de las fotos.', r, signedMessage(r, contract, clientLink('fotos', s.photos_token), s.left_place), contract));
+    },
+    returnPhotos: async () => {
+      const c = await run(() => POST(`/reservations/${r.id}/return-link`));
+      if (!c) return;
+      const link = clientLink('devolucion', c.return_token);
+      openModal(`Fotos de la devolución · ${r.code}`, sendStep('Link para el cliente', 'Saca las fotos desde el celular y aparecen solas en esta reserva, en Devolución. El link se cierra al registrar la devolución.', r, returnMessage(r, link), link));
     },
     card: async () => {
       const c = await run(() => POST(`/reservations/${r.id}/card-link`));
@@ -5368,15 +5436,23 @@ async function signPage() {
       ${row(L('Garantía', 'Deposit'), money(d.deposit))}
     </dl>`;
   const terms = `<div class="sign-terms">${d.terms.map((t) => `<p>${t.title ? `<b>${esc(t.title)}</b> ` : ''}${esc(t.body)}</p>`).join('')}</div>`;
-  const signedHtml = (s) => `<div class="card stack"><div class="pub-ok" aria-hidden="true">✓</div><h2>${L('Contrato firmado', 'Agreement signed')}</h2>
+  const photosUrl = `${location.origin}/fotos/${encodeURIComponent(d.photos_token)}${empresaQuery()}`;
+  const signedHtml = (s, place) => {
+    const text = `${L('Mi contrato firmado', 'My signed agreement')} · ${d.company} · ${d.code}: ${location.href}\n${L('Fotos del auto', 'Car photos')}: ${photosUrl}${place ? `\n${L('El auto está en', 'The car is at')}: ${place}` : ''}`;
+    return `<div class="card stack"><div class="pub-ok" aria-hidden="true">✓</div><h2>${L('Contrato firmado', 'Agreement signed')}</h2>
+      ${place ? `<dl class="info"><dt>${L('Dónde está el auto', 'Where the car is')}</dt><dd><b>${esc(place)}</b></dd></dl>` : ''}
       <img class="sign-image" src="${esc(s.image)}" alt=""/>
       <p>${esc(s.name)} · ${esc(s.doc)}<br><small class="muted">${fmtDT(stampLocal(s.at))} · ${L('Huella', 'Fingerprint')} ${esc(String(s.hash).slice(0, 16))}</small></p>
-      <div class="actions no-print"><button class="btn" type="button" id="sign-print">${L('Imprimir o guardar', 'Print or save')}</button></div></div>`;
+      <div class="actions no-print"><a class="btn ok" href="https://wa.me/?text=${encodeURIComponent(text)}" target="_blank" rel="noopener">${WA_ICON}${L('Guardar contrato y fotos en WhatsApp', 'Save agreement and photos to WhatsApp')}</a>
+      <button class="btn" type="button" id="sign-print">${L('Imprimir o guardar', 'Print or save')}</button></div></div>`;
+  };
   const head = `<div class="pub-head"><h1>${L('Contrato de alquiler', 'Rental agreement')}</h1><p>${esc(d.company)} · ${esc(d.code)}</p></div>
-    <div class="card stack">${summary}${terms}</div>`;
+    <div class="card stack">${summary}${terms}</div>
+    ${d.photos.length || d.condition ? `<div class="card stack"><h2>${L('Fotos y estado del auto', 'Car photos and condition')}</h2>${carConditionHtml({ condition: d.condition, photos: d.photos }, encodeURIComponent(d.photos_token))}</div>` : ''}`;
+  const seen = d.photos.length ? L(', y vi las fotos y el estado del auto', ', and I have seen the photos and condition of the car') : '';
   const bindPrint = (page) => $('#sign-print', page)?.addEventListener('click', () => window.print());
   if (!d.can_sign) {
-    const page = publicPage(`${head}${d.signed ? signedHtml(d.signed) : `<div class="card"><p class="notice warn">${L('Este contrato cambió o ya no se puede firmar. Pedile a la agencia un link nuevo.', 'This agreement has changed or can no longer be signed. Ask the agency for a new link.')}</p></div>`}`);
+    const page = publicPage(`${head}${d.signed ? signedHtml(d.signed, d.left_place) : `<div class="card"><p class="notice warn">${L('Este contrato cambió o ya no se puede firmar. Pedile a la agencia un link nuevo.', 'This agreement has changed or can no longer be signed. Ask the agency for a new link.')}</p></div>`}`);
     bindPrint(page);
     return;
   }
@@ -5384,7 +5460,7 @@ async function signPage() {
     <form class="card qr" id="sign-form">
       <label>${L('Nombre y apellido', 'Full name')}<input name="name" required maxlength="120" value="${esc(d.customer_name || '')}"/></label>
       <label>${L('Documento', 'ID or passport')}<input name="doc" required maxlength="40" value="${esc(d.customer_doc || '')}"/></label>
-      <label class="check"><input type="checkbox" name="accepted" required/> ${L('Leí y acepto este contrato y sus condiciones', 'I have read and accept this agreement and its terms')}</label>
+      <label class="check"><input type="checkbox" name="accepted" required/> ${L('Leí y acepto este contrato y sus condiciones', 'I have read and accept this agreement and its terms')}${seen}</label>
       <div><b>${L('Firmá acá con el dedo', 'Sign here with your finger')}</b><canvas class="sign-pad" id="sign-pad" aria-label="${L('Espacio para firmar', 'Signature area')}"></canvas>
       <button class="btn small link" type="button" id="sign-clear">${L('Borrar y volver a firmar', 'Clear and sign again')}</button></div>
       <button class="btn primary big" type="submit">${L('Firmar el contrato', 'Sign the agreement')}</button>
@@ -5412,9 +5488,11 @@ async function signPage() {
       });
       const r = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(r.error || `Error ${res.status}`);
-      form.outerHTML = signedHtml({ at: r.at, hash: r.hash, name: form.name.value, doc: form.doc.value, image: canvas.toDataURL('image/png') });
+      form.insertAdjacentHTML('afterend', '<div id="sign-done"></div>');
+      $('#sign-done', page).innerHTML = signedHtml({ at: r.at, hash: r.hash, name: form.name.value, doc: form.doc.value, image: canvas.toDataURL('image/png') }, r.left_place);
+      form.remove();
       bindPrint(page);
-      window.scrollTo(0, 0);
+      $('#sign-done', page).scrollIntoView(); // arriba está el contrato: el lugar del auto queda a la vista
     } catch (ex) {
       err.textContent = ex.message;
       btn.disabled = false;
@@ -5436,8 +5514,76 @@ async function photosPage() {
   }
   document.title = `${d.company} · ${L('Fotos del auto', 'Car photos')}`;
   publicPage(`<div class="pub-head"><h1>${L('Fotos del auto', 'Car photos')}</h1><p>${esc(d.company)} · ${esc(d.code)}</p></div>
-    <div class="card stack"><p class="muted">${L('Así estaba el auto al momento de la entrega.', 'This is how the car was at delivery.')}</p>
-    ${d.photos.length ? `<div class="pub-photos">${d.photos.map((p) => `<a href="/api/public/entrega/fotos/${token}/${p.id}${empresaQuery()}" target="_blank" rel="noopener"><img loading="lazy" alt="${esc(p.name || '')}" src="/api/public/entrega/fotos/${token}/${p.id}${empresaQuery()}"/></a>`).join('')}</div>` : `<p>${L('Todavía no hay fotos. La agencia las va a subir enseguida.', 'There are no photos yet. The agency will upload them soon.')}</p>`}</div>`);
+    <div class="card stack">${carConditionHtml(d, token)}</div>`);
+}
+
+/** Lugar (si ya se puede ver), km, combustible, estado y fotos de la entrega. Lo mismo en la firma y en el link de fotos. */
+function carConditionHtml(d, token) {
+  const c = d.condition;
+  const details = [
+    d.left_place && [L('Dónde está el auto', 'Where the car is'), d.left_place],
+    c && [L('Kilómetros', 'Mileage'), c.out_km],
+    c && [L('Combustible', 'Fuel'), fuel(c.out_fuel)],
+    c && c.out_notes && [L('Estado del auto', 'Car condition'), c.out_notes],
+  ].filter(Boolean);
+  const src = (p) => `/api/public/entrega/fotos/${token}/${p.id}${empresaQuery()}`;
+  return `${details.length ? `<dl class="info">${details.map(([l, v]) => `<dt>${esc(l)}</dt><dd>${esc(String(v))}</dd>`).join('')}</dl>` : ''}
+    <p class="muted">${L('Así estaba el auto al momento de la entrega.', 'This is how the car was at delivery.')}</p>
+    ${d.photos.length ? `<div class="pub-photos">${d.photos.map((p) => `<a href="${src(p)}" target="_blank" rel="noopener"><img loading="lazy" alt="${esc(p.name || '')}" src="${src(p)}"/></a>`).join('')}</div>` : `<p>${L('Todavía no hay fotos. La agencia las va a subir enseguida.', 'There are no photos yet. The agency will upload them soon.')}</p>`}`;
+}
+
+/** /devolucion/<código>: el cliente saca las fotos del auto al dejarlo y le llegan a la agencia. */
+async function returnPage() {
+  const url = `/api/public/entrega/devolucion/${encodeURIComponent(location.pathname.split('/')[2] || '')}`;
+  const title = L('Devolución del auto', 'Car return');
+  let d;
+  try {
+    const res = await fetch(url + empresaQuery());
+    d = await res.json();
+    if (!res.ok) throw new Error(d.error);
+  } catch {
+    linkGone(title);
+    return;
+  }
+  document.title = `${d.company} · ${title}`;
+  if (!d.can_upload) {
+    publicPage(`<div class="card pub-done"><h1>${title}</h1><p class="muted">${L('Este alquiler ya está cerrado. Si necesitás algo, escribile a la agencia.', 'This rental is already closed. If you need anything, please contact the agency.')}</p></div>`);
+    return;
+  }
+  const page = publicPage(`<div class="pub-head"><h1>${title}</h1><p>${esc(d.company)} · ${esc(d.code)}</p></div>
+    <div class="card stack"><p>${L('Sacale fotos al auto donde lo dejaste: frente, laterales, cola, interior y tablero con km y combustible.', 'Take photos of the car where you left it: front, sides, rear, interior and dashboard showing mileage and fuel.')}</p>
+    <input id="ret-files" type="file" accept="image/*" multiple hidden/>
+    <button class="btn primary" type="button" id="ret-add">${L('Sacar o elegir fotos', 'Take or choose photos')}</button>
+    <p id="ret-status" class="muted" role="status"></p>
+    <div class="pub-photos" id="ret-thumbs"></div></div>`);
+  const input = $('#ret-files', page);
+  const add = $('#ret-add', page);
+  const status = $('#ret-status', page);
+  let sent = 0;
+  add.addEventListener('click', () => input.click());
+  input.addEventListener('change', async () => {
+    const files = [...input.files];
+    add.disabled = true;
+    try {
+      for (const [i, f] of files.entries()) {
+        status.textContent = L(`Subiendo ${i + 1} de ${files.length}…`, `Uploading ${i + 1} of ${files.length}…`);
+        const blob = await shrinkImage(f);
+        const q = `${empresaQuery() ? `${empresaQuery()}&` : '?'}name=${encodeURIComponent(f.name)}`;
+        const res = await fetch(url + q, { method: 'POST', headers: { 'Content-Type': blob.type || f.type || 'application/octet-stream' }, body: blob });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || L('No se pudo subir la foto. Probá de nuevo.', 'The photo could not be uploaded. Please try again.'));
+        sent += 1;
+        const img = new Image();
+        img.alt = f.name;
+        img.src = URL.createObjectURL(blob);
+        $('#ret-thumbs', page).appendChild(img);
+      }
+      status.textContent = L(`Listo: la agencia ya tiene ${sent} foto${sent === 1 ? '' : 's'}. Podés agregar más.`, `Done: the agency has ${sent} photo${sent === 1 ? '' : 's'}. You can add more.`);
+    } catch (e) {
+      status.textContent = e.message;
+    }
+    add.disabled = false;
+    input.value = '';
+  });
 }
 
 /** ¿El número de tarjeta está bien escrito? (dígito verificador) */
@@ -5517,6 +5663,6 @@ async function cardPage() {
 }
 
 const PUBLIC_PAGES = { '/reservar': bookingPage, '/como-funciona': howItWorksPage };
-const TOKEN_PAGES = [[/^\/hotel\/[\w-]+$/, hotelPage], [/^\/firmar\/[\w-]+$/, signPage], [/^\/fotos\/[\w-]+$/, photosPage], [/^\/tarjeta\/[\w-]+$/, cardPage]];
+const TOKEN_PAGES = [[/^\/hotel\/[\w-]+$/, hotelPage], [/^\/firmar\/[\w-]+$/, signPage], [/^\/fotos\/[\w-]+$/, photosPage], [/^\/devolucion\/[\w-]+$/, returnPage], [/^\/tarjeta\/[\w-]+$/, cardPage]];
 const publicPath = location.pathname.replace(/\/+$/, '');
 (PUBLIC_PAGES[publicPath] || (TOKEN_PAGES.find(([re]) => re.test(publicPath)) || [])[1] || startSession)();

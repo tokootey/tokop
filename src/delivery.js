@@ -16,8 +16,9 @@ const rowOf = (db, id) => db.prepare('SELECT * FROM delivery_links WHERE reserva
 
 function ensureRow(db, id) {
   const row = rowOf(db, id);
-  if (row) return row;
-  db.prepare('INSERT INTO delivery_links (reservation_id, token, photos_token, card_token) VALUES (?, ?, ?, ?)').run(id, newToken(), newToken(), newToken());
+  if (row && row.return_token) return row;
+  if (row) db.prepare('UPDATE delivery_links SET return_token = ? WHERE reservation_id = ?').run(newToken(), id); // fila anterior a este link
+  else db.prepare('INSERT INTO delivery_links (reservation_id, token, photos_token, card_token, return_token) VALUES (?, ?, ?, ?, ?)').run(id, newToken(), newToken(), newToken(), newToken());
   return rowOf(db, id);
 }
 
@@ -41,6 +42,8 @@ function stateOf(db, r) {
     token: row.token,
     photos_token: row.photos_token,
     card_token: row.card_token,
+    left_place: row.left_place,
+    pre_delivery: r.status === 'confirmada' && row.pre_delivery ? JSON.parse(row.pre_delivery) : null,
     card: row.card_last4 ? { holder: row.card_holder, brand: row.card_brand, last4: row.card_last4, exp: row.card_exp, at: row.card_at } : null,
     requested: Boolean(row.snapshot),
     signed_at: row.signed_at,
@@ -95,6 +98,64 @@ function photosLink(db, id) {
   return { photos_token: ensureRow(db, r.id).photos_token };
 }
 
+/** Dónde dejó la agencia el auto: el cliente lo ve en el mensaje y junto a las fotos. */
+function setLeftPlace(db, id, place, userId) {
+  const r = reservationOf(db, id);
+  if (!OPEN.includes(r.status)) fail(409, 'Esta reserva ya no está abierta');
+  const text = String(place || '').trim().slice(0, 300);
+  ensureRow(db, r.id);
+  db.prepare('UPDATE delivery_links SET left_place = ? WHERE reservation_id = ?').run(text || null, r.id);
+  R.log(db, r.id, userId, 'auto_dejado', text || null);
+  return { left_place: text || null };
+}
+
+/**
+ * Pre-entrega: el auto queda listo y la reserva sigue confirmada. El alquiler arranca cuando el cliente firma (ver `sign`).
+ * Se valida ahora lo mismo que en la entrega, y de nuevo al firmar, por si algo cambió en el medio.
+ */
+function preDeliver(db, id, input, settings, userId) {
+  const r = reservationOf(db, id);
+  if (r.status !== 'confirmada') fail(409, 'La pre-entrega se hace con la reserva confirmada');
+  const place = String(input.left_place || '').trim().slice(0, 300);
+  if (place.length < 3) fail(400, 'Escribí dónde queda el auto');
+  const { vehicleId, outKm, outFuel } = R.checkoutCheck(db, r, input);
+  if (vehicleId !== r.vehicle_id) R.assignVehicle(db, r.id, vehicleId, userId);
+  ensureRow(db, r.id);
+  const pre = { vehicle_id: vehicleId, out_km: outKm, out_fuel: outFuel, out_notes: String(input.out_notes || '').trim().slice(0, 2000) || null };
+  db.prepare('UPDATE delivery_links SET pre_delivery = ?, left_place = ? WHERE reservation_id = ?').run(JSON.stringify(pre), place, r.id);
+  R.log(db, r.id, userId, 'pre_entrega', place);
+  return requestSignature(db, r.id, input.terms, settings, userId);
+}
+
+/** Link para que el cliente suba las fotos al devolver el auto. Sirve mientras el alquiler está en curso. */
+function returnLink(db, id) {
+  const r = reservationOf(db, id);
+  if (r.status !== 'en_curso') fail(409, 'El link de devolución se manda con el alquiler en curso');
+  return { return_token: ensureRow(db, r.id).return_token };
+}
+
+const MAX_RETURN_PHOTOS = 30;
+
+function returnOf(db, token) {
+  const row = token && proOn(db) && db.prepare('SELECT reservation_id FROM delivery_links WHERE return_token = ?').get(String(token));
+  if (!row) fail(404, 'Este link ya no está disponible');
+  return db.prepare('SELECT id, code, status FROM reservations WHERE id = ?').get(row.reservation_id);
+}
+
+function viewReturn(db, token) {
+  const r = returnOf(db, token);
+  return { company: getSettings(db).company_name || '', code: r.code, can_upload: r.status === 'en_curso' };
+}
+
+/** ¿Se puede subir otra foto? Se comprueba antes de leer el archivo: el link es público. */
+function returnUploadTarget(db, token) {
+  const r = returnOf(db, token);
+  if (r.status !== 'en_curso') fail(409, 'Este alquiler ya está cerrado');
+  const { n } = db.prepare("SELECT COUNT(*) AS n FROM reservation_files WHERE reservation_id = ? AND stage = 'devolucion'").get(r.id);
+  if (n >= MAX_RETURN_PHOTOS) fail(409, `Ya se cargaron ${MAX_RETURN_PHOTOS} fotos. Si falta algo, escribile a la agencia.`);
+  return r;
+}
+
 function publicContract(db, token) {
   const row = token && db.prepare('SELECT * FROM delivery_links WHERE token = ?').get(String(token));
   if (!row || !row.snapshot || !proOn(db)) fail(404, 'Este link ya no está disponible');
@@ -104,10 +165,23 @@ function publicContract(db, token) {
   return { row, r, snap, stale };
 }
 
+const photoFiles = (db, id) => db.prepare("SELECT id, name, mime, path FROM reservation_files WHERE reservation_id = ? AND stage = 'entrega' AND mime LIKE 'image/%' ORDER BY id").all(id);
+// Los mismos datos que el contrato impreso: km, combustible y observaciones de la entrega (o de la pre-entrega, antes de firmar).
+function conditionOf(db, id) {
+  const contract = db.prepare('SELECT out_km, out_fuel, out_notes FROM contracts WHERE reservation_id = ?').get(id);
+  if (contract) return contract;
+  const row = rowOf(db, id);
+  return row && row.pre_delivery ? JSON.parse(row.pre_delivery) : null;
+}
+
 function viewContract(db, token) {
   const { row, r, snap, stale } = publicContract(db, token);
   return {
     ...snap,
+    photos_token: row.photos_token,
+    photos: photoFiles(db, r.id).map((f) => ({ id: f.id, name: f.name })),
+    condition: conditionOf(db, r.id),
+    left_place: row.signed_at ? row.left_place : null, // el lugar del auto se conoce recién al firmar
     can_sign: !row.signed_at && !stale && OPEN.includes(r.status),
     stale,
     signed: row.signed_at ? { at: row.signed_at, name: row.signed_name, doc: row.signed_doc, hash: row.signed_hash, image: row.signed_image } : null,
@@ -132,8 +206,19 @@ function sign(db, token, body, { ip, userAgent }) {
   if (doc.length < 5) fail(400, 'Escribí tu número de documento');
   if (body.accepted !== true) fail(400, 'Tenés que aceptar el contrato para firmarlo');
   if (!validImage(body.image)) fail(400, 'Dibujá tu firma');
+  // Con pre-entrega, firmar completa la entrega. Si no se puede, la firma no se guarda: nunca queda firmado sin alquiler abierto.
+  if (row.pre_delivery && r.status === 'confirmada') {
+    try {
+      R.checkout(db, r.id, JSON.parse(row.pre_delivery), null);
+    } catch (e) {
+      R.log(db, r.id, null, 'entrega_fallida', e.message);
+      fail(409, 'No pudimos completar la entrega. Escribile a la agencia.');
+    }
+  }
   const at = new Date().toISOString();
-  const hash = crypto.createHash('sha256').update([row.snapshot, name, doc, at, body.image].join('|')).digest('hex');
+  // shortcut: la huella cubre qué fotos había (por archivo), no sus bytes; sumar el hash de cada foto si hace falta como prueba.
+  const photos = photoFiles(db, r.id);
+  const hash = crypto.createHash('sha256').update([row.snapshot, name, doc, at, body.image, photos.map((f) => f.path).join(',')].join('|')).digest('hex');
   db.prepare('UPDATE delivery_links SET signed_at = ?, signed_name = ?, signed_doc = ?, signed_ip = ?, signed_ua = ?, signed_image = ?, signed_hash = ? WHERE reservation_id = ?').run(
     at,
     name,
@@ -144,17 +229,17 @@ function sign(db, token, body, { ip, userAgent }) {
     hash,
     r.id,
   );
-  R.log(db, r.id, null, 'firma_cliente', { nombre: name, documento: doc, huella: hash });
-  return { ok: true, at, hash };
+  R.log(db, r.id, null, 'firma_cliente', { nombre: name, documento: doc, huella: hash, fotos_vistas: photos.map((f) => f.name) });
+  return { ok: true, at, hash, left_place: row.left_place };
 }
 
 /** Fotos del auto al entregarlo, para el link del cliente. */
 function deliveryPhotos(db, token) {
-  const row = token && proOn(db) && db.prepare('SELECT reservation_id FROM delivery_links WHERE photos_token = ?').get(String(token));
+  const row = token && proOn(db) && db.prepare('SELECT reservation_id, left_place, snapshot, signed_at FROM delivery_links WHERE photos_token = ?').get(String(token));
   if (!row) fail(404, 'Este link ya no está disponible');
   const r = db.prepare('SELECT code FROM reservations WHERE id = ?').get(row.reservation_id);
-  const files = db.prepare("SELECT id, name, mime, path FROM reservation_files WHERE reservation_id = ? AND stage = 'entrega' AND mime LIKE 'image/%' ORDER BY id").all(row.reservation_id);
-  return { code: r.code, files };
+  const hidden = row.snapshot && !row.signed_at; // firma pedida y todavía sin firmar: el lugar queda oculto
+  return { code: r.code, files: photoFiles(db, row.reservation_id), left_place: hidden ? null : row.left_place, condition: conditionOf(db, row.reservation_id) };
 }
 
 /**
@@ -226,4 +311,4 @@ function saveCard(db, token, body, { ip }) {
   return { ok: true, card: { holder, brand, last4, exp } };
 }
 
-module.exports = { stateOf, requestSignature, photosLink, viewContract, sign, deliveryPhotos, cardLink, cardUrlFor, viewCard, saveCard };
+module.exports = { stateOf, requestSignature, preDeliver, photosLink, setLeftPlace, returnLink, viewReturn, returnUploadTarget, viewContract, sign, deliveryPhotos, cardLink, cardUrlFor, viewCard, saveCard };

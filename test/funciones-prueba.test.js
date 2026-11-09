@@ -199,6 +199,143 @@ test('API: apagado por defecto y la agencia no se activa sola', async () => {
   }
 });
 
+test('entrega express: el cliente ve dónde quedó el auto y sube las fotos de la devolución con su link', async () => {
+  const { db, car, at, book } = setup();
+  const uploads = fs.mkdtempSync(path.join(os.tmpdir(), 'pro-dev-'));
+  const server = createApp(db, { uploadsDir: uploads }).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const JPG = Buffer.from([0xff, 0xd8, 0xff, 0x00]);
+  const send = (token, body = JPG, type = 'image/jpeg') => fetch(`${base}/api/public/entrega/devolucion/${token}?name=frente.jpg`, { method: 'POST', headers: { 'Content-Type': type }, body });
+  try {
+    const r = book(at(90), at(92));
+    assert.throws(() => D.returnLink(db, r.id), /en curso/, 'antes de entregar no hay link de devolución');
+    R.checkout(db, r.id, { vehicle_id: car.id, out_km: 16000, out_fuel: 6, out_notes: 'Rayón en la puerta' }, null);
+    D.setLeftPlace(db, r.id, ' Aeropuerto, lugar 45 ', null);
+
+    const photosToken = D.photosLink(db, r.id).photos_token;
+    const photos = await (await fetch(`${base}/api/public/entrega/fotos/${photosToken}`)).json();
+    assert.equal(photos.left_place, 'Aeropuerto, lugar 45');
+    assert.equal(photos.condition.out_notes, 'Rayón en la puerta');
+
+    const { return_token: token } = D.returnLink(db, r.id);
+    assert.equal(D.returnLink(db, r.id).return_token, token, 'el link no cambia');
+    assert.equal((await send('no-existe')).status, 404);
+    assert.equal((await send(photosToken)).status, 404, 'el link de ver fotos no sirve para subir');
+    assert.equal((await send(token, Buffer.from('<svg/>'), 'image/svg+xml')).status, 415);
+    assert.equal((await send(token, Buffer.from('%PDF-1.4'), 'application/pdf')).status, 415, 'sólo fotos');
+    assert.equal((await send(token, Buffer.from('no es foto'))).status, 415, 'se mira el contenido, no lo que dice ser');
+    assert.equal((await send(token)).status, 201);
+
+    const files = db.prepare('SELECT * FROM reservation_files WHERE reservation_id = ?').all(r.id);
+    assert.deepEqual(files.map((f) => [f.stage, f.name, f.created_by]), [['devolucion', 'Cliente: frente.jpg', null]]);
+
+    // Tope: un link público no puede llenar el disco.
+    const row = db.prepare('INSERT INTO reservation_files (reservation_id, stage, name, mime, size, path) VALUES (?, ?, ?, ?, ?, ?)');
+    for (let i = 0; i < 29; i += 1) row.run(r.id, 'devolucion', `f${i}`, 'image/jpeg', 4, 'x');
+    assert.equal((await send(token)).status, 409);
+    db.prepare("DELETE FROM reservation_files WHERE name LIKE 'f%'").run();
+
+    // Registrada la devolución, el link se cierra.
+    R.checkin(db, r.id, { in_km: 16100, in_fuel: 6 }, null);
+    assert.equal((await (await fetch(`${base}/api/public/entrega/devolucion/${token}`)).json()).can_upload, false);
+    assert.equal((await send(token)).status, 409);
+
+    // Apagada la función, el link no responde.
+    setSetting(db, 'pro_features', '0');
+    assert.equal((await fetch(`${base}/api/public/entrega/devolucion/${token}`)).status, 404);
+  } finally {
+    server.close();
+    db.close();
+  }
+});
+
+test('entrega express: el cliente ve las fotos al firmar y el lugar del auto recién después', () => {
+  const { db, car, at, book } = setup();
+  const r = book(at(100), at(101));
+  R.checkout(db, r.id, { vehicle_id: car.id, out_km: 16000, out_fuel: 6, out_notes: 'Rayón' }, null);
+  db.prepare("INSERT INTO reservation_files (reservation_id, stage, name, mime, size, path) VALUES (?, 'entrega', 'frente.jpg', 'image/jpeg', 4, 'x')").run(r.id);
+  D.setLeftPlace(db, r.id, 'Aeropuerto, lugar 45', null);
+  assert.equal(D.deliveryPhotos(db, D.photosLink(db, r.id).photos_token).left_place, 'Aeropuerto, lugar 45', 'sin firma pedida se ve');
+
+  const s = D.requestSignature(db, r.id, TERMS, { company_name: 'X' }, null);
+  const before = D.viewContract(db, s.token);
+  assert.deepEqual(before.photos.map((p) => p.name), ['frente.jpg']);
+  assert.equal(before.condition.out_notes, 'Rayón');
+  assert.equal(before.left_place, null, 'antes de firmar no se ve en el contrato');
+  assert.equal(D.deliveryPhotos(db, s.photos_token).left_place, null, 'ni en el link de fotos');
+
+  const signed = D.sign(db, s.token, { name: 'Ana López', doc: '30111222', accepted: true, image: PNG }, { ip: '1.1.1.1', userAgent: 'x' });
+  assert.equal(signed.left_place, 'Aeropuerto, lugar 45');
+  assert.equal(D.viewContract(db, s.token).left_place, 'Aeropuerto, lugar 45');
+  assert.equal(D.deliveryPhotos(db, s.photos_token).left_place, 'Aeropuerto, lugar 45');
+  const log = R.getReservation(db, r.id).log.find((l) => l.action === 'firma_cliente');
+  assert.match(String(log.detail), /frente\.jpg/, 'queda qué fotos había al firmar');
+});
+
+test('pre-entrega: el alquiler arranca recién cuando el cliente firma', () => {
+  const { db, car, at, book } = setup();
+  const client = { ip: '1.1.1.1', userAgent: 'x' };
+  const good = { name: 'Ana López', doc: '30111222', accepted: true, image: PNG };
+  const pre = { vehicle_id: car.id, left_place: 'Aeropuerto, lugar 45', out_km: 16000, out_fuel: 6, out_notes: 'Rayón', terms: TERMS };
+  const r = book(at(105), at(106));
+
+  assert.throws(() => D.preDeliver(db, r.id, { ...pre, left_place: '' }, { company_name: 'X' }, null), /dónde queda/);
+  assert.throws(() => D.preDeliver(db, r.id, { ...pre, out_km: 1 }, { company_name: 'X' }, null), /km de salida/, 'valida lo mismo que la entrega');
+
+  const s = D.preDeliver(db, r.id, pre, { company_name: 'X' }, null);
+  let now = R.getReservation(db, r.id);
+  assert.equal(now.status, 'confirmada');
+  assert.equal(now.contract, null, 'todavía no hay contrato abierto');
+  assert.notEqual(db.prepare('SELECT status FROM vehicles WHERE id = ?').get(car.id).status, 'alquilado');
+  assert.equal(D.viewContract(db, s.token).condition.out_notes, 'Rayón', 've el estado antes de firmar');
+  assert.equal(D.viewContract(db, s.token).left_place, null);
+  assert.throws(() => D.returnLink(db, r.id), /en curso/);
+
+  // Corregir la pre-entrega antes de que firme.
+  D.preDeliver(db, r.id, { ...pre, out_km: 16010 }, { company_name: 'X' }, null);
+  assert.equal(D.viewContract(db, s.token).condition.out_km, 16010);
+
+  // Si ya no se puede entregar, la firma no se guarda.
+  db.prepare("UPDATE vehicles SET status = 'alquilado' WHERE id = ?").run(car.id);
+  assert.throws(() => D.sign(db, s.token, good, client), /Escribile a la agencia/);
+  now = R.getReservation(db, r.id);
+  assert.equal(now.status, 'confirmada');
+  assert.equal(D.stateOf(db, now).signed_at, null);
+  assert.ok(now.log.some((l) => l.action === 'entrega_fallida'), 'la agencia ve el motivo');
+  db.prepare("UPDATE vehicles SET status = 'disponible' WHERE id = ?").run(car.id);
+
+  // Firmó: se completa la entrega con los datos de la pre-entrega.
+  const signed = D.sign(db, s.token, good, client);
+  assert.equal(signed.left_place, 'Aeropuerto, lugar 45');
+  now = R.getReservation(db, r.id);
+  assert.equal(now.status, 'en_curso');
+  assert.equal(now.contract.out_km, 16010);
+  assert.equal(now.contract.out_notes, 'Rayón');
+  assert.equal(db.prepare('SELECT status FROM vehicles WHERE id = ?').get(car.id).status, 'alquilado');
+  assert.equal(D.viewContract(db, s.token).stale, false, 'completar la entrega no invalida la firma');
+  assert.equal(D.stateOf(db, now).pre_delivery, null);
+  assert.ok(D.returnLink(db, r.id).return_token);
+});
+
+test('pre-entrega: si la agencia entrega en persona antes de la firma, no se entrega dos veces', () => {
+  const { db, car, at, book } = setup();
+  const r = book(at(110), at(111));
+  const s = D.preDeliver(db, r.id, { vehicle_id: car.id, left_place: 'Oficina', out_km: 16000, out_fuel: 6, terms: TERMS }, { company_name: 'X' }, null);
+  R.checkout(db, r.id, { vehicle_id: car.id, out_km: 16000, out_fuel: 6 }, null);
+  assert.equal(D.sign(db, s.token, { name: 'Ana López', doc: '30111222', accepted: true, image: PNG }, { ip: '1.1.1.1', userAgent: 'x' }).ok, true);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM contracts WHERE reservation_id = ?').get(r.id).n, 1);
+});
+
+test('entrega express: una fila creada antes del link de devolución recibe su código', () => {
+  const { db, car, at, book } = setup();
+  const r = book(at(95), at(96));
+  R.checkout(db, r.id, { vehicle_id: car.id, out_km: 16000, out_fuel: 6 }, null);
+  db.prepare("INSERT INTO delivery_links (reservation_id, token, photos_token, card_token) VALUES (?, 'a', 'b', 'c')").run(r.id);
+  assert.ok(D.returnLink(db, r.id).return_token);
+  assert.equal(db.prepare('SELECT token FROM delivery_links WHERE reservation_id = ?').get(r.id).token, 'a');
+});
+
 test('panel: se activa por agencia, con valores de ejemplo la primera vez', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pro-panel-'));
   const file = path.join(dir, 'rentacar.db');

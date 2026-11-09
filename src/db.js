@@ -634,6 +634,11 @@ function migrate(db) {
     if (!has('customers', col)) db.exec(`ALTER TABLE customers ADD COLUMN ${col} TEXT`);
   }
   if (!has('vehicles', 'service_every_km')) db.exec('ALTER TABLE vehicles ADD COLUMN service_every_km INTEGER NOT NULL DEFAULT 0');
+  // Entrega express: dónde quedó el auto y el link para que el cliente suba las fotos de la devolución.
+  for (const col of ['left_place', 'return_token', 'pre_delivery']) {
+    if (!has('delivery_links', col)) db.exec(`ALTER TABLE delivery_links ADD COLUMN ${col} TEXT`);
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ix_delivery_return ON delivery_links(return_token)');
   // La sucursal de ejemplo "Entrega en hotel" duplicaba la opción Hotel: se apaga una sola vez (sus reservas viejas quedan igual;
   // si la agencia la vuelve a activar, no se toca más).
   if (!getSetting(db, 'migracion_sucursal_hotel')) {
