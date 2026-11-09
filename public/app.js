@@ -1778,7 +1778,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           'Entregar y abrir contrato',
         ),
         async (data, form) => {
-          const d = await saveLicense(r, data);
+          const d = await saveLicense(r, data, form);
+          if (!d) return false;
           await POST(`/reservations/${r.id}/checkout`, { ...d, vehicle_id: Number(d.vehicle_id), out_fuel: Number(d.out_fuel) });
           toast('Vehículo entregado. Contrato abierto.');
           try {
@@ -1819,7 +1820,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           'Guardar pre-entrega',
         ),
         async (data, form) => {
-          const d = await saveLicense(r, data);
+          const d = await saveLicense(r, data, form);
+          if (!d) return false;
           await POST(`/reservations/${r.id}/pre-delivery`, { ...d, vehicle_id: Number(d.vehicle_id), out_fuel: Number(d.out_fuel), terms: contractTermsList(r) });
           toast('Pre-entrega guardada. El alquiler arranca cuando el cliente firme.');
           try {
@@ -3064,13 +3066,25 @@ function enableDragToMove(container, p, days) {
 function licenseFields(r) {
   return [
     { name: 'license_number', label: 'Licencia del cliente N°', required: true },
-    { name: 'license_expiry', label: 'Vencimiento de la licencia', type: 'date', required: true, attrs: `min="${String(r.return_at).slice(0, 10)}"` },
+    { name: 'license_expiry', label: 'Vencimiento de la licencia', type: 'date', required: true },
   ];
 }
 const licenseValues = (r) => ({ license_number: r.customer_license || '', license_expiry: r.customer_license_expiry || '' });
 // Guarda la licencia en el cliente si cambió y devuelve el resto de los datos del formulario.
-async function saveLicense(r, d) {
+// Si vence antes de la devolución, avisa debajo del campo y devuelve null (la ventana queda abierta).
+async function saveLicense(r, d, form) {
   const { license_number, license_expiry, ...rest } = d;
+  const input = form.license_expiry;
+  form.querySelector('.field-error[data-for=license_expiry]')?.remove();
+  input.removeAttribute('aria-invalid');
+  const back = String(r.return_at).slice(0, 10);
+  if (license_expiry < back) {
+    const when = license_expiry < localISO(new Date()).slice(0, 10) ? `venció el ${fmtD(license_expiry)}` : `vence el ${fmtD(license_expiry)}, antes de la devolución (${fmtD(back)})`;
+    input.setAttribute('aria-invalid', 'true');
+    input.closest('label').insertAdjacentHTML('afterend', `<p class="field-error box" data-for="license_expiry" role="alert">La licencia ${when}. Pedile al cliente una licencia vigente para entregarle el auto.</p>`);
+    input.focus();
+    return null;
+  }
   if (license_number !== (r.customer_license || '') || license_expiry !== (r.customer_license_expiry || ''))
     await PUT(`/customers/${r.customer_id}`, { license_number, license_expiry });
   return rest;
