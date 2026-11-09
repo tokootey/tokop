@@ -3534,11 +3534,10 @@ on(/^\/tarifas$/, async (view) => {
     {
       key: 'promotions',
       label: 'Promociones',
-      intro: 'Elegí el auto, el precio y los días. El cotizador la muestra sola, con el precio de antes tachado.',
+      intro: 'Elegí el auto, el precio y los días. El cotizador la muestra sola, con tu tarifa tachada.',
       fields: [
         { name: 'name', label: 'Nombre de la promo', required: true, full: true },
         { name: 'category_id', label: 'Auto', type: 'select', required: true, options: () => state.categories.map((x) => [x.id, x.name]) },
-        { name: 'regular_rate', label: 'Precio por día antes (vacío = tu tarifa)', type: 'number' },
         { name: 'promo_rate', label: 'Precio por día con la promo', type: 'number', required: true },
         { name: 'start_date', label: 'Desde', type: 'date', required: true },
         { name: 'days', label: 'Cantidad de días', type: 'number' },
@@ -3548,7 +3547,7 @@ on(/^\/tarifas$/, async (view) => {
       columns: [
         { label: 'Promo', render: (r) => `<b>${esc(r.name)}</b>${r.active ? '' : ' <span class="badge">pausada</span>'}` },
         { label: 'Auto', render: (r) => esc((state.categories.find((x) => x.id === r.category_id) || {}).name || '—') },
-        { label: 'Precio por día', render: (r) => `<s>${money(r.regular_rate)}</s> ${money(r.promo_rate)}` },
+        { label: 'Precio por día', render: (r) => `<s>${money((state.categories.find((x) => x.id === r.category_id) || {}).daily_rate || 0)}</s> ${money(r.promo_rate)}` },
         { label: 'Días', render: (r) => `${fmtD(r.start_date)} → ${fmtD(r.end_date)}` },
       ],
     },

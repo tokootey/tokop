@@ -75,7 +75,6 @@ CREATE TABLE IF NOT EXISTS promotions (
   category_id INTEGER NOT NULL,
   start_date TEXT NOT NULL,
   end_date TEXT NOT NULL,
-  regular_rate REAL NOT NULL DEFAULT 0,
   promo_rate REAL NOT NULL,
   active INTEGER NOT NULL DEFAULT 1
 );

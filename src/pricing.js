@@ -83,7 +83,6 @@ function computeQuote(db, input) {
   let promo = null;
   let promoDays = 0;
   let promoDiscount = 0;
-  let promoSaving = 0; // contra el precio de "antes" que cargó la agencia
   for (let i = 0; i < (choferes ? 0 : days); i++) {
     const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
     const day = fmtLocal(d).slice(0, 10);
@@ -94,7 +93,6 @@ function computeQuote(db, input) {
       promo ??= p;
       promoDays++;
       promoDiscount += perDay - p.promo_rate;
-      promoSaving += p.regular_rate - p.promo_rate;
     } else {
       seasonExtra += perDay * (seasonMultiplier(seasons, day) - 1);
     }
@@ -142,7 +140,7 @@ function computeQuote(db, input) {
     dynamic_pct: demandPct,
     dynamic_extra: round2(demandExtra),
     promo_discount: round2(promoDiscount),
-    promo: promo ? { name: promo.name, days: promoDays, before_total: round2(total + promoSaving * (included ? 1 : 1 + taxRate / 100)) } : null,
+    promo: promo ? { name: promo.name, days: promoDays, before_total: round2(total + promoDiscount * (included ? 1 : 1 + taxRate / 100)) } : null,
     extras: extrasLines,
     extras_total: round2(extrasTotal),
     one_way_fee: round2(oneWay),

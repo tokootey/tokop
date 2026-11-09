@@ -20,12 +20,12 @@ function setup() {
   const car = db.prepare("SELECT id, category_id FROM vehicles WHERE plate = 'AF123BC'").get();
   const customer = db.prepare('SELECT id FROM customers ORDER BY id').get().id;
   const rate = db.prepare('SELECT daily_rate FROM categories WHERE id = ?').get(car.category_id).daily_rate;
-  const promo = (from, to, promoRate, regularRate = rate, category = car.category_id) =>
-    db.prepare("INSERT INTO promotions (name, category_id, start_date, end_date, regular_rate, promo_rate) VALUES ('Promo', ?, ?, ?, ?, ?)").run(category, from, to, regularRate, promoRate);
+  const promo = (from, to, promoRate, category = car.category_id) =>
+    db.prepare("INSERT INTO promotions (name, category_id, start_date, end_date, promo_rate) VALUES ('Promo', ?, ?, ?, ?)").run(category, from, to, promoRate);
   return { db, car, customer, rate, promo };
 }
 
-test('promoción: esos días salen al precio de promo y el cotizador sabe el de antes', () => {
+test('promoción: esos días salen al precio de promo y el cotizador muestra la tarifa como precio anterior', () => {
   const { db, car, rate, promo } = setup();
   const range = { category_id: car.category_id, ...TRIP };
   const normal = computeQuote(db, range);
@@ -43,7 +43,7 @@ test('promoción: solo cuenta los días que caen adentro, del auto elegido', () 
   const range = { category_id: car.category_id, ...TRIP };
   const normal = computeQuote(db, range);
   const other = db.prepare('SELECT id FROM categories WHERE id <> ? ORDER BY id').get(car.category_id).id;
-  promo('2099-05-01', '2099-05-31', 1, 100, other);
+  promo('2099-05-01', '2099-05-31', 1, other);
   assert.equal(computeQuote(db, range).promo, null, 'la promo de otro auto no cambia nada');
 
   promo('2099-05-10', '2099-05-10', rate / 2);

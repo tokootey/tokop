@@ -178,15 +178,14 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     if (normDate(b.end_date) < start) fail(400, 'La promo termina antes de empezar');
     const category = db.prepare('SELECT daily_rate FROM categories WHERE id = ?').get(Number(b.category_id));
     if (!category) fail(400, 'Elegí el auto de la promo');
-    if (!(Number(b.regular_rate) > 0)) b.regular_rate = category.daily_rate;
-    if (!(Number(b.promo_rate) > 0) || Number(b.promo_rate) >= Number(b.regular_rate)) fail(400, 'El precio de promo tiene que ser mayor que 0 y menor que el de antes');
+    if (!(Number(b.promo_rate) > 0) || Number(b.promo_rate) >= category.daily_rate) fail(400, `El precio de promo tiene que ser mayor que 0 y menor que la tarifa del auto (${category.daily_rate})`);
     next();
   });
   router.use(
     '/promotions',
     crud(db, {
       table: 'promotions',
-      fields: ['name', 'category_id', 'start_date', 'end_date', 'regular_rate', 'promo_rate', 'active'],
+      fields: ['name', 'category_id', 'start_date', 'end_date', 'promo_rate', 'active'],
       required: ['name', 'category_id', 'start_date', 'end_date', 'promo_rate'],
       order: 'start_date DESC',
       adminWrite: true,
