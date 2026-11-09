@@ -171,6 +171,16 @@ test('no se entrega sin licencia del cliente', async () => {
   assert.match(out.data.error, /licencia/i);
 });
 
+test('no se guarda un cliente con la licencia vencida', async () => {
+  const bad = await call('POST', '/api/customers', { full_name: 'Vencida', license_number: 'L1', license_expiry: '01/01/2020' });
+  assert.equal(bad.status, 400);
+  assert.match(bad.data.error, /vencida/i);
+  const ok = await call('POST', '/api/customers', { full_name: 'Vigente', license_number: 'L2', license_expiry: '2099-01-01' });
+  assert.equal(ok.status, 201);
+  const edit = await call('PUT', `/api/customers/${ok.data.id}`, { full_name: 'Vigente', license_expiry: '2020-01-01' });
+  assert.equal(edit.status, 400);
+});
+
 test('sin cupo en la categoría devuelve 409', async () => {
   const cats = (await call('GET', '/api/categories')).data;
   const p = cats.find((c) => c.code === 'P'); // la única pick-up está en taller

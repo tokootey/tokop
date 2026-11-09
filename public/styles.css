@@ -939,6 +939,8 @@ th[aria-sort="descending"] .th-sort::after { content: ' ▼'; font-size: 10px; }
 .req { color: #c62828; font-weight: 700; }
 .req-note { margin: -4px 0 8px; font-size: 12.5px; }
 .field-error { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; color: #c62828; font-size: 13px; font-weight: 600; }
+/* Aviso en recuadro, a todo el ancho del formulario (p. ej. licencia vencida al entregar). */
+.field-error.box { grid-column: 1 / -1; margin: 0; padding: 10px 12px; background: var(--danger-soft); border: 1px solid #f0c4c5; border-radius: 10px; }
 .field-warn { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; color: #92400e; background: var(--warn-soft); border-radius: 8px; padding: 6px 10px; font-size: 13px; font-weight: 600; }
 .field-warn svg { width: 15px; height: 15px; flex: none; }
 input[aria-invalid="true"] { border-color: #c62828 !important; box-shadow: 0 0 0 3px rgba(198, 40, 40, 0.12); }
