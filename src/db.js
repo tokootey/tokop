@@ -549,6 +549,11 @@ const DEFAULT_SETTINGS = {
   quote_auto_confirm: '0',
   webhook_url: '',
   webhook_secret: '',
+  // WhatsApp de la agencia (Cloud API de Meta): con los tres datos, los mensajes al cliente salen solos.
+  wa_phone_id: '',
+  wa_token: '',
+  wa_template: '',
+  wa_template_lang: 'es',
   // Formulario web (ej. el cotizador de discoverushuaia.com.ar)
   webform_enabled: '1',
   webform_mapping: JSON.stringify(WEBFORM_MAPPING, null, 2),

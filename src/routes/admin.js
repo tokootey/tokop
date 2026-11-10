@@ -9,8 +9,9 @@ const { emit } = require('../webhooks');
 const { FAQ_DEFAULT } = require('./chat');
 const { fail } = require('../util');
 const { parseDynamicRules } = require('../pricing');
+const whatsapp = require('../whatsapp');
 
-const SECRET_KEYS = ['api_key', 'webhook_secret'];
+const SECRET_KEYS = ['api_key', 'webhook_secret', 'wa_token'];
 // Sólo los cambia el dueño de Floty, desde el panel.
 const OWNER_KEYS = ['pro_features'];
 const INTEGRATION_KEYS = [
@@ -22,6 +23,9 @@ const INTEGRATION_KEYS = [
   'webform_mapping',
   'webform_allowed_origins',
   'webform_redirect_url',
+  'wa_phone_id',
+  'wa_template',
+  'wa_template_lang',
 ];
 
 function validLocale(v) {
@@ -63,6 +67,7 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
   // --- Configuración general ---
   router.get('/settings', (_req, res) => {
     const s = getSettings(db);
+    s.whatsapp_api = whatsapp.configured(s);
     for (const k of [...SECRET_KEYS, ...INTEGRATION_KEYS]) delete s[k];
     s.contract_terms_default = CONTRACT_TERMS; // para "Restaurar condiciones sugeridas"
     s.contract_terms_en_default = CONTRACT_TERMS_EN;
@@ -160,6 +165,8 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
       webhook_secret: s.webhook_secret,
       quote_price_source: s.quote_price_source,
       quote_auto_confirm: s.quote_auto_confirm,
+      // El token nunca vuelve al navegador: solo si está cargado.
+      whatsapp: { phone_id: s.wa_phone_id, template: s.wa_template, lang: s.wa_template_lang, has_token: Boolean(s.wa_token) },
       mapping: getMapping(db),
       webform: {
         enabled: s.webform_enabled === '1',
@@ -207,6 +214,20 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
       if (b.webhook_url && !/^https?:\/\//i.test(b.webhook_url)) fail(400, 'La URL del webhook debe empezar con http:// o https://');
       setSetting(db, 'webhook_url', b.webhook_url);
     }
+    if (b.wa_phone_id !== undefined) {
+      if (b.wa_phone_id && !/^\d{5,30}$/.test(String(b.wa_phone_id).trim())) fail(400, 'El identificador del número de WhatsApp son solo números');
+      setSetting(db, 'wa_phone_id', String(b.wa_phone_id).trim());
+    }
+    if (b.wa_template !== undefined) {
+      if (b.wa_template && !/^[a-z0-9_]{1,512}$/.test(String(b.wa_template).trim())) fail(400, 'El nombre de la plantilla va en minúsculas, números y guiones bajos');
+      setSetting(db, 'wa_template', String(b.wa_template).trim());
+    }
+    if (b.wa_template_lang !== undefined) {
+      if (!/^[a-z]{2}(_[A-Z]{2})?$/.test(String(b.wa_template_lang).trim())) fail(400, 'Idioma de la plantilla inválido (por ejemplo es o es_AR)');
+      setSetting(db, 'wa_template_lang', String(b.wa_template_lang).trim());
+    }
+    // Vacío = dejar el que está; "-" = borrarlo.
+    if (b.wa_token) setSetting(db, 'wa_token', b.wa_token === '-' ? '' : String(b.wa_token).trim());
     audit(db, req, 'integracion_modificada', Object.keys(b).join(', '));
     res.json({ ok: true });
   });

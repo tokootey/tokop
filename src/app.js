@@ -86,7 +86,8 @@ function companyApi(db, { uploadsDir, company, platform }) {
   const companyInfo = (req) =>
     company
       ? {
-          company: { slug: company.slug, name: company.name, principal: company.principal },
+          // El dominio se lee cada vez: el dueño de Floty lo puede cargar con el servidor andando.
+          company: { slug: company.slug, name: company.name, principal: company.principal, domain: (platform && platform.get(company.id) || company).domain || null },
           platform_admin: isFlotyOwner(req.user, company),
           // Dueño declarado en FLOTY_OWNERS: ve solo el panel administrativo, sin las pantallas del rent a car.
           owner_mode: isFlotyOwner(req.user, company) && flotyOwners().length > 0,
@@ -317,7 +318,20 @@ function createApp(db, options = {}) {
   };
   app.get('/vendor/:file', (req, res, next) => (vendor[req.params.file] ? res.sendFile(vendor[req.params.file]) : next()));
   app.use(express.static(path.join(__dirname, '..', 'public')));
-  app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
+  // Links que recibe el cliente: la vista previa de WhatsApp lee el título sin ejecutar la página, así que va el nombre de la agencia y no el de Floty.
+  const indexFile = path.join(__dirname, '..', 'public', 'index.html');
+  app.get(/^\/(firmar|fotos|devolucion|tarjeta|hotel|reservar)(\/|$)/, (req, res) => {
+    let name = '';
+    try {
+      const c = platform ? platform.byHost(req.hostname) || (req.query.empresa && platform.bySlug(String(req.query.empresa))) || platform.principal() : null;
+      name = String(require('./db').getSetting(c ? c.db : db, 'company_name') || '');
+    } catch {
+      // Sin nombre, queda el título neutro.
+    }
+    const safe = name.replace(/[<>&"]/g, (ch) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[ch]) || 'Tu alquiler';
+    res.type('html').send(fs.readFileSync(indexFile, 'utf8').replace(/<title>[^<]*<\/title>/, `<title>${safe}</title>`));
+  });
+  app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(indexFile));
 
   // eslint-disable-next-line no-unused-vars
   app.use(errorHandler);

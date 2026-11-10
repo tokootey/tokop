@@ -405,3 +405,77 @@ test('cotizador: los adicionales y el lugar de devolución cambian el precio y l
     db.close();
   }
 });
+
+test('whatsapp: sin conectar no manda; conectado manda la plantilla con el texto en una línea', async () => {
+  const W = require('../src/whatsapp');
+  const { db } = setup();
+  await assert.rejects(W.send(db, '+507 6000 0000', 'Hola'), /no está conectado/);
+  setSetting(db, 'wa_phone_id', '123456');
+  setSetting(db, 'wa_token', 'TOKEN');
+  setSetting(db, 'wa_template', 'floty_aviso');
+  const real = global.fetch;
+  let call;
+  global.fetch = async (url, opts) => {
+    call = { url, opts, body: JSON.parse(opts.body) };
+    return { ok: true, json: async () => ({ messages: [{ id: 'wamid.1' }] }) };
+  };
+  try {
+    await assert.rejects(W.send(db, '12', 'Hola'), /WhatsApp válido/);
+    assert.deepEqual(await W.send(db, '+507 6000-0000', 'Hola Ana!\nContrato: https://x/1\n  Fotos: https://x/2'), { id: 'wamid.1' });
+    assert.equal(call.url, 'https://graph.facebook.com/v21.0/123456/messages');
+    assert.equal(call.opts.headers.Authorization, 'Bearer TOKEN');
+    assert.equal(call.body.to, '50760000000');
+    assert.equal(call.body.template.name, 'floty_aviso');
+    assert.equal(call.body.template.components[0].parameters[0].text, 'Hola Ana! · Contrato: https://x/1 · Fotos: https://x/2');
+    global.fetch = async () => ({ ok: false, status: 400, json: async () => ({ error: { message: 'Template not found' } }) });
+    await assert.rejects(W.send(db, '50760000000', 'Hola'), /Template not found/);
+  } finally {
+    global.fetch = real;
+  }
+});
+
+test('links del cliente: la vista previa muestra el nombre de la agencia, no Floty', async () => {
+  const title = async (server, p) => (await (await fetch(`http://127.0.0.1:${server.address().port}${p}`)).text()).match(/<title>([^<]*)<\/title>/)[1];
+  const { db } = setup();
+  setSetting(db, 'company_name', 'Rent <Sur> & Co');
+  const one = createApp(db).listen(0);
+  try {
+    assert.equal(await title(one, '/firmar/abc'), 'Rent &lt;Sur&gt; &amp; Co');
+    assert.equal(await title(one, '/fotos/abc'), 'Rent &lt;Sur&gt; &amp; Co');
+    assert.match(await title(one, '/panel'), /Floty/, 'la app de la agencia no cambia');
+  } finally {
+    one.close();
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'titulo-'));
+  const file = path.join(dir, 'rentacar.db');
+  const platform = openPlatform(openDb(file), file);
+  const b = platform.get(platform.create({ name: 'Prueba Dos', country: 'AR', admin_name: 'Beto', admin_email: 'beto@dos.test' }).company.id);
+  setSetting(b.db, 'company_name', 'Autos Panamá');
+  const many = createApp(platform.principal().db, { platform, uploadsDir: dir }).listen(0);
+  try {
+    assert.equal(await title(many, `/firmar/abc?empresa=${b.slug}`), 'Autos Panamá');
+    assert.doesNotMatch(await title(many, '/firmar/abc?empresa=no-existe'), /Floty/);
+  } finally {
+    many.close();
+  }
+});
+
+test('dominio propio: la pantalla recibe el dominio para armar los links del cliente sin la dirección de Floty', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dominio-'));
+  const file = path.join(dir, 'rentacar.db');
+  const platform = openPlatform(openDb(file), file);
+  const made = platform.create({ name: 'Ancon', country: 'PA', admin_name: 'Fer', admin_email: 'fer@ancon.test' });
+  const server = createApp(platform.principal().db, { platform, uploadsDir: dir }).listen(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const login = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify(made.admin) });
+    assert.equal(login.status, 200);
+    const cookie = login.headers.get('set-cookie').split(';')[0];
+    const me = async () => (await (await fetch(`${base}/api/auth/me`, { headers: { cookie } })).json()).company;
+    assert.equal((await me()).domain, null);
+    platform.setDomain(made.company.id, 'reservas.ancon.test');
+    assert.equal((await me()).domain, 'reservas.ancon.test', 'sin reiniciar el servidor');
+  } finally {
+    server.close();
+  }
+});

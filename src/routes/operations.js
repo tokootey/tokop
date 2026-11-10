@@ -12,6 +12,7 @@ const choferes = require('../choferes');
 const { requireAdmin } = require('../auth');
 const { chargeInsurance } = require('./catalog');
 const delivery = require('../delivery');
+const whatsapp = require('../whatsapp');
 const { fail, normDateTime, nowLocal, parseLocal, fmtLocal } = require('../util');
 
 /**
@@ -175,6 +176,13 @@ function operationsRoutes(db) {
   // Firma del contrato, fotos para la entrega express y tarjeta del cliente.
   router.post('/reservations/:id/signature', (req, res) => res.json(delivery.requestSignature(db, req.params.id, (req.body || {}).terms, getSettings(db), req.user.id)));
   router.post('/reservations/:id/photos-link', (req, res) => res.json(delivery.photosLink(db, req.params.id)));
+  router.post('/reservations/:id/whatsapp', async (req, res) => {
+    const r = R.getReservation(db, req.params.id);
+    if (!r) fail(404, 'Reserva inexistente');
+    const sent = await whatsapp.send(db, r.customer_phone, req.body && req.body.text);
+    R.log(db, r.id, req.user.id, 'whatsapp_enviado', String(req.body.text).slice(0, 300));
+    res.json(sent);
+  });
   router.post('/reservations/:id/pre-delivery', (req, res) => res.json(delivery.preDeliver(db, req.params.id, req.body || {}, getSettings(db), req.user.id)));
   router.post('/reservations/:id/left-place', (req, res) => res.json(delivery.setLeftPlace(db, req.params.id, (req.body || {}).place, req.user.id)));
   router.post('/reservations/:id/return-link', (req, res) => res.json(delivery.returnLink(db, req.params.id)));
