@@ -2063,7 +2063,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             },
             { name: 'fotos', label: 'Archivos', type: 'photos' },
           ],
-          { stage: r.status === 'finalizada' ? 'devolucion' : r.status === 'en_curso' ? 'entrega' : 'otro' },
+          { stage: r.status === 'finalizada' ? 'devolucion' : r.status === 'en_curso' || (r.signature && r.signature.pre_delivery) ? 'entrega' : 'otro' },
           'Subir',
         ),
         async (d, form) => {
