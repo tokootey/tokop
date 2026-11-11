@@ -665,6 +665,8 @@ function migrate(db) {
   if (!has('vehicles', 'web_inquiry')) db.exec('ALTER TABLE vehicles ADD COLUMN web_inquiry INTEGER NOT NULL DEFAULT 0');
   // Cédula de circulación (registro del vehículo): su vencimiento se avisa como el del seguro.
   if (!has('vehicles', 'registration_expiry')) db.exec('ALTER TABLE vehicles ADD COLUMN registration_expiry TEXT');
+  // Fecha del próximo service: se avisa un mes antes, como el seguro.
+  if (!has('vehicles', 'service_due')) db.exec('ALTER TABLE vehicles ADD COLUMN service_due TEXT');
   if (!has('vehicles', 'service_every_km')) db.exec('ALTER TABLE vehicles ADD COLUMN service_every_km INTEGER NOT NULL DEFAULT 0');
   // Entrega express: dónde quedó el auto y el link para que el cliente suba las fotos de la devolución.
   for (const col of ['left_place', 'return_token', 'pre_delivery']) {

@@ -264,6 +264,25 @@ function addCharge(db, r, input, userId) {
   );
 }
 
+/**
+ * Autos que necesitan service por kilómetros: el último del taller más el intervalo o, si no hay ninguno cargado,
+ * el próximo múltiplo (60.000, 70.000…). Aparecen cuando les quedan 500 km o menos.
+ */
+function serviceDue(db, branch = null) {
+  return db
+    .prepare(
+      `SELECT v.id, v.plate, v.brand, v.model, v.km, v.service_every_km,
+         (SELECT MAX(m.km) FROM maintenance m WHERE m.vehicle_id = v.id AND m.kind = 'service') AS last_service_km
+       FROM vehicles v WHERE v.service_every_km > 0${branch ? ' AND v.branch_id = ?' : ''} ORDER BY v.plate`,
+    )
+    .all(...(branch ? [branch] : []))
+    .map((v) => ({
+      ...v,
+      next_service_km: v.last_service_km ? v.last_service_km + v.service_every_km : (Math.floor(v.km / v.service_every_km) + 1) * v.service_every_km,
+    }))
+    .filter((v) => v.km >= v.next_service_km - 500);
+}
+
 /** Para la pantalla Hoy: quién debe, autos que necesitan service y choferes con la licencia vencida. */
 function dashboardChoferes(db, getReservation, today, branch = null) {
   const rentals = db
@@ -286,21 +305,7 @@ function dashboardChoferes(db, getReservation, today, branch = null) {
   const license_expired = rentals
     .filter((r) => r.customer_license_expiry && r.customer_license_expiry < today)
     .map((r) => ({ id: r.id, code: r.code, customer_name: r.customer_name, license_expiry: r.customer_license_expiry }));
-  // Service: el último del taller más el intervalo o, si no hay ninguno cargado, el próximo múltiplo (60.000, 70.000…).
-  // Aparece cuando le quedan 500 km o menos.
-  const service_due = db
-    .prepare(
-      `SELECT v.id, v.plate, v.brand, v.model, v.km, v.service_every_km,
-         (SELECT MAX(m.km) FROM maintenance m WHERE m.vehicle_id = v.id AND m.kind = 'service') AS last_service_km
-       FROM vehicles v WHERE v.service_every_km > 0${branch ? ' AND v.branch_id = ?' : ''} ORDER BY v.plate`,
-    )
-    .all(...(branch ? [branch] : []))
-    .map((v) => ({
-      ...v,
-      next_service_km: v.last_service_km ? v.last_service_km + v.service_every_km : (Math.floor(v.km / v.service_every_km) + 1) * v.service_every_km,
-    }))
-    .filter((v) => v.km >= v.next_service_km - 500);
-  return { owing, license_expired, service_due };
+  return { owing, license_expired, service_due: serviceDue(db, branch) };
 }
 
-module.exports = { PERIODS, isChoferes, periodOf, carPeriod, addPeriod, isRestDay, periodsBetween, periodRate, carRate, lateFee, rentalExtras, openPeriods, renew, renewDue, restart, kmReading, addCharge, dashboardChoferes };
+module.exports = { PERIODS, isChoferes, periodOf, carPeriod, addPeriod, isRestDay, periodsBetween, periodRate, carRate, lateFee, rentalExtras, openPeriods, renew, renewDue, restart, kmReading, addCharge, dashboardChoferes, serviceDue };
