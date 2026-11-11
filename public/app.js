@@ -864,7 +864,7 @@ async function auxFleet(view) {
           <td>${
             v.status === 'alquilado' || branches.length < 2
               ? esc(v.branch_name || '—')
-              : `<select data-move aria-label="Sucursal de ${esc(v.plate)}">${v.branch_id ? '' : '<option value=""></option>'}${branches.map(([id, name]) => `<option value="${id}"${id === v.branch_id ? ' selected' : ''}>${esc(name)}</option>`).join('')}</select>`
+              : `<select data-move style="min-width:150px" aria-label="Sucursal de ${esc(v.plate)}">${v.branch_id ? '' : '<option value=""></option>'}${branches.map(([id, name]) => `<option value="${id}"${id === v.branch_id ? ' selected' : ''}>${esc(name)}</option>`).join('')}</select>`
           }</td>
           <td class="right">${num(v.km || 0)}</td><td>${fuel(v.fuel) || '—'}</td>
           <td><div class="dayrow docs" style="grid-template-columns:repeat(3,minmax(0,1fr));padding:0;border:0">${dueDocs(v)}</div></td>
@@ -3135,6 +3135,15 @@ ${
    Planning (grilla de ocupación, estilo Rently)
    ============================================================ */
 let planningFrom = null;
+// El calendario también se puede ver como listado; se recuerda en este navegador.
+const PLAN_VIEW_KEY = 'floty-calendario';
+const planAsList = () => {
+  try {
+    return localStorage.getItem(PLAN_VIEW_KEY) === 'lista';
+  } catch {
+    return false;
+  }
+};
 // ?r=ID: la reserva recién creada desde el calendario se ve resaltada al volver.
 on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
   if (!planningFrom) {
@@ -3195,16 +3204,42 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
     }
   }
 
+  const asList = planAsList();
+  const plateOf = Object.fromEntries(p.vehicles.map((v) => [v.id, v]));
+  // Listado: las mismas reservas de esas dos semanas, una por renglón, en orden de salida.
+  const listHtml = () =>
+    p.reservations.length
+      ? `<div class="table-wrap"><table><thead><tr><th>Salida</th><th>Devolución</th><th>Cliente</th><th>Auto</th><th>Estado</th><th>Referencia</th></tr></thead><tbody>${[...p.reservations]
+          .sort((a, b) => a.pickup_at.localeCompare(b.pickup_at))
+          .map((r) => {
+            const v = plateOf[r.vehicle_id];
+            return `<tr class="click pl-item${String(r.id) === highlight ? ' just-made' : ''}" data-id="${r.id}"${isAux() ? '' : ` data-href="#/reservas/${r.id}"`}>
+              <td class="nowrap">${fmtDT(r.pickup_at)}</td><td class="nowrap">${fmtDT(r.return_at)}</td><td>${esc(r.customer_name)}</td>
+              <td>${v ? `<span class="plate">${esc(v.plate)}</span> ${esc([v.brand, v.model].filter(Boolean).join(' '))}` : `<span class="error">Sin asignar</span> · ${esc(r.category_code)}`}</td>
+              <td>${badge(r.status)}</td><td class="nowrap">${esc(r.code)}</td></tr>`;
+          })
+          .join('')}</tbody></table></div>`
+      : '<div class="card muted">No hay reservas en estas dos semanas.</div>';
   view.innerHTML = `
     <div class="page-head"><h1>Calendario de autos</h1>
-      <div class="actions"><button class="btn" data-nav="-7">◀ Semana</button><button class="btn" data-nav="0">Hoy</button><button class="btn" data-nav="7">Semana ▶</button></div></div>
-    <div class="legend" style="margin-bottom:10px">
+      <div class="actions"><button class="btn" data-plan-view>${asList ? 'Ver calendario' : 'Ver listado'}</button><button class="btn" data-nav="-7">◀ Semana</button><button class="btn" data-nav="0">Hoy</button><button class="btn" data-nav="7">Semana ▶</button></div></div>
+    ${
+      asList
+        ? `<p class="muted">Reservas del ${fmtD(fromStr)} al ${fmtD(localISO(addDays(planningFrom, days - 1)))}.</p>${listHtml()}`
+        : `<div class="legend" style="margin-bottom:10px">
       <span style="--c:#e0a100">Pendiente</span><span style="--c:#1f6feb">Confirmada</span><span style="--c:#1a9b5b">En curso</span>
       <span style="--c:#8b94a6">Finalizada</span><span style="--c:#d1373a">En el taller</span><span>· Tocá una barra para abrir la reserva · <b>Para reservar, tocá en la fila de un auto el día de retiro y después el de devolución (con el mouse también podés arrastrar).</b> <b>Con el mouse, arrastrá una barra para mover la reserva, o soltala sobre otra para intercambiar los autos.</b></span></div>
     <div class="planning">
       <div class="pl-row head"><div class="pl-label"><small>Vehículo</small></div><div class="pl-days" style="grid-template-columns:repeat(${days},1fr)">${dayCells}</div></div>
       ${rows || '<p class="muted" style="padding:16px">No hay vehículos cargados.</p>'}
-    </div>`;
+    </div>`
+    }`;
+  $('[data-plan-view]', view).addEventListener('click', () => {
+    try {
+      localStorage.setItem(PLAN_VIEW_KEY, asList ? 'calendario' : 'lista');
+    } catch {}
+    route();
+  });
   $$('[data-nav]', view).forEach((b) =>
     b.addEventListener('click', () => {
       const n = Number(b.dataset.nav);
@@ -3215,8 +3250,8 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
   );
   if (isAux()) {
     // El auxiliar no entra a la reserva: una barra abre sus fotos y el km del auto.
-    $$('.pl-bar[data-id]', view).forEach((b) => b.addEventListener('click', () => run(() => auxTrip(p.reservations.find((r) => r.id === Number(b.dataset.id))))));
-  } else {
+    $$('.pl-bar[data-id], .pl-item', view).forEach((b) => b.addEventListener('click', () => run(() => auxTrip(p.reservations.find((r) => r.id === Number(b.dataset.id))))));
+  } else if (!asList) {
     enableDragToBook($('.planning', view), p, days);
     enableDragToMove($('.planning', view), p, days);
   }
