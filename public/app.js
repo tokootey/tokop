@@ -871,6 +871,85 @@ on(/^\/alquileres$/, async (view) => {
 }, 'reservas');
 
 /* ============================================================
+   Caja diaria: lo que entró y salió en el día, por sucursal
+   ============================================================ */
+/** PDF del cierre de caja (A4): una fila por movimiento y los totales por forma de pago. */
+function buildCashPdf(c, branchName) {
+  const { jsPDF } = window.jspdf;
+  const doc = localizePdf(new jsPDF({ unit: 'mm', format: 'a4' }));
+  const table = (opts) => (typeof window.autoTable === 'function' ? window.autoTable(doc, localizeTable(opts)) : doc.autoTable(localizeTable(opts)));
+  const M = 15;
+  const day = `${c.date.slice(8, 10)}/${c.date.slice(5, 7)}/${c.date.slice(0, 4)}`;
+  doc.setFont('helvetica', 'bold').setFontSize(16).text(state.settings.company_name || '', M, 20);
+  doc.setFontSize(12).text('CAJA DIARIA', 210 - M, 19, { align: 'right' });
+  doc.setFont('helvetica', 'normal').setFontSize(10).text(`${day} · ${branchName}`, 210 - M, 25, { align: 'right' });
+  const styles = { fontSize: 9, cellPadding: 1.5, lineColor: [200, 200, 200], lineWidth: 0.2, textColor: [17, 17, 17] };
+  const headStyles = { fillColor: [31, 41, 55], textColor: 255 };
+  table({
+    theme: 'grid',
+    startY: 32,
+    margin: { left: M, right: M },
+    styles,
+    headStyles,
+    columnStyles: { 5: { halign: 'right' } },
+    head: [['Hora', 'Referencia', 'Cliente', 'Movimiento', 'Forma de pago', 'Monto']],
+    body: c.rows.length
+      ? c.rows.map((p) => [p.at.slice(11, 16), [p.code, p.reference].filter(Boolean).join(' · '), p.customer_name, PAYMENT_KINDS[p.kind] || p.kind, p.method, money(p.amount)])
+      : [[{ content: 'Sin movimientos', colSpan: 6 }]],
+  });
+  table({
+    theme: 'grid',
+    startY: doc.lastAutoTable.finalY + 6,
+    margin: { left: 210 - M - 80, right: M },
+    styles,
+    headStyles,
+    columnStyles: { 1: { halign: 'right' } },
+    head: [['Totales', '']],
+    body: [...c.by_method.map((m) => [m.method, money(m.amount)]), [{ content: 'Total del día', styles: { fontStyle: 'bold' } }, { content: money(c.total), styles: { fontStyle: 'bold' } }]],
+  });
+  doc.setFontSize(8).setTextColor(120).text(`Emitido el ${new Date().toLocaleString(locale())} por ${state.user.name}.`, M, 290);
+  return { doc, filename: `caja-${c.date}.pdf` };
+}
+on(/^\/caja$/, async (view) => {
+  let date = ymd(new Date());
+  let cash;
+  const branchName = () => (state.branches.find((b) => String(b.id) === String(state.branch)) || { name: 'Todas las sucursales' }).name;
+  const load = async () => {
+    cash = await GET(`/cash?date=${date}${branchQS('&')}`);
+    view.innerHTML = `
+      <div class="page-head"><h1>Caja diaria</h1><button class="btn primary" id="cash-pdf">PDF para enviar</button></div>
+      <div class="toolbar"><label>Día<input type="date" id="cash-date" value="${date}" max="${ymd(new Date())}"/></label><span class="muted">${esc(branchName())}</span></div>
+      <div class="chips">${cash.by_method.map((m) => `<span class="chip">${esc(m.method)}: <b>${money(m.amount)}</b></span>`).join('')}<span class="chip on">Total del día: <b>${money(cash.total)}</b></span></div>
+      ${
+        cash.rows.length
+          ? `<div class="table-wrap"><table><thead><tr><th>Hora</th><th>Referencia</th><th>Cliente</th><th>Movimiento</th><th>Forma de pago</th><th class="right">Monto</th></tr></thead><tbody>
+          ${cash.rows
+            .map(
+              (p) => `<tr class="click" data-href="#/reservas/${p.reservation_id}">
+                <td>${esc(p.at.slice(11, 16))}</td><td class="nowrap"><b>${esc(p.code)}</b>${p.reference ? `<br><small class="muted">${esc(p.reference)}</small>` : ''}</td>
+                <td>${esc(p.customer_name)}</td><td>${esc(PAYMENT_KINDS[p.kind] || p.kind)}</td><td>${esc(p.method)}</td><td class="right nowrap">${money(p.amount)}</td></tr>`,
+            )
+            .join('')}</tbody></table></div>`
+          : '<div class="card muted">No hay movimientos de caja ese día.</div>'
+      }
+      <p class="muted">La garantía en efectivo suma a la caja y su devolución resta. La garantía con tarjeta no entra: es una preautorización.</p>`;
+    $('#cash-date').addEventListener('change', (e) => {
+      date = e.target.value || date;
+      run(load);
+    });
+    $('#cash-pdf').addEventListener('click', () => {
+      if (!window.jspdf) return toast('No se pudo cargar el generador de PDF. Recargá la página e intentá de nuevo.', true);
+      const { doc, filename } = buildCashPdf(cash, branchName());
+      const file = new File([doc.output('blob')], filename, { type: 'application/pdf' });
+      // En el celular se abre el menú de compartir (WhatsApp, email); en la compu se descarga.
+      if (navigator.canShare && navigator.canShare({ files: [file] })) navigator.share({ files: [file], title: `Caja ${date}` }).catch(() => {});
+      else downloadBlob(file, filename);
+    });
+  };
+  await load();
+}, 'reservas');
+
+/* ============================================================
    Nueva reserva / cotización en mostrador
    ============================================================ */
 const branchOptions = () => state.branches.filter((b) => b.active).map((b) => [b.id, b.name]);
@@ -1544,6 +1623,7 @@ on(/^\/mas$/, async (view) => {
     <div class="mas">
       ${tile('#/reservas', 'Todas las reservas', 'Buscar, filtrar y ver las anteriores', ICON.list)}
       ${tile('#/alquileres', 'Alquileres activos', 'Los autos que están en la calle, con planilla para Excel', ICON.list, 'green')}
+      ${tile('#/caja', 'Caja diaria', 'Los cobros del día por sucursal, con el PDF del cierre', ICON.money, 'green')}
       ${tile('#/reservas/completa', 'Reserva con más opciones', 'Adicionales, descuento, vuelo, otro lugar de devolución', ICON.plus)}
       ${tile('#/clientes', 'Clientes', 'Datos, licencia y sus reservas', ICON.user)}
       ${tile('#/flota?estado=mantenimiento', 'Taller', 'Autos en el taller: mandar, sacar y su historial', ICON.wrench, 'warm')}
@@ -1963,7 +2043,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           { kind: 'pago', method: 'efectivo', amount: r.balance.pending > 0 ? r.balance.pending : '' },
         ),
         async (d) => {
-          await POST(`/reservations/${r.id}/payments`, d);
+          await POST(`/reservations/${r.id}/payments`, { ...d, branch_id: state.branch || undefined }); // la caja es la de la sucursal elegida
           toast('Movimiento registrado');
           reload();
         },

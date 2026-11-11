@@ -14,6 +14,7 @@ const { chargeInsurance } = require('./catalog');
 const delivery = require('../delivery');
 const whatsapp = require('../whatsapp');
 const reminders = require('../reminders');
+const { cashDay } = require('../cash');
 const { fail, normDateTime, nowLocal, parseLocal, fmtLocal, toCsv, dmy, hm } = require('../util');
 
 /**
@@ -285,6 +286,9 @@ function operationsRoutes(db) {
       ),
     );
   });
+
+  // --- Caja diaria: los cobros y devoluciones de un día, por sucursal ---
+  router.get('/cash', (req, res) => res.json(cashDay(db, (normDateTime(req.query.date) || nowLocal()).slice(0, 10), branchOf(req))));
 
   // --- Planning (grilla vehículos x días) ---
   router.get('/planning', (req, res) => {

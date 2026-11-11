@@ -646,6 +646,8 @@ function migrate(db) {
   if (!has('vehicles', 'insurance_cost')) db.exec('ALTER TABLE vehicles ADD COLUMN insurance_cost REAL NOT NULL DEFAULT 0');
   // Notas de cada pago (por ejemplo: pagó una parte y otra en un repuesto).
   if (!has('payments', 'notes')) db.exec('ALTER TABLE payments ADD COLUMN notes TEXT');
+  // Sucursal donde se cobró (caja diaria). En los pagos viejos queda vacía: cuenta la sucursal de retiro.
+  if (!has('payments', 'branch_id')) db.exec('ALTER TABLE payments ADD COLUMN branch_id INTEGER');
   // Gastos que se cargan solos (la cuota del seguro de cada mes): la clave evita cargarlos dos veces.
   if (!has('expenses', 'auto_key')) db.exec('ALTER TABLE expenses ADD COLUMN auto_key TEXT');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ix_expenses_auto ON expenses(auto_key)');

@@ -464,7 +464,7 @@ function addPayment(db, id, input, userId) {
   if (!(amount > 0)) fail(400, 'Importe inválido');
   const kind = ['pago', 'devolucion', 'garantia', 'devolucion_garantia'].includes(input.kind) ? input.kind : 'pago';
   const notes = input.notes ? String(input.notes).trim().slice(0, 500) : null;
-  db.prepare('INSERT INTO payments (reservation_id, kind, method, amount, reference, created_by, notes) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+  db.prepare('INSERT INTO payments (reservation_id, kind, method, amount, reference, created_by, notes, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
     r.id,
     kind,
     input.method || 'efectivo',
@@ -472,6 +472,7 @@ function addPayment(db, id, input, userId) {
     input.reference || null,
     userId || null,
     notes,
+    Number(input.branch_id) || r.pickup_branch_id || null,
   );
   // Pagó con un repuesto o un arreglo del auto: cuenta como pago y también como gasto del auto (la plata no entró a caja).
   if (kind === 'pago' && input.method === 'repuesto' && r.vehicle_id) {
