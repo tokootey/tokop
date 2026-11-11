@@ -68,6 +68,25 @@ function computeStats(db, query = {}) {
     // Primero las que más dejan (resultado), no las que más se alquilan.
     .sort((a, b) => b.net - a.net || b.requested - a.requested || a.code.localeCompare(b.code));
 
+  // Ganancias por sucursal: lo cobrado de las reservas que se retiran ahí, menos el taller y los gastos de los autos de esa sucursal.
+  // "Sin sucursal" junta las entregas en hotel y los autos sin sucursal. Los gastos sin auto no son de ninguna sucursal.
+  const branchCosts = db.prepare(
+    `SELECT (SELECT COALESCE(SUM(m.cost), 0) FROM maintenance m JOIN vehicles v ON v.id = m.vehicle_id WHERE v.branch_id IS ? AND m.start_date BETWEEN ? AND ?)
+          + (SELECT COALESCE(SUM(e.amount), 0) FROM expenses e JOIN vehicles v ON v.id = e.vehicle_id WHERE v.branch_id IS ? AND e.date BETWEEN ? AND ?) AS n`,
+  );
+  const branches = all(
+    `SELECT b.id, b.name, COALESCE(SUM(CASE WHEN ${ACTIVE} THEN 1 ELSE 0 END), 0) AS rentals, COALESCE(SUM(CASE WHEN r.id IS NOT NULL THEN ${PAID} ELSE 0 END), 0) AS collected
+     FROM (SELECT id, name FROM branches UNION ALL SELECT NULL, NULL) b
+     LEFT JOIN reservations r ON r.pickup_branch_id IS b.id AND ${inPeriod}
+     GROUP BY b.id`,
+  )
+    .map((b) => {
+      const costs = branchCosts.get(b.id, from, to, b.id, from, to).n;
+      return { ...b, costs, net: b.collected - costs };
+    })
+    .filter((b) => b.id || b.rentals || b.collected || b.costs)
+    .sort((a, b) => b.net - a.net);
+
   const shopCost = db.prepare('SELECT COALESCE(SUM(cost), 0) AS cost FROM maintenance WHERE vehicle_id = ? AND start_date BETWEEN ? AND ?');
   // Modelos más pedidos (marca y modelo del auto asignado) y cada auto con lo que rindió.
   const models = all(
@@ -149,6 +168,7 @@ function computeStats(db, query = {}) {
       with_insurance: withInsurance,
     },
     categories,
+    branches,
     models,
     vehicles,
     insurance: addons.filter((a) => a.kind === 'seguro'),

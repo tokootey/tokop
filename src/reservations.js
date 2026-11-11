@@ -3,7 +3,7 @@
 const { computeQuote, computeReturnCharges } = require('./pricing');
 const { categoryAvailability, isVehicleFree, paddedRange } = require('./availability');
 const { emit } = require('./webhooks');
-const { getSettings } = require('./db');
+const { getSettings, proOn } = require('./db');
 const { refundFor } = require('./refunds');
 const { fail, normDateTime, nowLocal, round2, tx, parseLocal, fmtLocal } = require('./util');
 const { placeSql, saveHotel, hotelMissing, normalizeHotel, withHotelExtra } = require('./hotel');
@@ -28,7 +28,7 @@ function getReservation(db, id) {
       `SELECT r.*, c.full_name AS customer_name, c.doc_number AS customer_doc, c.email AS customer_email, c.phone AS customer_phone,
               c.doc_type AS customer_doc_type, c.address AS customer_address, c.birth_date AS customer_birth_date,
               c.license_number AS customer_license, c.license_expiry AS customer_license_expiry, c.license_class AS customer_license_class,
-              c.work_apps AS customer_work_apps, c.guarantor_name, c.guarantor_doc, c.guarantor_phone, c.guarantor_address,
+              c.work_apps AS customer_work_apps, c.workplace AS customer_workplace, c.alt_contact AS customer_alt_contact, c.guarantor_name, c.guarantor_doc, c.guarantor_phone, c.guarantor_address,
               cat.code AS category_code, cat.name AS category_name, cat.km_per_day AS category_km_per_day, cat.extra_km_rate AS category_extra_km_rate, cat.km_per_period AS category_km_per_period,
               v.plate AS vehicle_plate, v.brand AS vehicle_brand, v.model AS vehicle_model, v.color AS vehicle_color, v.year AS vehicle_year,
               v.km AS vehicle_km, v.fuel AS vehicle_fuel,
@@ -45,6 +45,8 @@ function getReservation(db, id) {
   if (!r) return null;
   r.pricing = r.pricing ? JSON.parse(r.pricing) : null;
   r.hotel = r.hotel ? JSON.parse(r.hotel) : null;
+  r.holder = r.holder ? JSON.parse(r.holder) : null;
+  r.drivers = r.drivers ? JSON.parse(r.drivers) : [];
   r.hotel_missing = hotelMissing(r.hotel);
   r.extras = db
     .prepare('SELECT re.extra_id, re.quantity, e.name, e.kind, e.deductible FROM reservation_extras re JOIN extras e ON e.id = re.extra_id WHERE re.reservation_id = ?')
@@ -285,13 +287,19 @@ function assignVehicle(db, id, vehicleId, userId) {
   const r = getReservation(db, id);
   if (!r) fail(404, 'Reserva inexistente');
   if (!['pendiente', 'confirmada'].includes(r.status)) fail(409, 'Sólo se asigna vehículo a reservas pendientes o confirmadas');
-  if (vehicleId) {
-    const data = { ...r, vehicle_id: Number(vehicleId) };
-    assertAvailability(db, data, r.id);
+  const v = vehicleId ? db.prepare('SELECT plate, category_id FROM vehicles WHERE id = ?').get(vehicleId) : null;
+  if (vehicleId && !v) fail(400, 'Vehículo inexistente');
+  const otherCategory = v && v.category_id !== r.category_id && proOn(db);
+  if (otherCategory) {
+    if (!isVehicleFree(db, { ...r, vehicle_id: Number(vehicleId), exclude_reservation_id: r.id })) fail(409, 'El vehículo seleccionado no está disponible en esas fechas');
+    // El precio se mantiene: queda como precio acordado, así una modificación posterior tampoco lo recalcula.
+    const pricing = { ...(r.pricing || {}), source: (r.pricing && r.pricing.calculated_total !== undefined && r.pricing.source) || 'acordado', calculated_total: (r.pricing && r.pricing.calculated_total) ?? r.total, total: r.total };
+    db.prepare('UPDATE reservations SET category_id = ?, pricing = ? WHERE id = ?').run(v.category_id, JSON.stringify(pricing), r.id);
+  } else if (vehicleId) {
+    assertAvailability(db, { ...r, vehicle_id: Number(vehicleId) }, r.id);
   }
   db.prepare('UPDATE reservations SET vehicle_id = ?, updated_at = ? WHERE id = ?').run(vehicleId || null, nowLocal(), r.id);
-  const v = vehicleId ? db.prepare('SELECT plate FROM vehicles WHERE id = ?').get(vehicleId) : null;
-  log(db, r.id, userId, 'vehiculo_asignado', v ? v.plate : 'sin asignar');
+  log(db, r.id, userId, 'vehiculo_asignado', v ? `${v.plate}${otherCategory ? ' (otra categoría, se mantiene el precio)' : ''}` : 'sin asignar');
   return getReservation(db, r.id);
 }
 
@@ -352,7 +360,70 @@ function moveOptions(db, id) {
       if (!swapProblem(db, r, other)) swaps.push({ ...car, reservation_id: other.id, code: other.code, customer_name: other.customer_name });
     }
   }
-  return { free, swaps };
+  // Agencias que lo usan: también los autos libres de otras categorías (el precio de la reserva no cambia).
+  const others = proOn(db)
+    ? db
+        .prepare(
+          `SELECT v.id, v.plate, v.brand, v.model, v.km, b.name AS branch_name, c.name AS category_name FROM vehicles v JOIN categories c ON c.id = v.category_id
+           LEFT JOIN branches b ON b.id = v.branch_id WHERE v.category_id <> ? AND v.status NOT IN ('mantenimiento', 'fuera_servicio') ORDER BY c.daily_rate, v.plate`,
+        )
+        .all(r.category_id)
+        .filter((car) => !hits.all(car.id, to, from, r.id).length)
+    : [];
+  return { free, swaps, others };
+}
+
+const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
+const MAX_DRIVERS = 5;
+
+/** Titular del contrato (si no es quien maneja) y hasta 5 conductores adicionales. */
+function setParties(db, id, input, userId) {
+  const r = getReservation(db, id);
+  if (!r) fail(404, 'Reserva inexistente');
+  if (['finalizada', 'cancelada', 'no_show'].includes(r.status)) fail(409, 'La reserva ya terminó: no se cambian el titular ni los conductores');
+  const h = input.holder || {};
+  const holder = text(h.full_name)
+    ? { full_name: text(h.full_name), doc_type: text(h.doc_type, 20), doc_number: text(h.doc_number, 40), phone: text(h.phone, 40), address: text(h.address, 200) }
+    : null;
+  const drivers = (Array.isArray(input.drivers) ? input.drivers : [])
+    .filter((d) => d && text(d.full_name))
+    .map((d) => ({ full_name: text(d.full_name), doc_type: text(d.doc_type, 20), doc_number: text(d.doc_number, 40), license_number: text(d.license_number, 40), license_expiry: normDateTime(d.license_expiry) ? normDateTime(d.license_expiry).slice(0, 10) : '' }));
+  if (drivers.length > MAX_DRIVERS) fail(400, `Se pueden cargar hasta ${MAX_DRIVERS} conductores adicionales`);
+  const expired = drivers.find((d) => d.license_expiry && d.license_expiry < r.return_at.slice(0, 10));
+  if (expired) fail(400, `La licencia de ${expired.full_name} vence antes de la devolución`);
+  db.prepare('UPDATE reservations SET holder = ?, drivers = ?, updated_at = ? WHERE id = ?').run(holder && JSON.stringify(holder), drivers.length ? JSON.stringify(drivers) : null, nowLocal(), r.id);
+  log(db, r.id, userId, 'titular_conductores', `${holder ? `Titular: ${holder.full_name}. ` : ''}${drivers.length} conductor(es) adicional(es)`);
+  return getReservation(db, r.id);
+}
+
+/**
+ * Extiende un alquiler en curso hasta una nueva fecha de devolución. El auto tiene que estar libre esos días.
+ * Con precio del sistema se recalcula todo el alquiler con las tarifas; con precio acordado, los días nuevos valen lo mismo que los del contrato.
+ * `extra_amount` (opcional): lo que se cobra por la extensión, si se acordó otro importe.
+ */
+function extendReservation(db, id, input, userId) {
+  const r = getReservation(db, id);
+  if (!r) fail(404, 'Reserva inexistente');
+  if (r.status !== 'en_curso' || r.periods.length) fail(409, 'Solo se extiende un alquiler en curso');
+  const return_at = normDateTime(input.return_at);
+  if (!return_at || return_at <= r.return_at) fail(400, 'La nueva devolución tiene que ser posterior a la actual');
+  if (!isVehicleFree(db, { vehicle_id: r.vehicle_id, pickup_at: r.return_at, return_at, exclude_reservation_id: r.id })) {
+    fail(409, 'El auto ya está reservado en esos días: cambiá de auto la otra reserva antes de extender');
+  }
+  const quote = computeQuote(db, { ...r, return_at, exclude_reservation_id: r.id, dynamic_pct: (r.pricing && r.pricing.dynamic_pct) || 0 });
+  const { days } = quote;
+  const agreed = r.pricing && r.pricing.calculated_total !== undefined;
+  const given = input.extra_amount !== undefined && input.extra_amount !== null && input.extra_amount !== '';
+  if (given && !(Number(input.extra_amount) >= 0)) fail(400, 'El importe de la extensión tiene que ser un número mayor o igual a 0');
+  const extra = given ? round2(input.extra_amount) : agreed ? round2((days - r.days) * (r.days ? r.total / r.days : 0)) : round2(quote.total - r.total);
+  const total = round2(r.total + extra);
+  const extensions = [...((r.pricing && r.pricing.extensions) || []), { from: r.return_at, to: return_at, days: days - r.days, amount: extra }];
+  const pricing = agreed || given ? { ...quote, source: (agreed && r.pricing.source) || 'acordado', calculated_total: quote.total, total, extensions } : { ...quote, extensions };
+  db.prepare('UPDATE reservations SET return_at = ?, days = ?, total = ?, pricing = ?, updated_at = ? WHERE id = ?').run(return_at, days, total, JSON.stringify(pricing), nowLocal(), r.id);
+  log(db, r.id, userId, 'extendida', { hasta: return_at, dias: days - r.days, importe: extra });
+  const updated = getReservation(db, r.id);
+  emit(db, 'reservation.updated', publicView(updated));
+  return updated;
 }
 
 /** ¿Se puede entregar? Lo comprueba la entrega y también la pre-entrega, para no enterarse recién cuando firma el cliente. */
@@ -411,16 +482,29 @@ function checkout(db, id, input, userId) {
   return updated;
 }
 
-/** Devolución del vehículo (check-in): cierra el contrato y calcula cargos adicionales. */
-function checkin(db, id, input, userId) {
-  let r = getReservation(db, id);
+/** Los datos de una devolución, revisados: reserva con contrato abierto, km no menor al de salida y combustible entre 0 y 8. */
+function checkinInput(db, id, input) {
+  const r = getReservation(db, id);
   if (!r) fail(404, 'Reserva inexistente');
   if (r.status !== 'en_curso' || !r.contract) fail(409, 'La reserva no tiene un contrato abierto');
   const inKm = Number(input.in_km);
   if (!(inKm >= r.contract.out_km)) fail(400, `El km de devolución debe ser mayor o igual al de salida (${r.contract.out_km})`);
   const inFuel = Number(input.in_fuel);
   if (!(inFuel >= 0 && inFuel <= 8)) fail(400, 'Combustible: valor entre 0 y 8 (octavos)');
-  const inAt = normDateTime(input.in_at) || nowLocal();
+  return { r, inKm, inFuel, inAt: normDateTime(input.in_at) || nowLocal() };
+}
+
+/** Antes de cerrar la devolución: km recorridos, km de más, combustible faltante y los cargos que saldrían. No guarda nada. */
+function checkinPreview(db, id, input) {
+  const { r, inKm, inFuel, inAt } = checkinInput(db, id, input);
+  return computeReturnCharges(db, r, r.contract, { ...input, in_km: inKm, in_fuel: inFuel, in_at: inAt }, { byPeriods: r.periods.length > 0 });
+}
+
+/** Devolución del vehículo (check-in): cierra el contrato y calcula cargos adicionales. */
+function checkin(db, id, input, userId) {
+  const checked = checkinInput(db, id, input);
+  const { inKm, inFuel, inAt } = checked;
+  let { r } = checked;
   // Choferes: el período en que lo devuelve se cobra entero, y los km se controlan contra los de todos los períodos.
   const byPeriods = r.periods.length > 0;
   if (byPeriods) {
@@ -452,9 +536,27 @@ function checkin(db, id, input, userId) {
     }
     log(db, r.id, userId, 'devuelto', { km: inKm, combustible: inFuel, cargos: charges.total });
   });
-  const updated = getReservation(db, r.id);
+  let updated = getReservation(db, r.id);
+  // Agencias con contratos pendientes: con saldo sin cobrar, o si el operador lo deja pendiente (daños, faltantes), el contrato no se cierra todavía.
+  const note = String(input.pending_note || '').trim().slice(0, 300);
+  const pending = proOn(db) && (updated.balance.pending > 0.005 || note);
+  db.prepare('UPDATE contracts SET closed_at = ?, pending_note = ? WHERE id = ?').run(pending ? null : inAt, pending ? note || 'Saldo sin cobrar' : null, r.contract.id);
+  if (pending) log(db, r.id, userId, 'contrato_pendiente', note || 'Saldo sin cobrar');
+  updated = getReservation(db, r.id);
   emit(db, 'reservation.checked_in', publicView(updated));
   return updated;
+}
+
+/** Cierra un contrato que quedó pendiente después de la devolución. Con saldo o cargos sin cobrar no se puede. */
+function closeContract(db, id, userId) {
+  const r = getReservation(db, id);
+  if (!r) fail(404, 'Reserva inexistente');
+  if (!r.contract || !r.contract.in_at) fail(409, 'El auto todavía no fue devuelto');
+  if (r.contract.closed_at) fail(409, 'El contrato ya está cerrado');
+  if (r.balance.pending > 0.005) fail(409, `No se puede cerrar el contrato: hay ${r.balance.pending} sin cobrar. Cobralo o corregí los cargos primero.`);
+  db.prepare('UPDATE contracts SET closed_at = ?, pending_note = NULL WHERE id = ?').run(nowLocal(), r.contract.id);
+  log(db, r.id, userId, 'contrato_cerrado');
+  return getReservation(db, r.id);
 }
 
 function addPayment(db, id, input, userId) {
@@ -464,7 +566,7 @@ function addPayment(db, id, input, userId) {
   if (!(amount > 0)) fail(400, 'Importe inválido');
   const kind = ['pago', 'devolucion', 'garantia', 'devolucion_garantia'].includes(input.kind) ? input.kind : 'pago';
   const notes = input.notes ? String(input.notes).trim().slice(0, 500) : null;
-  db.prepare('INSERT INTO payments (reservation_id, kind, method, amount, reference, created_by, notes) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+  db.prepare('INSERT INTO payments (reservation_id, kind, method, amount, reference, created_by, notes, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
     r.id,
     kind,
     input.method || 'efectivo',
@@ -472,6 +574,7 @@ function addPayment(db, id, input, userId) {
     input.reference || null,
     userId || null,
     notes,
+    Number(input.branch_id) || r.pickup_branch_id || null,
   );
   // Pagó con un repuesto o un arreglo del auto: cuenta como pago y también como gasto del auto (la plata no entró a caja).
   if (kind === 'pago' && input.method === 'repuesto' && r.vehicle_id) {
@@ -518,9 +621,13 @@ module.exports = {
   assignVehicle,
   swapVehicles,
   moveOptions,
+  setParties,
+  extendReservation,
   checkoutCheck,
   checkout,
   checkin,
+  checkinPreview,
+  closeContract,
   addPayment,
   publicView,
   nextCode,

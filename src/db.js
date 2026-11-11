@@ -645,7 +645,16 @@ function migrate(db) {
   }
   if (!has('vehicles', 'insurance_cost')) db.exec('ALTER TABLE vehicles ADD COLUMN insurance_cost REAL NOT NULL DEFAULT 0');
   // Notas de cada pago (por ejemplo: pagó una parte y otra en un repuesto).
+  // Contrato pendiente después de la devolución (saldo, daños o faltantes): se cierra aparte. Los ya devueltos quedan cerrados.
+  if (!has('contracts', 'closed_at')) {
+    db.exec('ALTER TABLE contracts ADD COLUMN closed_at TEXT; ALTER TABLE contracts ADD COLUMN pending_note TEXT; UPDATE contracts SET closed_at = in_at WHERE in_at IS NOT NULL');
+  }
+  // Contrato: titular distinto del conductor (JSON) y conductores adicionales (JSON, hasta 5); lugar de trabajo y contacto alternativo del cliente.
+  for (const col of ['holder', 'drivers']) if (!has('reservations', col)) db.exec(`ALTER TABLE reservations ADD COLUMN ${col} TEXT`);
+  for (const col of ['workplace', 'alt_contact']) if (!has('customers', col)) db.exec(`ALTER TABLE customers ADD COLUMN ${col} TEXT`);
   if (!has('payments', 'notes')) db.exec('ALTER TABLE payments ADD COLUMN notes TEXT');
+  // Sucursal donde se cobró (caja diaria). En los pagos viejos queda vacía: cuenta la sucursal de retiro.
+  if (!has('payments', 'branch_id')) db.exec('ALTER TABLE payments ADD COLUMN branch_id INTEGER');
   // Gastos que se cargan solos (la cuota del seguro de cada mes): la clave evita cargarlos dos veces.
   if (!has('expenses', 'auto_key')) db.exec('ALTER TABLE expenses ADD COLUMN auto_key TEXT');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ix_expenses_auto ON expenses(auto_key)');
@@ -654,6 +663,8 @@ function migrate(db) {
   }
   // Autos que en la web sólo se consultan por WhatsApp (la agencia quiere escuchar ofertas): no se reservan ni se pagan online.
   if (!has('vehicles', 'web_inquiry')) db.exec('ALTER TABLE vehicles ADD COLUMN web_inquiry INTEGER NOT NULL DEFAULT 0');
+  // Cédula de circulación (registro del vehículo): su vencimiento se avisa como el del seguro.
+  if (!has('vehicles', 'registration_expiry')) db.exec('ALTER TABLE vehicles ADD COLUMN registration_expiry TEXT');
   if (!has('vehicles', 'service_every_km')) db.exec('ALTER TABLE vehicles ADD COLUMN service_every_km INTEGER NOT NULL DEFAULT 0');
   // Entrega express: dónde quedó el auto y el link para que el cliente suba las fotos de la devolución.
   for (const col of ['left_place', 'return_token', 'pre_delivery']) {

@@ -88,11 +88,19 @@ function buildContractPdf(r, photos = []) {
 
   let y = section('Cliente / conductor principal', 34);
   kv(y, [
-    ['Nombre y apellido', txt(r.customer_name), 'Documento', r.customer_doc ? `${txt(r.customer_doc_type || 'DNI')} ${r.customer_doc}` : ''],
+    ['Nombre y apellido', txt(r.customer_name), 'Documento', r.customer_doc ? `${txt(r.customer_doc_type || docTypes()[0])} ${r.customer_doc}` : ''],
     ['Domicilio', txt(r.customer_address), 'Teléfono', txt(r.customer_phone)],
     ['Email', txt(r.customer_email), 'Fecha de nac.', d(r.customer_birth_date)],
     ['Licencia N°', txt(r.customer_license), 'Vence', d(r.customer_license_expiry)],
+    ...(r.customer_workplace || r.customer_alt_contact ? [['Lugar de trabajo', txt(r.customer_workplace), 'Contacto alt.', txt(r.customer_alt_contact)]] : []),
   ]);
+  if (r.holder) {
+    y = section('Titular del contrato', lastY() + 6);
+    kv(y, [
+      ['Nombre', txt(r.holder.full_name), 'Documento', [r.holder.doc_type, r.holder.doc_number].filter(Boolean).join(' ')],
+      ['Domicilio', txt(r.holder.address), 'Teléfono', txt(r.holder.phone)],
+    ]);
+  }
 
   if (choferesMode()) {
     y = section('Licencia profesional y garante', lastY() + 6);
@@ -102,11 +110,16 @@ function buildContractPdf(r, photos = []) {
       ['Domicilio', txt(r.guarantor_address), 'Teléfono', txt(r.guarantor_phone)],
     ]);
   } else {
-    y = section('Conductor adicional', lastY() + 6);
-    kv(y, [
-      ['Nombre y apellido', '', 'Documento', ''],
-      ['Licencia N°', '', 'Vence', ''],
-    ]);
+    // Los conductores cargados en la reserva; si no hay, queda el renglón en blanco para completar a mano.
+    const drivers = (r.drivers || []).length ? r.drivers : [{}];
+    y = section(drivers.length > 1 ? 'Conductores adicionales' : 'Conductor adicional', lastY() + 6);
+    kv(
+      y,
+      drivers.flatMap((x) => [
+        ['Nombre y apellido', txt(x.full_name), 'Documento', [x.doc_type, x.doc_number].filter(Boolean).join(' ')],
+        ['Licencia N°', txt(x.license_number), 'Vence', x.license_expiry ? d(x.license_expiry) : ''],
+      ]),
+    );
   }
 
   y = section('Vehículo y período', lastY() + 6);
@@ -305,7 +318,7 @@ function buildContractPdf(r, photos = []) {
         doc.setFontSize(7).setTextColor(17).text([sig.name, sig.doc], x + 15, sy + 9);
       }
       doc.setFont('helvetica', 'normal').setFontSize(8).text(label, x + w / 2, sy + 4, { align: 'center' });
-      doc.setFontSize(7).setTextColor(90).text(label.startsWith('Por ') ? ['Aclaración:'] : ['Aclaración:', 'DNI:'], x, sy + 9);
+      doc.setFontSize(7).setTextColor(90).text(label.startsWith('Por ') ? ['Aclaración:'] : ['Aclaración:', `${docWord()}:`], x, sy + 9);
       doc.setTextColor(17);
     });
   }

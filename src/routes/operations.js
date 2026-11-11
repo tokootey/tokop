@@ -14,7 +14,8 @@ const { chargeInsurance } = require('./catalog');
 const delivery = require('../delivery');
 const whatsapp = require('../whatsapp');
 const reminders = require('../reminders');
-const { fail, normDateTime, nowLocal, parseLocal, fmtLocal } = require('../util');
+const { cashDay } = require('../cash');
+const { fail, normDateTime, nowLocal, parseLocal, fmtLocal, toCsv, dmy, hm } = require('../util');
 
 /**
  * Primeros pasos para una empresa que recién empieza a usar el sistema. El Panel los muestra
@@ -189,11 +190,15 @@ function operationsRoutes(db) {
   router.post('/reservations/:id/left-place', (req, res) => res.json(delivery.setLeftPlace(db, req.params.id, (req.body || {}).place, req.user.id)));
   router.post('/reservations/:id/return-link', (req, res) => res.json(delivery.returnLink(db, req.params.id)));
   router.post('/reservations/:id/card-link', (req, res) => res.json(delivery.cardLink(db, req.params.id)));
+  router.post('/reservations/:id/parties', (req, res) => res.json(R.setParties(db, req.params.id, req.body || {}, req.user.id)));
+  router.post('/reservations/:id/extend', (req, res) => res.json(R.extendReservation(db, req.params.id, req.body || {}, req.user.id)));
   router.get('/reservations/:id/move-options', (req, res) => res.json(R.moveOptions(db, req.params.id)));
   router.post('/reservations/:id/swap', (req, res) => res.json(R.swapVehicles(db, req.params.id, req.body.reservation_id, req.user.id)));
   router.post('/reservations/:id/assign', (req, res) => res.json(R.assignVehicle(db, req.params.id, req.body.vehicle_id, req.user.id)));
   router.post('/reservations/:id/checkout', (req, res) => res.json(R.checkout(db, req.params.id, req.body, req.user.id)));
   router.post('/reservations/:id/checkin', (req, res) => res.json(R.checkin(db, req.params.id, req.body, req.user.id)));
+  router.post('/reservations/:id/checkin-preview', (req, res) => res.json(R.checkinPreview(db, req.params.id, req.body || {})));
+  router.post('/reservations/:id/close-contract', (req, res) => res.json(R.closeContract(db, req.params.id, req.user.id)));
   router.post('/reservations/:id/payments', (req, res) => res.json(R.addPayment(db, req.params.id, req.body, req.user.id)));
 
   // Choferes: multas u otros cargos a cuenta del chofer, y lectura de km (cobra los km extra del período).
@@ -262,6 +267,33 @@ function operationsRoutes(db) {
     res.json(availableVehicles(db, { category_id: Number(req.query.category_id), pickup_at, return_at, exclude_reservation_id: Number(req.query.exclude) || 0 }));
   });
 
+  // --- Alquileres activos: los autos que están en la calle, con su planilla para Excel (?format=csv) ---
+  router.get('/rentals/active', (req, res) => {
+    const branch = branchOf(req);
+    const rows = db
+      .prepare(
+        `SELECT r.id, r.code, v.plate, c.full_name AS customer_name, COALESCE(ct.out_at, r.pickup_at) AS out_at, r.return_at,
+                ${placeSql('deliver', 'pb')} AS pickup_branch_name, ${placeSql('return', 'rb')} AS return_branch_name
+         FROM reservations r JOIN customers c ON c.id = r.customer_id
+         LEFT JOIN vehicles v ON v.id = r.vehicle_id LEFT JOIN contracts ct ON ct.reservation_id = r.id
+         LEFT JOIN branches pb ON pb.id = r.pickup_branch_id LEFT JOIN branches rb ON rb.id = r.return_branch_id
+         WHERE r.status = 'en_curso'${branch ? ` AND (r.pickup_branch_id = ${branch} OR r.return_branch_id = ${branch})` : ''}
+         ORDER BY r.return_at`,
+      )
+      .all();
+    if (req.query.format !== 'csv') return res.json(rows);
+    res.type('text/csv').send(
+      toCsv(
+        ['Referencia', 'Placa', 'Cliente', 'Salida', 'Hora', 'Devolución prevista'],
+        rows.map((r) => [r.code, r.plate, r.customer_name, dmy(r.out_at), hm(r.out_at), `${dmy(r.return_at)} ${hm(r.return_at)}`]),
+        req.query.sep === ';' ? ';' : ',',
+      ),
+    );
+  });
+
+  // --- Caja diaria: los cobros y devoluciones de un día, por sucursal ---
+  router.get('/cash', (req, res) => res.json(cashDay(db, (normDateTime(req.query.date) || nowLocal()).slice(0, 10), branchOf(req))));
+
   // --- Planning (grilla vehículos x días) ---
   router.get('/planning', (req, res) => {
     const from = (normDateTime(req.query.from, '00:00') || nowLocal()).slice(0, 10) + 'T00:00';
@@ -310,7 +342,7 @@ function operationsRoutes(db) {
     const operational = total - (byStatus.mantenimiento || 0) - (byStatus.fuera_servicio || 0);
     // total y paid: la pantalla Hoy muestra cuánto debe cada cliente.
     // notes y la licencia: antes de confirmar un pedido se muestran sus notas y lo que falta.
-    const baseSelect = `SELECT r.id, r.code, r.status, r.source, r.pickup_at, r.return_at, r.total, r.notes, c.full_name AS customer_name, c.phone AS customer_phone,
+    const baseSelect = `SELECT r.id, r.code, r.status, r.vehicle_id, r.source, r.pickup_at, r.return_at, r.total, r.notes, c.full_name AS customer_name, c.phone AS customer_phone,
         c.license_number AS customer_license,
         cat.code AS category_code, cat.name AS category_name, v.plate AS vehicle_plate, v.brand AS vehicle_brand, v.model AS vehicle_model,
         ${placeSql('deliver', 'pb')} AS pickup_branch_name, ${placeSql('return', 'rb')} AS return_branch_name,
@@ -345,18 +377,24 @@ function operationsRoutes(db) {
         pickups: db.prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE r.status IN ('pendiente','confirmada') AND substr(r.pickup_at,1,10) = ?${atR}`).get(tomorrow).n,
         returns: db.prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE status IN ('pendiente','confirmada','en_curso') AND substr(return_at,1,10) = ? AND ${FIXED}${atR}`).get(tomorrow).n,
       },
+      // Contratos que quedaron pendientes después de la devolución (saldo, daños o faltantes).
+      open_contracts: db
+        .prepare(`${baseSelect} JOIN contracts ct ON ct.reservation_id = r.id WHERE ct.in_at IS NOT NULL AND ct.closed_at IS NULL${atR} ORDER BY ct.in_at`)
+        .all()
+        .map((r) => ({ ...r, pending_note: db.prepare('SELECT pending_note FROM contracts WHERE reservation_id = ?').get(r.id).pending_note })),
       // Recordatorios de las próximas 12 horas que falta mandar (los automáticos que ya salieron no aparecen).
       reminders: reminders.pending(db, now),
       quote_errors: db.prepare(`SELECT COUNT(*) AS n FROM quote_inbox WHERE status = 'error'`).get().n,
       alerts: {
         documents: db
           .prepare(
-            `SELECT v.id, v.plate, v.insurance_expiry, v.vtv_expiry, v.permit_expiry FROM vehicles v
+            `SELECT v.id, v.plate, v.insurance_expiry, v.vtv_expiry, v.permit_expiry, v.registration_expiry FROM vehicles v
              WHERE ((v.insurance_expiry IS NOT NULL AND v.insurance_expiry <= date(?, '+30 day')) OR (v.vtv_expiry IS NOT NULL AND v.vtv_expiry <= date(?, '+30 day'))
-               OR (v.permit_expiry IS NOT NULL AND v.permit_expiry <= date(?, '+30 day')))${atV}
+               OR (v.permit_expiry IS NOT NULL AND v.permit_expiry <= date(?, '+30 day'))
+               OR (v.registration_expiry IS NOT NULL AND v.registration_expiry <= date(?, '+30 day')))${atV}
              ORDER BY v.plate`,
           )
-          .all(today, today, today),
+          .all(today, today, today, today),
         maintenance_open: db.prepare(`SELECT COUNT(*) AS n FROM maintenance m JOIN vehicles v ON v.id = m.vehicle_id WHERE m.status = 'abierto'${atV}`).get().n,
       },
       setup: setupSteps(db),

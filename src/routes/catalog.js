@@ -130,9 +130,9 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     db.prepare(
       `UPDATE customers SET full_name = ?, doc_type = NULL, doc_number = NULL, email = NULL, phone = NULL, address = NULL,
         birth_date = NULL, license_number = NULL, license_expiry = NULL, notes = NULL, license_class = NULL, work_apps = NULL,
-        guarantor_name = NULL, guarantor_doc = NULL, guarantor_phone = NULL, guarantor_address = NULL, anonymized_at = ? WHERE id = ?`,
+        guarantor_name = NULL, guarantor_doc = NULL, guarantor_phone = NULL, guarantor_address = NULL, workplace = NULL, alt_contact = NULL, anonymized_at = ? WHERE id = ?`,
     ).run(`Cliente anonimizado #${c.id}`, new Date().toISOString(), c.id);
-    db.prepare("UPDATE reservations SET notes = NULL, flight = NULL WHERE customer_id = ?").run(c.id);
+    db.prepare("UPDATE reservations SET notes = NULL, flight = NULL, holder = NULL, drivers = NULL WHERE customer_id = ?").run(c.id);
     db.prepare('DELETE FROM delivery_links WHERE reservation_id IN (SELECT id FROM reservations WHERE customer_id = ?)').run(c.id);
     dropDocuments(c.id);
     // Las solicitudes del sitio web guardan el formulario original, que también tiene sus datos.
@@ -222,11 +222,11 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     crud(db, {
       table: 'vehicles',
       fields: ['plate', 'brand', 'model', 'year', 'color', 'category_id', 'branch_id', 'status', 'km', 'fuel', 'insurance_expiry', 'vtv_expiry', 'service_every_km', 'notes', 'web_inquiry', 'period_rate', 'rest_day_rate', 'rest_day_free', 'pay_every',
-        'insurance_company', 'insurance_policy', 'insurance_cost', 'permit_number', 'permit_expiry'],
+        'insurance_company', 'insurance_policy', 'insurance_cost', 'permit_number', 'permit_expiry', 'registration_expiry'],
       required: ['plate', 'category_id'],
       order: 'plate',
       search: ['plate', 'brand', 'model'],
-      dateFields: ['insurance_expiry', 'vtv_expiry', 'permit_expiry'],
+      dateFields: ['insurance_expiry', 'vtv_expiry', 'permit_expiry', 'registration_expiry'],
       adminDelete: true,
       // Con su próximo movimiento (la próxima salida y, si está alquilado, cuándo vuelve) y su trabajo abierto en el taller.
       listSql: `SELECT v.*, c.name AS category_name, c.code AS category_code, b.name AS branch_name,
@@ -256,7 +256,7 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     crud(db, {
       table: 'customers',
       fields: ['full_name', 'doc_type', 'doc_number', 'email', 'phone', 'address', 'birth_date', 'license_number', 'license_expiry', 'notes',
-        'license_class', 'work_apps', 'guarantor_name', 'guarantor_doc', 'guarantor_phone', 'guarantor_address'],
+        'license_class', 'work_apps', 'guarantor_name', 'guarantor_doc', 'guarantor_phone', 'guarantor_address', 'workplace', 'alt_contact'],
       required: ['full_name'],
       order: 'full_name',
       search: ['full_name', 'doc_number', 'email', 'phone'],

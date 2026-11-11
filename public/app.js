@@ -479,6 +479,11 @@ async function route() {
     location.hash = '#/empresas'; // vuelve a entrar acá por hashchange
     return;
   }
+  // El auxiliar de flota solo tiene Hoy, el calendario, los autos y su cuenta.
+  if (isAux() && !/^\/(panel|planning|flota|mas)$/.test(hash)) {
+    location.hash = '#/panel';
+    return;
+  }
   for (const r of routes) {
     const m = hash.match(r.pattern);
     if (m) {
@@ -486,7 +491,7 @@ async function route() {
       const key = group || r.navKey;
       const menu = key in NAV_MENU ? NAV_MENU[key] : group || r.navKey;
       if (menu !== null) $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === menu));
-      $('#fab').classList.toggle('hidden', ['nueva', 'completa'].includes(r.navKey));
+      $('#fab').classList.toggle('hidden', isAux() || ['nueva', 'completa'].includes(r.navKey));
       renderSubnav(group, r.navKey);
       closeModal(); // un cartel abierto no queda encima de otra pantalla
       const view = $('#view');
@@ -565,6 +570,7 @@ const waLink = (phone) => {
 
 on(/^\/panel$/, async (view) => {
   const d = await GET(`/dashboard${branchQS()}`);
+  if (isAux()) return auxPanel(view, d);
   const car = (r) => (r.vehicle_plate ? `${esc([r.vehicle_brand, r.vehicle_model].filter(Boolean).join(' ') || r.category_name)} · ${esc(r.vehicle_plate)}` : `${esc(r.category_name)} · sin auto asignado`);
   const owes = (r) => {
     const due = Math.round((Number(r.total) - Number(r.paid)) * 100) / 100;
@@ -652,6 +658,13 @@ on(/^\/panel$/, async (view) => {
       ${column('Salen hoy', 'M5 12h14M13 6l6 6-6 6', 'var(--primary)', out, 'out', 'Hoy no sale ningún auto.')}
       ${column('Vuelven hoy', 'M19 12H5M11 6l-6 6 6 6', '#c2410c', back, 'back', 'Hoy no vuelve ningún auto.')}
     </div>
+    ${
+      (d.open_contracts || []).length
+        ? `<div class="card"><h2>Contratos pendientes de cierre <span class="count">${d.open_contracts.length}</span></h2><div class="daylist">${d.open_contracts
+            .map((r) => `<div class="dayrow click" data-href="#/reservas/${r.id}"><span class="plate">${esc(r.vehicle_plate || '—')}</span><div class="who"><b>${esc(r.customer_name)}</b><small>${esc(r.code)} · ${esc(r.pending_note || '')}</small></div><span></span><span></span></div>`)
+            .join('')}</div></div>`
+        : ''
+    }
     <p class="hoy-next">Mañana: ${tomorrow.pickups === 1 ? 'sale 1 auto' : `salen ${tomorrow.pickups} autos`}, ${tomorrow.returns === 1 ? 'vuelve 1' : `vuelven ${tomorrow.returns}`}. <a href="#/planning">Ver calendario</a></p>
     ${d.choferes ? choferesCards(d.choferes) : ''}
     ${/* Lo del día va primero; los primeros pasos de una empresa nueva, abajo. */ setupCard(d.setup)}
@@ -763,6 +776,128 @@ document.addEventListener('click', (e) => {
 });
 
 /* ============================================================
+   Auxiliar de flota: fotos, km y combustible. No entra a las reservas ni ve precios.
+   ============================================================ */
+const isAux = () => !!state.user && state.user.role === 'auxiliar';
+const ROLE_LABEL = { admin: 'Administrador', operador: 'Operador', auxiliar: 'Auxiliar de flota' };
+// VTV es de Argentina; en Panamá es el revisado.
+const inspectionWord = () => ({ AR: 'VTV', PA: 'Revisado' })[state.settings.country] || 'Inspección técnica';
+/** Vencimientos de un auto: seguro, inspección y cédula de circulación (rojo si venció, ámbar si falta poco). */
+const dueDocs = (v) =>
+  [['Seguro', v.insurance_expiry], [inspectionWord(), v.vtv_expiry], ['Cédula de circulación', v.registration_expiry]]
+    .map(([label, d]) => `<div><small>${label}</small><b class="doc-${d ? dueTone(d) : 'wait'}">${fmtD(d) || '—'}</b></div>`)
+    .join('');
+
+/** Km y combustible de un auto: quedan como punto de partida de la entrega y de la devolución. */
+const auxReadingFields = (v) => [
+  { name: 'km', label: `Km (tiene ${num(v.km || 0)})`, type: 'number', required: true, attrs: `min="${Number(v.km) || 0}"` },
+  { name: 'fuel', label: 'Combustible (octavos)', type: 'select', options: FUEL_OPTS, required: true },
+];
+const auxSaveReading = (v, d) => (d.km !== v.km || Number(d.fuel) !== v.fuel ? PUT(`/vehicles/${v.id}`, { km: d.km, fuel: Number(d.fuel) }) : null);
+
+/** Lo que hace el auxiliar con un alquiler: ver y sumar fotos de entrega y devolución, y cargar km y combustible. */
+async function auxTrip(r) {
+  const [files, v] = await Promise.all([GET(`/reservations/${r.id}/files`), r.vehicle_id ? GET(`/vehicles/${r.vehicle_id}`) : null]);
+  const thumbs = (stage) => {
+    const list = files.filter((f) => f.stage === stage);
+    return `<h3 style="margin-top:12px">${STAGE_LABEL[stage]} <small class="muted">(${list.length})</small></h3>
+      <div class="thumbs">${
+        list
+          .map((f) => `<a class="thumb" target="_blank" rel="noopener" title="${esc(f.name)}">${f.mime.startsWith('image/') ? `<img alt="${esc(f.name)}" data-thumb="${f.id}"/>` : `<span data-thumb="${f.id}">PDF</span>`}</a>`)
+          .join('') || '<span class="muted">Sin fotos todavía.</span>'
+      }</div>`;
+  };
+  openModal(
+    `${r.code} · ${v ? v.plate : 'sin auto asignado'}`,
+    `<p class="muted">${esc(r.customer_name)} · ${fmtDT(r.pickup_at)} → ${fmtDT(r.return_at)}</p>
+     ${thumbs('entrega')}${thumbs('devolucion')}
+     ${formHtml(
+       [
+         { name: 'stage', label: 'Las fotos nuevas son de', type: 'select', options: [['entrega', 'La entrega'], ['devolucion', 'La devolución']], required: true },
+         { name: 'fotos', label: 'Fotos del auto (frente, laterales, cola, interior, tablero con km y combustible)', type: 'photos' },
+         ...(v ? auxReadingFields(v) : []),
+       ],
+       { stage: r.status === 'en_curso' ? 'devolucion' : 'entrega', ...(v || {}) },
+     )}`,
+    async (d, form) => {
+      if (v) await auxSaveReading(v, d);
+      await uploadFiles(r.id, d.stage, form.fotos.files);
+      toast('Guardado');
+      route();
+    },
+  );
+  $$('#modal-body [data-thumb]').forEach((el) =>
+    fileUrl(Number(el.dataset.thumb))
+      .then((u) => {
+        if (el.tagName === 'IMG') el.src = u;
+        el.closest('a').href = u;
+      })
+      .catch(() => {}),
+  );
+}
+
+/** Hoy del auxiliar: qué autos salen y vuelven, y los vencimientos. */
+function auxPanel(view, d) {
+  const out = [...d.late_pickups, ...d.pickups_today];
+  const back = [...d.overdue, ...d.returns_today];
+  const trips = [...out, ...back];
+  const row = (r, isOut) => `<div class="dayrow"><span class="plate">${esc(r.vehicle_plate || '—')}</span>
+      <div class="who"><b>${esc(r.customer_name)}</b><small>${esc([r.vehicle_brand, r.vehicle_model].filter(Boolean).join(' ') || r.category_name)} · ${esc((isOut ? r.pickup_branch_name : r.return_branch_name) || '')}</small></div>
+      <div class="when"><b>${fmtDT(isOut ? r.pickup_at : r.return_at).slice(11)}</b><small>${dayName(isOut ? r.pickup_at : r.return_at)}</small></div>
+      <button class="btn small" type="button" data-trip="${r.id}">Fotos y km</button></div>`;
+  const list = (title, rows, isOut, empty) =>
+    `<div class="card"><h2>${title}${rows.length ? ` <span class="count">${rows.length}</span>` : ''}</h2>${rows.length ? `<div class="daylist">${rows.map((r) => row(r, isOut)).join('')}</div>` : `<p class="muted">${empty}</p>`}</div>`;
+  const docs = d.alerts.documents;
+  view.innerHTML = `
+    <div class="page-head"><h1>Hoy</h1></div>
+    ${list('Salen hoy', out, true, 'Hoy no sale ningún auto.')}
+    ${list('Vuelven hoy', back, false, 'Hoy no vuelve ningún auto.')}
+    <div class="card"><h2>Vencimientos de los próximos 30 días${docs.length ? ` <span class="count">${docs.length}</span>` : ''}</h2>
+      ${docs.length ? `<div class="daylist">${docs.map((v) => `<div class="dayrow docs" style="grid-template-columns:120px repeat(3,minmax(0,1fr))"><span class="plate">${esc(v.plate)}</span>${dueDocs(v)}</div>`).join('')}</div>` : '<p class="muted">Ningún seguro, inspección ni cédula por vencer.</p>'}
+    </div>`;
+  $$('[data-trip]', view).forEach((b) => b.addEventListener('click', () => run(() => auxTrip(trips.find((r) => r.id === Number(b.dataset.trip))))));
+}
+
+/** Autos del auxiliar: dónde está cada uno, su km y combustible y sus vencimientos. Puede moverlos de sucursal. */
+async function auxFleet(view) {
+  const rows = await GET(`/vehicles${branchQS()}`);
+  const branches = branchOptions();
+  view.innerHTML = `
+    <div class="page-head"><h1>Autos</h1></div>
+    <div class="table-wrap"><table><thead><tr><th>${plateWord()}</th><th>Auto</th><th>Estado</th><th>Sucursal</th><th>Km</th><th>Combustible</th><th>Vencimientos</th><th></th></tr></thead><tbody>
+    ${rows
+      .map(
+        (v) => `<tr data-id="${v.id}"><td class="nowrap"><span class="plate">${esc(v.plate)}</span></td><td>${esc([v.brand, v.model].filter(Boolean).join(' '))}</td><td>${badge(v.status)}</td>
+          <td>${
+            v.status === 'alquilado' || branches.length < 2
+              ? esc(v.branch_name || '—')
+              : `<select data-move style="min-width:150px" aria-label="Sucursal de ${esc(v.plate)}">${v.branch_id ? '' : '<option value=""></option>'}${branches.map(([id, name]) => `<option value="${id}"${id === v.branch_id ? ' selected' : ''}>${esc(name)}</option>`).join('')}</select>`
+          }</td>
+          <td class="right">${num(v.km || 0)}</td><td>${fuel(v.fuel) || '—'}</td>
+          <td><div class="dayrow docs" style="grid-template-columns:repeat(3,minmax(0,1fr));padding:0;border:0">${dueDocs(v)}</div></td>
+          <td><button class="btn small" type="button" data-reading>Km y combustible</button></td></tr>`,
+      )
+      .join('')}</tbody></table></div>`;
+  const of = (el) => rows.find((v) => v.id === Number(el.closest('tr').dataset.id));
+  $$('[data-move]', view).forEach((sel) =>
+    sel.addEventListener('change', async () => {
+      await run(() => PUT(`/vehicles/${of(sel).id}`, { branch_id: Number(sel.value) }), 'Auto movido de sucursal');
+      route();
+    }),
+  );
+  $$('[data-reading]', view).forEach((b) =>
+    b.addEventListener('click', () => {
+      const v = of(b);
+      openModal(`Km y combustible · ${v.plate}`, formHtml(auxReadingFields(v), v), async (d) => {
+        await auxSaveReading(v, d);
+        toast('Guardado');
+        route();
+      });
+    }),
+  );
+}
+
+/* ============================================================
    Reservas: listado
    ============================================================ */
 // Filtros por estado, en el orden en que avanza una reserva. "" = activas (lo que hay que atender).
@@ -833,6 +968,119 @@ on(/^\/reservas$/, async (view) => {
       run(load);
     }),
   );
+  await load();
+}, 'reservas');
+
+/* ============================================================
+   Alquileres activos: los autos que están en la calle
+   ============================================================ */
+// En Argentina y Uruguay se dice patente; en el resto, placa.
+const plateWord = () => (['AR', 'UY'].includes(state.settings.country) ? 'Patente' : 'Placa');
+/** Baja una planilla del servidor (?format=csv). Con coma decimal en la compu, Excel separa por punto y coma. */
+async function downloadCsv(path, filename) {
+  const sep = (1.1).toLocaleString().includes(',') ? ';' : ',';
+  const res = await fetch(`/api${path}${path.includes('?') ? '&' : '?'}format=csv&sep=${encodeURIComponent(sep)}`, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error('No se pudo armar la planilla');
+  downloadBlob(await res.blob(), filename);
+}
+on(/^\/alquileres$/, async (view) => {
+  const rows = await GET(`/rentals/active${branchQS()}`);
+  const branch = state.branch && state.branches.find((b) => String(b.id) === String(state.branch));
+  view.innerHTML = `
+    <div class="page-head"><h1>Alquileres activos</h1><button class="btn" id="act-csv"${rows.length ? '' : ' disabled'}>Exportar a Excel</button></div>
+    <p class="muted">${plural(rows.length, 'auto en la calle', 'autos en la calle')} · ${branch ? esc(branch.name) : 'todas las sucursales'}</p>
+    ${
+      rows.length
+        ? `<div class="table-wrap"><table><thead><tr><th>Referencia</th><th>${plateWord()}</th><th>Cliente</th><th>Salida</th><th>Hora</th><th>Devolución prevista</th></tr></thead><tbody>
+        ${rows
+          .map(
+            (r) => `<tr class="click" data-href="#/reservas/${r.id}">
+              <td class="nowrap"><b>${esc(r.code)}</b></td><td class="nowrap">${esc(r.plate || '—')}</td><td>${esc(r.customer_name)}</td>
+              <td class="nowrap">${fmtD(r.out_at)}</td><td>${esc(String(r.out_at).slice(11, 16))}</td>
+              <td class="nowrap">${fmtDT(r.return_at)}<br><small class="muted">${esc(r.return_branch_name || '')}</small></td></tr>`,
+          )
+          .join('')}</tbody></table></div>`
+        : '<div class="card muted">No hay autos alquilados en este momento.</div>'
+    }`;
+  $('#act-csv').addEventListener('click', () => run(() => downloadCsv(`/rentals/active${branchQS()}`, `alquileres-activos-${ymd(new Date())}.csv`)));
+}, 'reservas');
+
+/* ============================================================
+   Caja diaria: lo que entró y salió en el día, por sucursal
+   ============================================================ */
+/** PDF del cierre de caja (A4): una fila por movimiento y los totales por forma de pago. */
+function buildCashPdf(c, branchName) {
+  const { jsPDF } = window.jspdf;
+  const doc = localizePdf(new jsPDF({ unit: 'mm', format: 'a4' }));
+  const table = (opts) => (typeof window.autoTable === 'function' ? window.autoTable(doc, localizeTable(opts)) : doc.autoTable(localizeTable(opts)));
+  const M = 15;
+  const day = `${c.date.slice(8, 10)}/${c.date.slice(5, 7)}/${c.date.slice(0, 4)}`;
+  doc.setFont('helvetica', 'bold').setFontSize(16).text(state.settings.company_name || '', M, 20);
+  doc.setFontSize(12).text('CAJA DIARIA', 210 - M, 19, { align: 'right' });
+  doc.setFont('helvetica', 'normal').setFontSize(10).text(`${day} · ${branchName}`, 210 - M, 25, { align: 'right' });
+  const styles = { fontSize: 9, cellPadding: 1.5, lineColor: [200, 200, 200], lineWidth: 0.2, textColor: [17, 17, 17] };
+  const headStyles = { fillColor: [31, 41, 55], textColor: 255 };
+  table({
+    theme: 'grid',
+    startY: 32,
+    margin: { left: M, right: M },
+    styles,
+    headStyles,
+    columnStyles: { 5: { halign: 'right' } },
+    head: [['Hora', 'Referencia', 'Cliente', 'Movimiento', 'Forma de pago', 'Monto']],
+    body: c.rows.length
+      ? c.rows.map((p) => [p.at.slice(11, 16), [p.code, p.reference].filter(Boolean).join(' · '), p.customer_name, PAYMENT_KINDS[p.kind] || p.kind, p.method, money(p.amount)])
+      : [[{ content: 'Sin movimientos', colSpan: 6 }]],
+  });
+  table({
+    theme: 'grid',
+    startY: doc.lastAutoTable.finalY + 6,
+    margin: { left: 210 - M - 80, right: M },
+    styles,
+    headStyles,
+    columnStyles: { 1: { halign: 'right' } },
+    head: [['Totales', '']],
+    body: [...c.by_method.map((m) => [m.method, money(m.amount)]), [{ content: 'Total del día', styles: { fontStyle: 'bold' } }, { content: money(c.total), styles: { fontStyle: 'bold' } }]],
+  });
+  doc.setFontSize(8).setTextColor(120).text(`Emitido el ${new Date().toLocaleString(locale())} por ${state.user.name}.`, M, 290);
+  return { doc, filename: `caja-${c.date}.pdf` };
+}
+on(/^\/caja$/, async (view) => {
+  let date = ymd(new Date());
+  let cash;
+  const branchName = () => (state.branches.find((b) => String(b.id) === String(state.branch)) || { name: 'Todas las sucursales' }).name;
+  const load = async () => {
+    cash = await GET(`/cash?date=${date}${branchQS('&')}`);
+    view.innerHTML = `
+      <div class="page-head"><h1>Caja diaria</h1><button class="btn primary" id="cash-pdf">PDF para enviar</button></div>
+      <div class="toolbar"><label>Día<input type="date" id="cash-date" value="${date}" max="${ymd(new Date())}"/></label><span class="muted">${esc(branchName())}</span></div>
+      <div class="chips">${cash.by_method.map((m) => `<span class="chip">${esc(m.method)}: <b>${money(m.amount)}</b></span>`).join('')}<span class="chip on">Total del día: <b>${money(cash.total)}</b></span></div>
+      ${
+        cash.rows.length
+          ? `<div class="table-wrap"><table><thead><tr><th>Hora</th><th>Referencia</th><th>Cliente</th><th>Movimiento</th><th>Forma de pago</th><th class="right">Monto</th></tr></thead><tbody>
+          ${cash.rows
+            .map(
+              (p) => `<tr class="click" data-href="#/reservas/${p.reservation_id}">
+                <td>${esc(p.at.slice(11, 16))}</td><td class="nowrap"><b>${esc(p.code)}</b>${p.reference ? `<br><small class="muted">${esc(p.reference)}</small>` : ''}</td>
+                <td>${esc(p.customer_name)}</td><td>${esc(PAYMENT_KINDS[p.kind] || p.kind)}</td><td>${esc(p.method)}</td><td class="right nowrap">${money(p.amount)}</td></tr>`,
+            )
+            .join('')}</tbody></table></div>`
+          : '<div class="card muted">No hay movimientos de caja ese día.</div>'
+      }
+      <p class="muted">La garantía en efectivo suma a la caja y su devolución resta. La garantía con tarjeta no entra: es una preautorización.</p>`;
+    $('#cash-date').addEventListener('change', (e) => {
+      date = e.target.value || date;
+      run(load);
+    });
+    $('#cash-pdf').addEventListener('click', () => {
+      if (!window.jspdf) return toast('No se pudo cargar el generador de PDF. Recargá la página e intentá de nuevo.', true);
+      const { doc, filename } = buildCashPdf(cash, branchName());
+      const file = new File([doc.output('blob')], filename, { type: 'application/pdf' });
+      // En el celular se abre el menú de compartir (WhatsApp, email); en la compu se descarga.
+      if (navigator.canShare && navigator.canShare({ files: [file] })) navigator.share({ files: [file], title: `Caja ${date}` }).catch(() => {});
+      else downloadBlob(file, filename);
+    });
+  };
   await load();
 }, 'reservas');
 
@@ -1505,10 +1753,12 @@ on(/^\/mas$/, async (view) => {
   const admin = isAdmin();
   view.innerHTML = `
     <div class="page-head"><h1>Más</h1></div>
-    ${admin ? `<div class="mas-group">Información</div><div class="mas">${tile('#/estadisticas', 'Estadísticas', 'Qué autos se piden más, categorías, seguros, ingresos, daños y taller', ICON.chart, 'green')}</div>` : ''}
+    ${isAux() ? '' : `${admin ? `<div class="mas-group">Información</div><div class="mas">${tile('#/estadisticas', 'Estadísticas', 'Qué autos se piden más, categorías, seguros, ingresos, daños y taller', ICON.chart, 'green')}</div>` : ''}
     <div class="mas-group">Reservas y clientes</div>
     <div class="mas">
       ${tile('#/reservas', 'Todas las reservas', 'Buscar, filtrar y ver las anteriores', ICON.list)}
+      ${tile('#/alquileres', 'Alquileres activos', 'Los autos que están en la calle, con planilla para Excel', ICON.list, 'green')}
+      ${tile('#/caja', 'Caja diaria', 'Los cobros del día por sucursal, con el PDF del cierre', ICON.money, 'green')}
       ${tile('#/reservas/completa', 'Reserva con más opciones', 'Adicionales, descuento, vuelo, otro lugar de devolución', ICON.plus)}
       ${tile('#/clientes', 'Clientes', 'Datos, licencia y sus reservas', ICON.user)}
       ${tile('#/flota?estado=mantenimiento', 'Taller', 'Autos en el taller: mandar, sacar y su historial', ICON.wrench, 'warm')}
@@ -1527,7 +1777,7 @@ on(/^\/mas$/, async (view) => {
       ${admin && !choferesMode() ? tile('#/cotizador', 'Página web: formulario', 'Que las cotizaciones de tu página entren solas', ICON.globe) : ''}
       ${admin && !choferesMode() ? tile('#/asistente', 'Link de reservas (opcional)', '¿No tenés reservas por internet? Un link para Instagram y WhatsApp', ICON.link) : ''}
       ${admin ? tile('#/importar', 'Pasar datos de una planilla', 'Autos, clientes y reservas desde Excel o Drive', ICON.sheet) : ''}
-    </div>
+    </div>`}
     <div class="mas-group">Tu cuenta</div>
     <div class="mas">
       ${state.user.platform_admin ? tile('#/empresas', 'Panel de Floty', 'Agencias y sus direcciones (solo vos lo ves)', ICON.panel, 'gray') : ''}
@@ -1586,6 +1836,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
     more.push(`<button data-act="assign">${r.vehicle_id ? 'Cambiar de auto o intercambiar' : 'Asignar vehículo'}</button>`);
     more.push('<button data-act="edit">Modificar fechas o datos</button>');
   }
+  if (r.status === 'en_curso' && !r.periods.length) more.push('<button data-act="extend">Extender el alquiler</button>');
+  if (partiesOn() && ['pendiente', 'confirmada', 'en_curso'].includes(r.status)) more.push('<button data-act="parties">Titular y conductores adicionales</button>');
   const hotelOpen = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
   if (hotelOpen && !r.hotel && !choferesMode()) more.push('<button data-act="hotel">Entregar o retirar en un hotel</button>');
   if (r.status === 'en_curso') actions.push(`<button class="btn ok" data-act="checkin">${ICON.in}Registrar devolución</button>`);
@@ -1664,13 +1916,19 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       }
       ${
         c
-          ? `<div class="card"><h2>Contrato ${esc(c.number)}</h2>
+          ? `<div class="card"><h2>Contrato ${esc(c.number)}${c.in_at && !c.closed_at ? ' <span class="badge b-pendiente">Pendiente de cierre</span>' : ''}</h2>
+        ${
+          c.in_at && !c.closed_at
+            ? `<div class="notice warn no-print">El auto ya volvió, pero el contrato quedó pendiente: <b>${esc(c.pending_note || 'sin motivo cargado')}</b>.${r.balance.pending > 0 ? ` Hay ${money(r.balance.pending)} sin cobrar: no se puede cerrar hasta resolverlo.` : ''}
+                <div class="actions" style="margin-top:8px"><button class="btn small" data-act="fine">Sumar un cargo</button>${r.balance.pending > 0 ? '' : '<button class="btn small primary" data-act="closeContract">Cerrar contrato</button>'}</div></div>`
+            : ''
+        }
         <dl class="info">
           <dt>Salida</dt><dd>${fmtDT(c.out_at)} · ${c.out_km} km · combustible ${fuel(c.out_fuel)}</dd>
           ${c.out_notes ? `<dt>Obs. salida</dt><dd>${esc(c.out_notes)}</dd>` : ''}
           <dt>Devolución</dt><dd>${c.in_at ? `${fmtDT(c.in_at)} · ${c.in_km} km · combustible ${fuel(c.in_fuel)}` : '<span class="muted">Pendiente</span>'}</dd>
           ${c.in_notes ? `<dt>Obs. devolución</dt><dd>${esc(c.in_notes)}</dd>` : ''}
-          ${c.charges ? `<dt>Km recorridos</dt><dd>${c.charges.km_driven}</dd>` : ''}
+          ${c.charges ? `<dt>Km recorridos</dt><dd>${num(c.charges.km_driven)}${c.charges.km_excess ? ` · <b class="warn-text">${num(c.charges.km_excess)} de más</b>` : ''}${c.charges.fuel_missing ? ` · <b class="warn-text">faltaron ${c.charges.fuel_missing}/8 de combustible</b>` : ''}</dd>` : ''}
         </dl>
         ${
           c.charges && c.charges.lines.length
@@ -1679,6 +1937,14 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
                 .join('')}<tr class="total"><td>Total final</td><td class="right">${money(c.final_total)}</td></tr></tbody></table>`
             : ''
         }</div>`
+          : ''
+      }
+      ${
+        r.holder || (r.drivers || []).length
+          ? `<div class="card"><h2>Titular y conductores</h2><dl class="info">
+          ${r.holder ? `<dt>Titular del contrato</dt><dd>${esc(r.holder.full_name)} · ${esc([r.holder.doc_type, r.holder.doc_number].filter(Boolean).join(' '))}</dd>` : ''}
+          ${(r.drivers || []).map((x, i) => `<dt>Conductor adicional ${i + 1}</dt><dd>${esc(x.full_name)} · ${esc([x.doc_type, x.doc_number].filter(Boolean).join(' '))}${x.license_number ? ` · licencia ${esc(x.license_number)}` : ''}</dd>`).join('')}
+        </dl></div>`
           : ''
       }
       ${signatureCardHtml(r)}
@@ -1776,11 +2042,12 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       );
     },
     assign: async () => {
-      const { free, swaps } = await GET(`/reservations/${r.id}/move-options`);
+      const { free, swaps, others = [] } = await GET(`/reservations/${r.id}/move-options`);
       const car = (v) => `${v.plate} · ${v.brand} ${v.model} · ${v.km} km · ${v.branch_name || ''}`;
       const options = [
         ...(r.vehicle_id ? [[r.vehicle_id, `${r.vehicle_plate} · ${L('el que tiene ahora', 'current car')}`]] : []),
         ...free.map((v) => [v.id, car(v)]),
+        ...others.map((v) => [v.id, `${car(v)} · ${v.category_name}: otra categoría, se mantiene el precio`]),
         ...swaps.map((v) => [`swap-${v.reservation_id}`, `${L('Intercambiar con', 'Swap with')} ${v.customer_name} · ${v.plate} ${v.brand} ${v.model}`]),
       ];
       openModal(
@@ -1879,7 +2146,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         if (v && v.fuel !== undefined) $('#modal-body [name=out_fuel]').value = v.fuel;
       });
     },
-    checkin: () =>
+    checkin: () => {
       openModal(
         `Devolución · ${r.code}`,
         formHtml(
@@ -1892,8 +2159,10 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'in_notes', label: 'Observaciones / daños detectados', type: 'textarea', full: true },
             { name: 'fotos', label: 'Fotos del auto al recibirlo (daños, km y combustible)', type: 'photos' },
             { name: 'send_to_maintenance', label: 'Enviar el vehículo a taller', type: 'checkbox', full: true },
+            { name: 'pending_note', label: 'Dejar el contrato pendiente por (con saldo sin cobrar queda pendiente solo)', type: 'select', options: [['Daños por definir', 'Daños por definir'], ['Faltantes', 'Faltantes (accesorios, llaves, documentos)'], ['Saldo sin cobrar', 'Saldo sin cobrar']], full: true, when: () => proOn() && !choferesMode() },
           ],
-          { in_at: localISO(new Date()), return_branch_id: r.return_branch_id, in_fuel: c.out_fuel },
+          // Si el auxiliar de flota ya cargó el km y el combustible del auto al recibirlo, vienen puestos.
+          { in_at: localISO(new Date()), return_branch_id: r.return_branch_id, ...(r.vehicle_km > c.out_km ? { in_km: r.vehicle_km, in_fuel: r.vehicle_fuel } : { in_fuel: c.out_fuel }) },
           'Cerrar contrato',
         ),
         async (d, form) => {
@@ -1907,7 +2176,78 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           // Si quedó saldo (km o combustible de más, daños), se abre el cobro directo.
           location.hash = `#/reservas/${r.id}?accion=pay`;
         },
+      );
+      // Mientras se cargan el km y el combustible: cuánto recorrió, si hay km de más o falta combustible, y los cargos que salen.
+      const form = $('#modal-body form');
+      form.querySelector('.actions').insertAdjacentHTML('beforebegin', '<div id="ret-preview" role="status" style="margin-top:12px"></div>');
+      let timer;
+      const preview = async () => {
+        const d = formData(form);
+        const box = $('#ret-preview');
+        if (!box || d.in_km === null) return;
+        const p = await POST(`/reservations/${r.id}/checkin-preview`, d).catch((e) => ({ error: e.message }));
+        if (!$('#ret-preview')) return; // la ventana se cerró mientras tanto
+        if (p.error) return (box.innerHTML = `<p class="notice warn">${esc(p.error)}</p>`);
+        const alerts = [p.km_excess > 0 && `${num(p.km_excess)} km de más`, p.fuel_missing > 0 && `faltan ${p.fuel_missing}/8 de combustible`].filter(Boolean);
+        box.innerHTML = `<p><b>Recorrió ${num(p.km_driven)} km</b>${p.km_allowed === null ? '' : ` · incluidos ${num(p.km_allowed)}`}</p>
+          ${alerts.length ? `<p class="notice warn">Atención: ${alerts.join(' y ')}.</p>` : ''}
+          ${p.lines.length ? `<table class="breakdown"><tbody>${p.lines.map((l) => `<tr><td>${esc(l.concept)}</td><td class="right">${money(l.amount)}</td></tr>`).join('')}<tr class="total"><td>Cargos adicionales</td><td class="right">${money(p.total)}</td></tr></tbody></table>` : ''}`;
+      };
+      form.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(preview, 400);
+      });
+      preview();
+    },
+    extend: () =>
+      openModal(
+        `Extender ${r.code}`,
+        `<p class="muted">Hoy devuelve el ${fmtDT(r.return_at)}. Los días nuevos se cobran con la misma tarifa del contrato, salvo que pongas otro importe.</p>${formHtml(
+          [
+            { name: 'return_at', label: 'Nueva fecha y hora de devolución', type: 'datetime-local', required: true, attrs: `min="${esc(r.return_at)}"` },
+            { name: 'extra_amount', label: 'Importe de la extensión (opcional)', type: 'number', attrs: 'min="0"' },
+          ],
+          { return_at: localISO(addDays(new Date(`${r.return_at}:00`), 1)) },
+          'Extender',
+        )}`,
+        async (d) => {
+          const x = await POST(`/reservations/${r.id}/extend`, d);
+          toast(`Alquiler extendido hasta el ${x.return_at.slice(8, 10)}/${x.return_at.slice(5, 7)} a las ${x.return_at.slice(11, 16)}. Total: ${money(x.total)}`);
+          reload();
+        },
       ),
+    parties: () => {
+      const h = r.holder || {};
+      const docOpts = () => docTypes().map((x) => [x, x]);
+      const fields = [
+        { name: 'h_full_name', label: 'Titular del contrato, si no es el cliente (nombre o razón social)', full: true },
+        { name: 'h_doc_type', label: 'Tipo doc. del titular', type: 'select', options: docOpts },
+        { name: 'h_doc_number', label: 'Documento del titular' },
+        { name: 'h_phone', label: 'Teléfono del titular' },
+        { name: 'h_address', label: 'Domicilio del titular' },
+        ...[0, 1, 2, 3, 4].flatMap((i) => [
+          { name: `d${i}_full_name`, label: `Conductor adicional ${i + 1}: nombre y apellido`, full: true },
+          { name: `d${i}_doc_type`, label: 'Tipo doc.', type: 'select', options: docOpts },
+          { name: `d${i}_doc_number`, label: 'Documento' },
+          { name: `d${i}_license_number`, label: 'Licencia N°' },
+          { name: `d${i}_license_expiry`, label: 'Vencimiento de la licencia', type: 'date' },
+        ]),
+      ];
+      const values = Object.fromEntries([
+        ...Object.entries(h).map(([k, v]) => [`h_${k}`, v]),
+        ...(r.drivers || []).flatMap((x, i) => Object.entries(x).map(([k, v]) => [`d${i}_${k}`, v])),
+      ]);
+      openModal(`Titular y conductores · ${r.code}`, formHtml(fields, values), async (d) => {
+        const part = (prefix) => Object.fromEntries(Object.entries(d).filter(([k]) => k.startsWith(prefix)).map(([k, v]) => [k.slice(prefix.length), v]));
+        await POST(`/reservations/${r.id}/parties`, { holder: part('h_'), drivers: [0, 1, 2, 3, 4].map((i) => part(`d${i}_`)) });
+        toast('Titular y conductores guardados');
+        reload();
+      });
+    },
+    closeContract: async () => {
+      await run(() => POST(`/reservations/${r.id}/close-contract`), 'Contrato cerrado');
+      reload();
+    },
     pay: () =>
       openModal(
         'Registrar movimiento',
@@ -1928,7 +2268,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           { kind: 'pago', method: 'efectivo', amount: r.balance.pending > 0 ? r.balance.pending : '' },
         ),
         async (d) => {
-          await POST(`/reservations/${r.id}/payments`, d);
+          await POST(`/reservations/${r.id}/payments`, { ...d, branch_id: state.branch || undefined }); // la caja es la de la sucursal elegida
           toast('Movimiento registrado');
           reload();
         },
@@ -2173,7 +2513,7 @@ function voucherLines(r) {
       title: 'Cliente y conductor',
       rows: [
         ['Nombre', r.customer_name],
-        r.customer_doc ? ['Documento', `${r.customer_doc_type || 'DNI'} ${r.customer_doc}`] : null,
+        r.customer_doc ? ['Documento', `${r.customer_doc_type || docTypes()[0]} ${r.customer_doc}`] : null,
         r.customer_phone ? ['Teléfono', r.customer_phone] : null,
         r.customer_email ? ['Email', r.customer_email] : null,
         ['Conductor', r.customer_license ? `El titular · licencia ${r.customer_license}${r.customer_license_expiry ? ` (vence ${d(r.customer_license_expiry)})` : ''}` : 'El titular · traer la licencia al retirar'],
@@ -2304,6 +2644,10 @@ const LOG_LABEL = {
   vehiculo_intercambiado: 'Auto intercambiado',
   entregado: 'Auto entregado',
   devuelto: 'Auto devuelto',
+  extendida: 'Alquiler extendido',
+  titular_conductores: 'Titular y conductores',
+  contrato_pendiente: 'Contrato pendiente de cierre',
+  contrato_cerrado: 'Contrato cerrado',
   pago: 'Pago registrado',
   devolucion: 'Devolución de dinero',
   garantia: 'Garantía recibida',
@@ -2789,8 +3133,8 @@ async function printContract(r) {
 <div class="grid">
   <div><h2>Cliente / conductor principal</h2><table>
     ${line('Nombre y apellido', esc(r.customer_name))}
-    ${line('Documento', r.customer_doc ? `${esc(r.customer_doc_type || 'DNI')} ${esc(r.customer_doc)}` : '')}
-    ${line('Domicilio', esc(r.customer_address || ''))}
+    ${line('Documento', r.customer_doc ? `${esc(r.customer_doc_type || docTypes()[0])} ${esc(r.customer_doc)}` : '')}
+    ${line('Domicilio', esc(r.customer_address || ''))}${r.customer_workplace ? line('Lugar de trabajo', esc(r.customer_workplace)) : ''}${r.customer_alt_contact ? line('Contacto alternativo', esc(r.customer_alt_contact)) : ''}
     ${line('Teléfono', esc(r.customer_phone || ''))}
     ${line('Email', esc(r.customer_email || ''))}
     ${line('Fecha de nacimiento', fmtD(r.customer_birth_date))}
@@ -2802,9 +3146,21 @@ async function printContract(r) {
     ${line('Clase de licencia', esc(r.customer_license_class || ''))}${line('Trabaja con', esc(r.customer_work_apps || ''))}
     ${line('Garante', esc(r.guarantor_name || ''))}${line('Documento / teléfono', esc([r.guarantor_doc, r.guarantor_phone].filter(Boolean).join(' · ')))}
   </table>`
-    : `<h2>Conductor adicional</h2><table>
+    : `${r.holder ? `<h2>Titular del contrato</h2><table>
+    ${line('Nombre o razón social', esc(r.holder.full_name))}${line('Documento', esc([r.holder.doc_type, r.holder.doc_number].filter(Boolean).join(' ')))}${line('Teléfono / domicilio', esc([r.holder.phone, r.holder.address].filter(Boolean).join(' · ')))}
+  </table>` : ''}${
+        (r.drivers || []).length
+          ? r.drivers
+              .map(
+                (x, i) => `<h2>Conductor adicional${r.drivers.length > 1 ? ` ${i + 1}` : ''}</h2><table>
+    ${line('Nombre y apellido', esc(x.full_name))}${line('Documento', esc([x.doc_type, x.doc_number].filter(Boolean).join(' ')))}${line('Licencia N° / vence', esc([x.license_number, x.license_expiry && fmtD(x.license_expiry)].filter(Boolean).join(' · ')))}
+  </table>`,
+              )
+              .join('')
+          : `<h2>Conductor adicional</h2><table>
     ${line('Nombre y apellido', '')}${line('Documento', '')}${line('Licencia N° / vence', '')}
-  </table>`}</div>
+  </table>`
+      }`}</div>
   <div><h2>Vehículo</h2><table>
     ${line('Marca y modelo', r.vehicle_plate ? `${esc(r.vehicle_brand || '')} ${esc(r.vehicle_model || '')}` : '')}
     ${line('Patente', r.vehicle_plate ? `<b>${esc(r.vehicle_plate)}</b>` : '')}
@@ -2856,8 +3212,8 @@ async function printContract(r) {
 
 <p style="margin-top:10px">El Cliente declara haber leído y aceptado las condiciones generales que forman parte de este contrato (página siguiente) y recibir el vehículo en el estado indicado.</p>
 <div class="sign">
-  <div>${signedBy}Firma del cliente<small>Aclaración:<br>DNI:</small></div>
-  <div>${choferesMode() ? 'Garante' : 'Conductor adicional'}<small>Aclaración:<br>DNI:</small></div>
+  <div>${signedBy}Firma del cliente<small>Aclaración:<br>${docWord()}:</small></div>
+  <div>${choferesMode() ? 'Garante' : 'Conductor adicional'}<small>Aclaración:<br>${docWord()}:</small></div>
   <div>Por ${esc(s.company_name || 'la Empresa')}<small>Aclaración:</small></div>
 </div>
 
@@ -2866,7 +3222,7 @@ async function printContract(r) {
   <h2>Condiciones generales del alquiler</h2>
   <div class="terms">${contractTerms(r)}</div>
   <div class="sign" style="grid-template-columns:1fr 1fr">
-    <div>${signedBy}Firma del cliente (conformidad)<small>Aclaración:<br>DNI:</small></div>
+    <div>${signedBy}Firma del cliente (conformidad)<small>Aclaración:<br>${docWord()}:</small></div>
     <div>Por ${esc(s.company_name || 'la Empresa')}</div>
   </div>
 </div>
@@ -2891,6 +3247,15 @@ ${
    Planning (grilla de ocupación, estilo Rently)
    ============================================================ */
 let planningFrom = null;
+// El calendario también se puede ver como listado; se recuerda en este navegador.
+const PLAN_VIEW_KEY = 'floty-calendario';
+const planAsList = () => {
+  try {
+    return localStorage.getItem(PLAN_VIEW_KEY) === 'lista';
+  } catch {
+    return false;
+  }
+};
 // ?r=ID: la reserva recién creada desde el calendario se ve resaltada al volver.
 on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
   if (!planningFrom) {
@@ -2912,7 +3277,7 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
     const l = Math.max(0, pos(r.pickup_at));
     const rr = Math.min(100, pos(r.return_at));
     if (rr <= 0 || l >= 100) return '';
-    return `<div class="pl-bar ${r.status}${String(r.id) === highlight ? ' just-made' : ''}${['pendiente', 'confirmada'].includes(r.status) ? ' pl-move' : ''}" data-id="${r.id}" style="left:${l}%;width:${Math.max(rr - l, 0.8)}%" data-href="#/reservas/${r.id}"
+    return `<div class="pl-bar ${r.status}${String(r.id) === highlight ? ' just-made' : ''}${['pendiente', 'confirmada'].includes(r.status) ? ' pl-move' : ''}" data-id="${r.id}" style="left:${l}%;width:${Math.max(rr - l, 0.8)}%"${isAux() ? '' : ` data-href="#/reservas/${r.id}"`}
       title="${esc(r.code)} · ${esc(r.customer_name)} · ${fmtDT(r.pickup_at)} → ${fmtDT(r.return_at)}">${esc(r.customer_name)}</div>`;
   };
   const mbar = (m) => {
@@ -2951,16 +3316,42 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
     }
   }
 
+  const asList = planAsList();
+  const plateOf = Object.fromEntries(p.vehicles.map((v) => [v.id, v]));
+  // Listado: las mismas reservas de esas dos semanas, una por renglón, en orden de salida.
+  const listHtml = () =>
+    p.reservations.length
+      ? `<div class="table-wrap"><table><thead><tr><th>Salida</th><th>Devolución</th><th>Cliente</th><th>Auto</th><th>Estado</th><th>Referencia</th></tr></thead><tbody>${[...p.reservations]
+          .sort((a, b) => a.pickup_at.localeCompare(b.pickup_at))
+          .map((r) => {
+            const v = plateOf[r.vehicle_id];
+            return `<tr class="click pl-item${String(r.id) === highlight ? ' just-made' : ''}" data-id="${r.id}"${isAux() ? '' : ` data-href="#/reservas/${r.id}"`}>
+              <td class="nowrap">${fmtDT(r.pickup_at)}</td><td class="nowrap">${fmtDT(r.return_at)}</td><td>${esc(r.customer_name)}</td>
+              <td>${v ? `<span class="plate">${esc(v.plate)}</span> ${esc([v.brand, v.model].filter(Boolean).join(' '))}` : `<span class="error">Sin asignar</span> · ${esc(r.category_code)}`}</td>
+              <td>${badge(r.status)}</td><td class="nowrap">${esc(r.code)}</td></tr>`;
+          })
+          .join('')}</tbody></table></div>`
+      : '<div class="card muted">No hay reservas en estas dos semanas.</div>';
   view.innerHTML = `
     <div class="page-head"><h1>Calendario de autos</h1>
-      <div class="actions"><button class="btn" data-nav="-7">◀ Semana</button><button class="btn" data-nav="0">Hoy</button><button class="btn" data-nav="7">Semana ▶</button></div></div>
-    <div class="legend" style="margin-bottom:10px">
+      <div class="actions"><button class="btn" data-plan-view>${asList ? 'Ver calendario' : 'Ver listado'}</button><button class="btn" data-nav="-7">◀ Semana</button><button class="btn" data-nav="0">Hoy</button><button class="btn" data-nav="7">Semana ▶</button></div></div>
+    ${
+      asList
+        ? `<p class="muted">Reservas del ${fmtD(fromStr)} al ${fmtD(localISO(addDays(planningFrom, days - 1)))}.</p>${listHtml()}`
+        : `<div class="legend" style="margin-bottom:10px">
       <span style="--c:#e0a100">Pendiente</span><span style="--c:#1f6feb">Confirmada</span><span style="--c:#1a9b5b">En curso</span>
       <span style="--c:#8b94a6">Finalizada</span><span style="--c:#d1373a">En el taller</span><span>· Tocá una barra para abrir la reserva · <b>Para reservar, tocá en la fila de un auto el día de retiro y después el de devolución (con el mouse también podés arrastrar).</b> <b>Con el mouse, arrastrá una barra para mover la reserva, o soltala sobre otra para intercambiar los autos.</b></span></div>
     <div class="planning">
       <div class="pl-row head"><div class="pl-label"><small>Vehículo</small></div><div class="pl-days" style="grid-template-columns:repeat(${days},1fr)">${dayCells}</div></div>
       ${rows || '<p class="muted" style="padding:16px">No hay vehículos cargados.</p>'}
-    </div>`;
+    </div>`
+    }`;
+  $('[data-plan-view]', view).addEventListener('click', () => {
+    try {
+      localStorage.setItem(PLAN_VIEW_KEY, asList ? 'calendario' : 'lista');
+    } catch {}
+    route();
+  });
   $$('[data-nav]', view).forEach((b) =>
     b.addEventListener('click', () => {
       const n = Number(b.dataset.nav);
@@ -2969,8 +3360,13 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
       route();
     }),
   );
-  enableDragToBook($('.planning', view), p, days);
-  enableDragToMove($('.planning', view), p, days);
+  if (isAux()) {
+    // El auxiliar no entra a la reserva: una barra abre sus fotos y el km del auto.
+    $$('.pl-bar[data-id], .pl-item', view).forEach((b) => b.addEventListener('click', () => run(() => auxTrip(p.reservations.find((r) => r.id === Number(b.dataset.id))))));
+  } else if (!asList) {
+    enableDragToBook($('.planning', view), p, days);
+    enableDragToMove($('.planning', view), p, days);
+  }
   $('.just-made', view)?.scrollIntoView({ block: 'center', inline: 'center' });
 }, 'planning');
 
@@ -3214,9 +3610,15 @@ async function saveLicense(r, d, form) {
   return rest;
 }
 
+// Tipos de documento según el país: en Argentina DNI; en el resto, cédula, pasaporte o R.U.C. (el primero es el que viene elegido).
+const docTypes = () => (state.settings.country === 'AR' ? ['DNI', 'Pasaporte', 'CI', 'CUIT', 'RUT', 'Otro'] : ['Cédula', 'Pasaporte', 'R.U.C.', 'DNI', 'Otro']);
+const docWord = () => (state.settings.country === 'AR' ? 'DNI' : 'Documento');
+// Titular y conductores adicionales, lugar de trabajo y contacto alternativo: agencias con funciones en prueba, alquiler por días.
+const partiesOn = () => proOn() && !choferesMode();
+
 const CUSTOMER_FIELDS = [
   { name: 'full_name', label: 'Nombre y apellido', required: true, full: true },
-  { name: 'doc_type', label: 'Tipo doc.', type: 'select', options: ['DNI', 'Pasaporte', 'CI', 'CUIT', 'RUT', 'Otro'].map((x) => [x, x]), default: 'DNI' },
+  { name: 'doc_type', label: 'Tipo doc.', type: 'select', options: () => docTypes().map((x) => [x, x]), get default() { return docTypes()[0]; } },
   { name: 'doc_number', label: 'Número de documento' },
   { name: 'phone', label: 'Teléfono / WhatsApp' },
   { name: 'email', label: 'Email', type: 'email' },
@@ -3224,6 +3626,8 @@ const CUSTOMER_FIELDS = [
   { name: 'license_number', label: 'Licencia de conducir N°' },
   { name: 'license_expiry', label: 'Vencimiento licencia', type: 'date' },
   { name: 'address', label: 'Domicilio', full: true },
+  { name: 'workplace', label: 'Lugar de trabajo', when: partiesOn },
+  { name: 'alt_contact', label: 'Contacto alternativo (nombre y teléfono)', when: partiesOn },
   // Choferes: licencia profesional, apps en las que trabaja y su garante.
   { name: 'license_class', label: 'Clase de licencia (ej. D1 profesional)', when: () => choferesMode() },
   { name: 'work_apps', label: 'Trabaja con (Uber, DiDi, Cabify, PedidosYa, remis…)', when: () => choferesMode() },
@@ -3251,6 +3655,7 @@ const VEHICLE_FIELDS = [
   { name: 'fuel', label: 'Combustible (octavos)', type: 'number', default: 8, attrs: 'min="0" max="8"' },
   { name: 'insurance_expiry', label: 'Vencimiento seguro', type: 'date' },
   { name: 'vtv_expiry', label: 'Vencimiento VTV', type: 'date' },
+  { name: 'registration_expiry', label: 'Vencimiento de la cédula de circulación', type: 'date', when: () => state.settings.country !== 'AR' },
   { name: 'insurance_company', label: 'Aseguradora' },
   { name: 'insurance_policy', label: 'N° de póliza' },
   { name: 'insurance_cost', label: 'Cuota mensual del seguro (se carga sola como gasto el día 1)', type: 'number', default: 0 },
@@ -3382,6 +3787,7 @@ const nextMove = (v) => {
 on(
   /^\/flota(?:\?estado=(\w+))?$/,
   async (view, estado) => {
+    if (isAux()) return auxFleet(view);
     let filter = FLEET_FILTERS.some(([k]) => k === estado) ? estado : '';
     view.innerHTML = `<div class="page-head"><h1>Autos</h1><button class="btn primary" data-new>${ICON.plus}Agregar auto</button></div>
       <div class="fleet-bar"><input id="fleet-q" type="search" placeholder="Buscar por patente, marca o modelo" aria-label="Buscar auto"/>
@@ -3399,7 +3805,7 @@ on(
         <dl class="vcard-facts">
           <div><dt>Km</dt><dd>${num(v.km || 0)}</dd></div>
           <div><dt>Combustible</dt><dd>${fuel(v.fuel) || '—'}</dd></div>
-          ${doc('Seguro', v.insurance_expiry)}${doc('VTV', v.vtv_expiry)}${choferesMode() && v.permit_expiry ? doc('Habilitación', v.permit_expiry) : ''}
+          ${doc('Seguro', v.insurance_expiry)}${doc('VTV', v.vtv_expiry)}${v.registration_expiry ? doc('Cédula de circulación', v.registration_expiry) : ''}${choferesMode() && v.permit_expiry ? doc('Habilitación', v.permit_expiry) : ''}
         </dl>
         <div class="vcard-actions">
           <button class="btn pill small" type="button" data-hist>${ICON.list}Historial</button>
@@ -4241,10 +4647,10 @@ on(/^\/usuarios$/, async (view) => {
     <div class="table-wrap"><table><thead><tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Activo</th><th></th></tr></thead><tbody>${users
       .map(
         (u) =>
-          `<tr data-id="${u.id}"><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.role === 'admin' ? 'Administrador' : 'Operador'}</td><td>${u.active ? '✔' : '—'}${u.must_change_password ? ' <span class="badge b-pendiente">cambia la clave al entrar</span>' : ''}</td><td class="right"><button class="btn small" data-edit>Editar</button></td></tr>`,
+          `<tr data-id="${u.id}"><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${esc(ROLE_LABEL[u.role] || u.role)}</td><td>${u.active ? '✔' : '—'}${u.must_change_password ? ' <span class="badge b-pendiente">cambia la clave al entrar</span>' : ''}</td><td class="right"><button class="btn small" data-edit>Editar</button></td></tr>`,
       )
       .join('')}</tbody></table></div>
-    <p class="muted">Los operadores manejan reservas, flota y clientes. Los administradores además configuran tarifas, el cotizador y los usuarios, y son los únicos que pueden borrar o anonimizar clientes. Cada persona debería tener su propio usuario.</p>
+    <p class="muted">El auxiliar de flota saca las fotos de entrega y devolución, carga km y combustible y mueve autos de sucursal: no entra a las reservas ni ve precios. Los operadores manejan reservas, flota y clientes. Los administradores además configuran tarifas, el cotizador y los usuarios, y son los únicos que pueden borrar o anonimizar clientes. Cada persona debería tener su propio usuario.</p>
     <div class="card" style="margin-top:16px"><h2>Actividad reciente</h2>
       <p class="muted">Ingresos, intentos fallidos y cambios importantes. Muchos "login fallido" seguidos pueden ser alguien probando contraseñas.</p>
       <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Qué pasó</th><th>Usuario</th><th>Detalle</th><th>IP</th></tr></thead><tbody>${
@@ -4255,7 +4661,7 @@ on(/^\/usuarios$/, async (view) => {
           )
           .join('') || '<tr><td colspan="5" class="muted">Sin actividad registrada.</td></tr>'
       }</tbody></table></div></div>`;
-  const roleField = { name: 'role', label: 'Rol', type: 'select', options: [['operador', 'Operador'], ['admin', 'Administrador']], required: true };
+  const roleField = { name: 'role', label: 'Rol', type: 'select', options: Object.entries(ROLE_LABEL).reverse(), required: true };
   $('[data-new]', view).addEventListener('click', () =>
     openModal(
       'Nuevo usuario',
@@ -4375,6 +4781,15 @@ async function statsView(view, url, { owner = false } = {}) {
         <h2>Qué categorías dejan más</h2>
         ${bars(s.categories.filter((c) => c.requested || c.shop_cost), (c) => c.net, (c) => `${esc(c.code)} · ${esc(c.name)}`, (c) => `${plural(c.requested, 'reserva', 'reservas')} · ${plural(c.days, 'día alquilado', 'días alquilados')} · cobrado ${moneyRound(c.collected)}${c.shop_cost ? ` · taller ${moneyRound(c.shop_cost)}` : ''}${c.occupancy !== null ? ` · ocupación ${c.occupancy} %` : ''}`, moneyRound)}
       </section>
+      ${
+        (s.branches || []).length > 1
+          ? `<section class="card">
+        <h2>Ganancias por sucursal</h2>
+        <p class="muted">Lo cobrado de las reservas que se retiran en cada sucursal, menos el taller y los gastos de sus autos.</p>
+        ${bars(s.branches, (b) => b.net, (b) => esc(b.name || 'Sin sucursal (hotel u otro lugar)'), (b) => `${plural(b.rentals, 'alquiler', 'alquileres')} · cobrado ${moneyRound(b.collected)} · gastos ${moneyRound(b.costs)}`, moneyRound)}
+      </section>`
+          : ''
+      }
       <section class="card">
         <h2>Modelos que más facturan</h2>
         ${bars(s.models, (m) => m.revenue, (m) => esc([m.brand, m.model].filter(Boolean).join(' ')), (m) => `${plural(m.rentals, 'alquiler', 'alquileres')} · ${plural(m.days, 'día', 'días')}`, moneyRound)}

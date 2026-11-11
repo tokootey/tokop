@@ -168,6 +168,9 @@ function computeReturnCharges(db, reservation, contract, input, { byPeriods = fa
   const lines = [];
 
   const kmDriven = Math.max(0, Number(input.in_km) - Number(contract.out_km));
+  // Km de más y combustible faltante: se avisan siempre, tengan o no un cargo configurado.
+  const kmAllowed = category.km_per_day > 0 && !byPeriods ? category.km_per_day * reservation.days : null;
+  const kmExcess = kmAllowed === null ? 0 : Math.max(0, kmDriven - kmAllowed);
   // Por períodos (choferes) los km y la demora ya se cobraron con la renovación y la lectura de km.
   if (category.km_per_day > 0 && !byPeriods) {
     const allowed = category.km_per_day * reservation.days;
@@ -199,7 +202,7 @@ function computeReturnCharges(db, reservation, contract, input, { byPeriods = fa
     if (Number(c.amount)) lines.push({ concept: String(c.concept || 'Otro cargo'), amount: round2(c.amount) });
   }
 
-  return { km_driven: kmDriven, lines, total: round2(lines.reduce((a, l) => a + l.amount, 0)) };
+  return { km_driven: kmDriven, km_allowed: kmAllowed, km_excess: kmExcess, fuel_missing: missingEighths, lines, total: round2(lines.reduce((a, l) => a + l.amount, 0)) };
 }
 
 module.exports = { rentalDays, computeQuote, computeReturnCharges, parseDynamicRules };
