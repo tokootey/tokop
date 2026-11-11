@@ -652,6 +652,8 @@ function migrate(db) {
   for (const col of ['license_class', 'work_apps', 'guarantor_name', 'guarantor_doc', 'guarantor_phone', 'guarantor_address']) {
     if (!has('customers', col)) db.exec(`ALTER TABLE customers ADD COLUMN ${col} TEXT`);
   }
+  // Autos que en la web sólo se consultan por WhatsApp (la agencia quiere escuchar ofertas): no se reservan ni se pagan online.
+  if (!has('vehicles', 'web_inquiry')) db.exec('ALTER TABLE vehicles ADD COLUMN web_inquiry INTEGER NOT NULL DEFAULT 0');
   if (!has('vehicles', 'service_every_km')) db.exec('ALTER TABLE vehicles ADD COLUMN service_every_km INTEGER NOT NULL DEFAULT 0');
   // Entrega express: dónde quedó el auto y el link para que el cliente suba las fotos de la devolución.
   for (const col of ['left_place', 'return_token', 'pre_delivery']) {

@@ -3,7 +3,7 @@
 const express = require('express');
 const { getSettings } = require('../db');
 const { computeQuote } = require('../pricing');
-const { categoryAvailability } = require('../availability');
+const { categoryAvailability, OUT_OF_FLEET } = require('../availability');
 const { ingestQuote } = require('../integration');
 const { cardUrlFor } = require('../delivery');
 const { fail, normDateTime, nowLocal } = require('../util');
@@ -37,6 +37,15 @@ function parseFaq(text, settings) {
 
 // Ejemplo de WhatsApp en el formulario, según el país de la agencia.
 const PHONE_HINT = { AR: '+54 9 2901 555123', PA: '+507 6123 4567', CL: '+56 9 1234 5678', UY: '+598 91 234 567', PE: '+51 912 345 678', CO: '+57 312 345 6789', MX: '+52 55 1234 5678', CR: '+506 8123 4567', ES: '+34 612 345 678' };
+
+/** Categorías que en esas fechas sólo tienen libres autos "de consulta": en la web se ofrecen por WhatsApp, sin reserva. */
+function inquiryOnly(db, pickup_at, return_at) {
+  const marked = new Map(
+    db.prepare(`SELECT category_id, COUNT(*) AS n FROM vehicles WHERE web_inquiry = 1 AND status NOT IN (${OUT_OF_FLEET.map(() => '?').join(',')}) GROUP BY category_id`).all(...OUT_OF_FLEET).map((r) => [r.category_id, r.n]),
+  );
+  if (!marked.size || !pickup_at || !return_at) return new Set();
+  return new Set(categoryAvailability(db, { pickup_at, return_at }).filter((x) => x.available > 0 && x.available <= (marked.get(x.id) || 0)).map((x) => x.code));
+}
 
 const str = (v, max = MAX_TEXT) => (v === undefined || v === null ? '' : String(v).trim().slice(0, max));
 
@@ -103,14 +112,18 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
       return_branch_id: returnBranch ? returnBranch.id : branch ? branch.id : null,
       extras: pickedExtras.map((e) => ({ extra_id: e.id, quantity: 1 })),
     };
+    const inquiry = inquiryOnly(db, pickup_at, return_at);
     const options = categoryAvailability(db, range)
       .filter((c) => c.available > 0)
       .map((c) => {
+        // Sin precio: la agencia lo conversa por WhatsApp.
+        if (inquiry.has(c.code)) return { code: c.code, name: c.name, description: c.description || '', seats: c.seats, transmission: c.transmission, inquiry_only: true, total: Infinity };
         const q = computeQuote(db, { ...range, category_id: c.id });
         // Al público sólo se le muestra lo necesario: nunca cuántos autos quedan exactamente.
         return { code: c.code, name: c.name, description: c.description || '', seats: c.seats, transmission: c.transmission, days: q.days, total: q.total, deposit: q.deposit, few_left: c.available <= 1, high_demand: q.dynamic_pct > 0, promo: q.promo, one_way_fee: q.one_way_fee };
       })
-      .sort((a, b2) => a.total - b2.total);
+      .sort((a, b2) => a.total - b2.total)
+      .map((o) => (o.inquiry_only ? { ...o, total: null } : o));
     res.json({ pickup_at, return_at, options });
   });
 
@@ -124,6 +137,7 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
     if (name.length < 3) fail(400, 'Decinos tu nombre y apellido');
     if (!email && !phone) fail(400, 'Dejanos un email o un teléfono para confirmarte');
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, 'El email no parece válido');
+    if (inquiryOnly(db, normDateTime(str(b.pickup_at, 20)), normDateTime(str(b.return_at, 20))).has(str(b.category, 20))) fail(409, 'Ese auto se reserva hablando con la agencia por WhatsApp');
     const payload = {
       nombre: name,
       email,

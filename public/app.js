@@ -3231,6 +3231,7 @@ const CUSTOMER_FIELDS = [
   { name: 'guarantor_doc', label: 'Garante: DNI', when: () => choferesMode() },
   { name: 'guarantor_phone', label: 'Garante: teléfono', when: () => choferesMode() },
   { name: 'guarantor_address', label: 'Garante: domicilio', when: () => choferesMode() },
+  { name: 'web_inquiry', label: 'En la web, solo consulta por WhatsApp (no se puede reservar ni pagar online)', type: 'checkbox', full: true },
   { name: 'notes', label: 'Notas', type: 'textarea', full: true },
 ];
 
@@ -3491,7 +3492,7 @@ on(
                 { name: 'start_date', label: 'Entra el', type: 'date', required: true },
                 { name: 'km', label: 'Km', type: 'number' },
                 { name: 'cost', label: 'Costo (opcional)', type: 'number' },
-                { name: 'description', label: 'Detalle', type: 'textarea', full: true, rows: 2 },
+                { name: 'description', label: 'Justificación (por qué va al taller)', type: 'textarea', full: true, rows: 2, required: true },
               ],
               { kind: 'service', start_date: today, km: v.km },
               'Mandar al taller',
@@ -5323,6 +5324,7 @@ async function bookingPage() {
       <div class="qr-total">
         <div class="sum"><span class="muted" id="bk-what">${L('Elegí un auto', 'Choose a car')}</span><b id="bk-sum"></b></div>
         <button class="btn primary big" type="submit">${L('Pedir la reserva', 'Request booking')}</button>
+        ${cfg.whatsapp ? `<a class="btn wa big" href="https://wa.me/${esc(cfg.whatsapp)}?text=${encodeURIComponent(L('Hola, tengo una consulta sobre una reserva.', 'Hi, I have a question about a booking.'))}" target="_blank" rel="noopener">${WA_ICON}${L('Consultar o pagar por transferencia', 'Ask or pay by bank transfer')}</a>` : ''}
         <small class="muted">${L('No pagás nada ahora. La agencia te confirma por WhatsApp.', 'You pay nothing now. The agency confirms by WhatsApp.')}</small>
       </div>
     </form>
@@ -5351,6 +5353,15 @@ async function bookingPage() {
       ? options
           .map((o) => {
             const info = [o.description, o.seats ? `${o.seats} ${L('asientos', 'seats')}` : ''].filter(Boolean).join(' · ');
+            // Auto "de consulta": no se elige ni se paga acá, se conversa con la agencia.
+            if (o.inquiry_only) {
+              if (!cfg.whatsapp) return '';
+              const ask = L(`Hola, quiero consultar por ${o.name} del ${fmtDT(localISO(from))} al ${fmtDT(localISO(to))}.`, `Hi, I'd like to ask about ${o.name} from ${fmtDT(localISO(from))} to ${fmtDT(localISO(to))}.`);
+              return `<a class="car" style="text-decoration:none" href="https://wa.me/${esc(cfg.whatsapp)}?text=${encodeURIComponent(ask)}" target="_blank" rel="noopener">
+                <span class="car-info"><b>${esc(o.name)}</b>${info ? `<small>${esc(info)}</small>` : ''}</span>
+                <span class="price" style="display:flex;align-items:center;gap:6px;font-size:14px">${WA_ICON}${L('Consultar por WhatsApp', 'Ask on WhatsApp')}</span>
+              </a>`;
+            }
             return `<button type="button" class="car${o.code === pick ? ' on' : ''}" data-cat="${esc(o.code)}" aria-pressed="${o.code === pick}">
               <span class="car-info"><b>${esc(o.name)}</b>${info ? `<small>${esc(info)}</small>` : ''}${
                 o.promo || o.high_demand || o.few_left

@@ -39,7 +39,7 @@ const freeCar = (code) => db.prepare("SELECT v.* FROM vehicles v JOIN categories
 
 test('H-015: mandar al taller sin costo se guarda (el costo es opcional)', async () => {
   const v = freeCar('A')[0];
-  const r = await call('POST', '/api/maintenance', { vehicle_id: v.id, kind: 'service', start_date: '2027-01-10', km: null, cost: null, status: 'abierto' });
+  const r = await call('POST', '/api/maintenance', { vehicle_id: v.id, kind: 'service', description: 'Service', start_date: '2027-01-10', km: null, cost: null, status: 'abierto' });
   assert.equal(r.status, 201, JSON.stringify(r.data));
   assert.equal(r.data.cost, 0);
   assert.equal(db.prepare('SELECT status FROM vehicles WHERE id = ?').get(v.id).status, 'mantenimiento');
@@ -65,7 +65,7 @@ test('H-016: un auto con reservas por delante que va al taller pasa sus reservas
   // La lista de autos muestra la próxima salida.
   assert.equal((await call('GET', '/api/vehicles')).data.find((x) => x.id === car.id).next_out, '2027-02-10T10:00');
 
-  assert.equal((await call('POST', '/api/maintenance', { vehicle_id: car.id, kind: 'reparacion', start_date: '2027-02-01', status: 'abierto' })).status, 201);
+  assert.equal((await call('POST', '/api/maintenance', { vehicle_id: car.id, kind: 'reparacion', description: 'Choque', start_date: '2027-02-01', status: 'abierto' })).status, 201);
   const moved = (await call('POST', `/api/vehicles/${car.id}/release`, { reservation_ids: [r.data.id] })).data;
   assert.equal(moved.length, 1);
   assert.ok(moved[0].plate && moved[0].plate !== car.plate, 'quedó con otro auto de la misma categoría');
