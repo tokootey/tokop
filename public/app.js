@@ -1836,6 +1836,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
     more.push(`<button data-act="assign">${r.vehicle_id ? 'Cambiar de auto o intercambiar' : 'Asignar vehículo'}</button>`);
     more.push('<button data-act="edit">Modificar fechas o datos</button>');
   }
+  if (r.status === 'en_curso' && !r.periods.length) more.push('<button data-act="extend">Extender el alquiler</button>');
+  if (partiesOn() && ['pendiente', 'confirmada', 'en_curso'].includes(r.status)) more.push('<button data-act="parties">Titular y conductores adicionales</button>');
   const hotelOpen = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
   if (hotelOpen && !r.hotel && !choferesMode()) more.push('<button data-act="hotel">Entregar o retirar en un hotel</button>');
   if (r.status === 'en_curso') actions.push(`<button class="btn ok" data-act="checkin">${ICON.in}Registrar devolución</button>`);
@@ -1937,6 +1939,14 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         }</div>`
           : ''
       }
+      ${
+        r.holder || (r.drivers || []).length
+          ? `<div class="card"><h2>Titular y conductores</h2><dl class="info">
+          ${r.holder ? `<dt>Titular del contrato</dt><dd>${esc(r.holder.full_name)} · ${esc([r.holder.doc_type, r.holder.doc_number].filter(Boolean).join(' '))}</dd>` : ''}
+          ${(r.drivers || []).map((x, i) => `<dt>Conductor adicional ${i + 1}</dt><dd>${esc(x.full_name)} · ${esc([x.doc_type, x.doc_number].filter(Boolean).join(' '))}${x.license_number ? ` · licencia ${esc(x.license_number)}` : ''}</dd>`).join('')}
+        </dl></div>`
+          : ''
+      }
       ${signatureCardHtml(r)}
       ${clientCardHtml(r)}
       ${rentalCardHtml(r)}
@@ -2032,11 +2042,12 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       );
     },
     assign: async () => {
-      const { free, swaps } = await GET(`/reservations/${r.id}/move-options`);
+      const { free, swaps, others = [] } = await GET(`/reservations/${r.id}/move-options`);
       const car = (v) => `${v.plate} · ${v.brand} ${v.model} · ${v.km} km · ${v.branch_name || ''}`;
       const options = [
         ...(r.vehicle_id ? [[r.vehicle_id, `${r.vehicle_plate} · ${L('el que tiene ahora', 'current car')}`]] : []),
         ...free.map((v) => [v.id, car(v)]),
+        ...others.map((v) => [v.id, `${car(v)} · ${v.category_name}: otra categoría, se mantiene el precio`]),
         ...swaps.map((v) => [`swap-${v.reservation_id}`, `${L('Intercambiar con', 'Swap with')} ${v.customer_name} · ${v.plate} ${v.brand} ${v.model}`]),
       ];
       openModal(
@@ -2187,6 +2198,51 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         timer = setTimeout(preview, 400);
       });
       preview();
+    },
+    extend: () =>
+      openModal(
+        `Extender ${r.code}`,
+        `<p class="muted">Hoy devuelve el ${fmtDT(r.return_at)}. Los días nuevos se cobran con la misma tarifa del contrato, salvo que pongas otro importe.</p>${formHtml(
+          [
+            { name: 'return_at', label: 'Nueva fecha y hora de devolución', type: 'datetime-local', required: true, attrs: `min="${esc(r.return_at)}"` },
+            { name: 'extra_amount', label: 'Importe de la extensión (opcional)', type: 'number', attrs: 'min="0"' },
+          ],
+          { return_at: localISO(addDays(new Date(`${r.return_at}:00`), 1)) },
+          'Extender',
+        )}`,
+        async (d) => {
+          const x = await POST(`/reservations/${r.id}/extend`, d);
+          toast(`Alquiler extendido hasta el ${x.return_at.slice(8, 10)}/${x.return_at.slice(5, 7)} a las ${x.return_at.slice(11, 16)}. Total: ${money(x.total)}`);
+          reload();
+        },
+      ),
+    parties: () => {
+      const h = r.holder || {};
+      const docOpts = () => docTypes().map((x) => [x, x]);
+      const fields = [
+        { name: 'h_full_name', label: 'Titular del contrato, si no es el cliente (nombre o razón social)', full: true },
+        { name: 'h_doc_type', label: 'Tipo doc. del titular', type: 'select', options: docOpts },
+        { name: 'h_doc_number', label: 'Documento del titular' },
+        { name: 'h_phone', label: 'Teléfono del titular' },
+        { name: 'h_address', label: 'Domicilio del titular' },
+        ...[0, 1, 2, 3, 4].flatMap((i) => [
+          { name: `d${i}_full_name`, label: `Conductor adicional ${i + 1}: nombre y apellido`, full: true },
+          { name: `d${i}_doc_type`, label: 'Tipo doc.', type: 'select', options: docOpts },
+          { name: `d${i}_doc_number`, label: 'Documento' },
+          { name: `d${i}_license_number`, label: 'Licencia N°' },
+          { name: `d${i}_license_expiry`, label: 'Vencimiento de la licencia', type: 'date' },
+        ]),
+      ];
+      const values = Object.fromEntries([
+        ...Object.entries(h).map(([k, v]) => [`h_${k}`, v]),
+        ...(r.drivers || []).flatMap((x, i) => Object.entries(x).map(([k, v]) => [`d${i}_${k}`, v])),
+      ]);
+      openModal(`Titular y conductores · ${r.code}`, formHtml(fields, values), async (d) => {
+        const part = (prefix) => Object.fromEntries(Object.entries(d).filter(([k]) => k.startsWith(prefix)).map(([k, v]) => [k.slice(prefix.length), v]));
+        await POST(`/reservations/${r.id}/parties`, { holder: part('h_'), drivers: [0, 1, 2, 3, 4].map((i) => part(`d${i}_`)) });
+        toast('Titular y conductores guardados');
+        reload();
+      });
     },
     closeContract: async () => {
       await run(() => POST(`/reservations/${r.id}/close-contract`), 'Contrato cerrado');
@@ -2457,7 +2513,7 @@ function voucherLines(r) {
       title: 'Cliente y conductor',
       rows: [
         ['Nombre', r.customer_name],
-        r.customer_doc ? ['Documento', `${r.customer_doc_type || 'DNI'} ${r.customer_doc}`] : null,
+        r.customer_doc ? ['Documento', `${r.customer_doc_type || docTypes()[0]} ${r.customer_doc}`] : null,
         r.customer_phone ? ['Teléfono', r.customer_phone] : null,
         r.customer_email ? ['Email', r.customer_email] : null,
         ['Conductor', r.customer_license ? `El titular · licencia ${r.customer_license}${r.customer_license_expiry ? ` (vence ${d(r.customer_license_expiry)})` : ''}` : 'El titular · traer la licencia al retirar'],
@@ -2588,6 +2644,8 @@ const LOG_LABEL = {
   vehiculo_intercambiado: 'Auto intercambiado',
   entregado: 'Auto entregado',
   devuelto: 'Auto devuelto',
+  extendida: 'Alquiler extendido',
+  titular_conductores: 'Titular y conductores',
   contrato_pendiente: 'Contrato pendiente de cierre',
   contrato_cerrado: 'Contrato cerrado',
   pago: 'Pago registrado',
@@ -3075,8 +3133,8 @@ async function printContract(r) {
 <div class="grid">
   <div><h2>Cliente / conductor principal</h2><table>
     ${line('Nombre y apellido', esc(r.customer_name))}
-    ${line('Documento', r.customer_doc ? `${esc(r.customer_doc_type || 'DNI')} ${esc(r.customer_doc)}` : '')}
-    ${line('Domicilio', esc(r.customer_address || ''))}
+    ${line('Documento', r.customer_doc ? `${esc(r.customer_doc_type || docTypes()[0])} ${esc(r.customer_doc)}` : '')}
+    ${line('Domicilio', esc(r.customer_address || ''))}${r.customer_workplace ? line('Lugar de trabajo', esc(r.customer_workplace)) : ''}${r.customer_alt_contact ? line('Contacto alternativo', esc(r.customer_alt_contact)) : ''}
     ${line('Teléfono', esc(r.customer_phone || ''))}
     ${line('Email', esc(r.customer_email || ''))}
     ${line('Fecha de nacimiento', fmtD(r.customer_birth_date))}
@@ -3088,9 +3146,21 @@ async function printContract(r) {
     ${line('Clase de licencia', esc(r.customer_license_class || ''))}${line('Trabaja con', esc(r.customer_work_apps || ''))}
     ${line('Garante', esc(r.guarantor_name || ''))}${line('Documento / teléfono', esc([r.guarantor_doc, r.guarantor_phone].filter(Boolean).join(' · ')))}
   </table>`
-    : `<h2>Conductor adicional</h2><table>
+    : `${r.holder ? `<h2>Titular del contrato</h2><table>
+    ${line('Nombre o razón social', esc(r.holder.full_name))}${line('Documento', esc([r.holder.doc_type, r.holder.doc_number].filter(Boolean).join(' ')))}${line('Teléfono / domicilio', esc([r.holder.phone, r.holder.address].filter(Boolean).join(' · ')))}
+  </table>` : ''}${
+        (r.drivers || []).length
+          ? r.drivers
+              .map(
+                (x, i) => `<h2>Conductor adicional${r.drivers.length > 1 ? ` ${i + 1}` : ''}</h2><table>
+    ${line('Nombre y apellido', esc(x.full_name))}${line('Documento', esc([x.doc_type, x.doc_number].filter(Boolean).join(' ')))}${line('Licencia N° / vence', esc([x.license_number, x.license_expiry && fmtD(x.license_expiry)].filter(Boolean).join(' · ')))}
+  </table>`,
+              )
+              .join('')
+          : `<h2>Conductor adicional</h2><table>
     ${line('Nombre y apellido', '')}${line('Documento', '')}${line('Licencia N° / vence', '')}
-  </table>`}</div>
+  </table>`
+      }`}</div>
   <div><h2>Vehículo</h2><table>
     ${line('Marca y modelo', r.vehicle_plate ? `${esc(r.vehicle_brand || '')} ${esc(r.vehicle_model || '')}` : '')}
     ${line('Patente', r.vehicle_plate ? `<b>${esc(r.vehicle_plate)}</b>` : '')}
@@ -3142,8 +3212,8 @@ async function printContract(r) {
 
 <p style="margin-top:10px">El Cliente declara haber leído y aceptado las condiciones generales que forman parte de este contrato (página siguiente) y recibir el vehículo en el estado indicado.</p>
 <div class="sign">
-  <div>${signedBy}Firma del cliente<small>Aclaración:<br>DNI:</small></div>
-  <div>${choferesMode() ? 'Garante' : 'Conductor adicional'}<small>Aclaración:<br>DNI:</small></div>
+  <div>${signedBy}Firma del cliente<small>Aclaración:<br>${docWord()}:</small></div>
+  <div>${choferesMode() ? 'Garante' : 'Conductor adicional'}<small>Aclaración:<br>${docWord()}:</small></div>
   <div>Por ${esc(s.company_name || 'la Empresa')}<small>Aclaración:</small></div>
 </div>
 
@@ -3152,7 +3222,7 @@ async function printContract(r) {
   <h2>Condiciones generales del alquiler</h2>
   <div class="terms">${contractTerms(r)}</div>
   <div class="sign" style="grid-template-columns:1fr 1fr">
-    <div>${signedBy}Firma del cliente (conformidad)<small>Aclaración:<br>DNI:</small></div>
+    <div>${signedBy}Firma del cliente (conformidad)<small>Aclaración:<br>${docWord()}:</small></div>
     <div>Por ${esc(s.company_name || 'la Empresa')}</div>
   </div>
 </div>
@@ -3540,9 +3610,15 @@ async function saveLicense(r, d, form) {
   return rest;
 }
 
+// Tipos de documento según el país: en Argentina DNI; en el resto, cédula, pasaporte o R.U.C. (el primero es el que viene elegido).
+const docTypes = () => (state.settings.country === 'AR' ? ['DNI', 'Pasaporte', 'CI', 'CUIT', 'RUT', 'Otro'] : ['Cédula', 'Pasaporte', 'R.U.C.', 'DNI', 'Otro']);
+const docWord = () => (state.settings.country === 'AR' ? 'DNI' : 'Documento');
+// Titular y conductores adicionales, lugar de trabajo y contacto alternativo: agencias con funciones en prueba, alquiler por días.
+const partiesOn = () => proOn() && !choferesMode();
+
 const CUSTOMER_FIELDS = [
   { name: 'full_name', label: 'Nombre y apellido', required: true, full: true },
-  { name: 'doc_type', label: 'Tipo doc.', type: 'select', options: ['DNI', 'Pasaporte', 'CI', 'CUIT', 'RUT', 'Otro'].map((x) => [x, x]), default: 'DNI' },
+  { name: 'doc_type', label: 'Tipo doc.', type: 'select', options: () => docTypes().map((x) => [x, x]), get default() { return docTypes()[0]; } },
   { name: 'doc_number', label: 'Número de documento' },
   { name: 'phone', label: 'Teléfono / WhatsApp' },
   { name: 'email', label: 'Email', type: 'email' },
@@ -3550,6 +3626,8 @@ const CUSTOMER_FIELDS = [
   { name: 'license_number', label: 'Licencia de conducir N°' },
   { name: 'license_expiry', label: 'Vencimiento licencia', type: 'date' },
   { name: 'address', label: 'Domicilio', full: true },
+  { name: 'workplace', label: 'Lugar de trabajo', when: partiesOn },
+  { name: 'alt_contact', label: 'Contacto alternativo (nombre y teléfono)', when: partiesOn },
   // Choferes: licencia profesional, apps en las que trabaja y su garante.
   { name: 'license_class', label: 'Clase de licencia (ej. D1 profesional)', when: () => choferesMode() },
   { name: 'work_apps', label: 'Trabaja con (Uber, DiDi, Cabify, PedidosYa, remis…)', when: () => choferesMode() },

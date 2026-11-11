@@ -649,6 +649,9 @@ function migrate(db) {
   if (!has('contracts', 'closed_at')) {
     db.exec('ALTER TABLE contracts ADD COLUMN closed_at TEXT; ALTER TABLE contracts ADD COLUMN pending_note TEXT; UPDATE contracts SET closed_at = in_at WHERE in_at IS NOT NULL');
   }
+  // Contrato: titular distinto del conductor (JSON) y conductores adicionales (JSON, hasta 5); lugar de trabajo y contacto alternativo del cliente.
+  for (const col of ['holder', 'drivers']) if (!has('reservations', col)) db.exec(`ALTER TABLE reservations ADD COLUMN ${col} TEXT`);
+  for (const col of ['workplace', 'alt_contact']) if (!has('customers', col)) db.exec(`ALTER TABLE customers ADD COLUMN ${col} TEXT`);
   if (!has('payments', 'notes')) db.exec('ALTER TABLE payments ADD COLUMN notes TEXT');
   // Sucursal donde se cobró (caja diaria). En los pagos viejos queda vacía: cuenta la sucursal de retiro.
   if (!has('payments', 'branch_id')) db.exec('ALTER TABLE payments ADD COLUMN branch_id INTEGER');
