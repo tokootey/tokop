@@ -57,7 +57,7 @@ test('seguros: la agencia los carga con precio y franquicia; se elige uno solo p
 
 test('estadísticas: demanda por categoría y por auto, seguros y daños; solo administradores', async () => {
   // Una reserva con seguro total que vuelve con daños.
-  const cust = await call('POST', '/api/customers', { full_name: 'Cliente Stats', license_number: 'L9', license_expiry: '2035-01-01' });
+  const cust = await call('POST', '/api/customers', { full_name: 'Cliente Stats', doc_number: '5', phone: '+507 6000 0000', email: 't@ejemplo.com', address: 'Calle 1', birth_date: '1990-01-01', license_number: 'L9', license_expiry: '2035-01-01' });
   const cat = db.prepare("SELECT id FROM categories WHERE code = 'C'").get().id;
   const t = new Date();
   const d = (n) => new Date(t.getFullYear(), t.getMonth(), t.getDate() + n, 10).toISOString().slice(0, 16);

@@ -74,7 +74,7 @@ test('cotiza disponibilidad y precio sin mostrar cuántos autos quedan', async (
 
 test('el pedido entra como reserva pendiente desde la web', async () => {
   const before = db.prepare('SELECT COUNT(*) AS n FROM reservations').get().n;
-  const r = await call('POST', '/api/public/chat/book', { pickup_at: day(40), return_at: day(44), pickup_branch: 'USH', category: 'B', name: 'Lucía Chat', email: 'lucia.chat@example.com', phone: '+56 9 1234 5678', notes: 'Llego tarde' });
+  const r = await call('POST', '/api/public/chat/book', { pickup_at: day(40), return_at: day(44), pickup_branch: 'USH', category: 'B', name: 'Lucía Chat', email: 'lucia.chat@example.com', phone: '+56 9 1234 5678', notes: 'Llego tarde', doc_number: 'P123', birth_date: '1991-02-03', address: 'Calle 9', license_number: 'LIC7', license_expiry: '2099-01-01' });
   assert.equal(r.status, 201, JSON.stringify(r.data));
   assert.match(r.data.code, /^R-/);
   const res = db.prepare('SELECT r.*, c.full_name, c.email, cat.code AS cat FROM reservations r JOIN customers c ON c.id = r.customer_id JOIN categories cat ON cat.id = r.category_id WHERE r.code = ?').get(r.data.code);
@@ -82,6 +82,9 @@ test('el pedido entra como reserva pendiente desde la web', async () => {
   assert.equal(res.source, 'web');
   assert.equal(res.cat, 'B');
   assert.equal(res.full_name, 'Lucía Chat');
+  // Lo que el cliente completó al reservar queda en su ficha: con eso alcanza para entregar.
+  const c = db.prepare('SELECT doc_number, birth_date, address, license_number, license_expiry FROM customers WHERE id = ?').get(res.customer_id);
+  assert.deepEqual({ ...c }, { doc_number: 'P123', birth_date: '1991-02-03', address: 'Calle 9', license_number: 'LIC7', license_expiry: '2099-01-01' });
   assert.match(res.notes, /link de reservas/);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM reservations').get().n, before + 1);
 });

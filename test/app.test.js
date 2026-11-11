@@ -93,7 +93,7 @@ test('cotización: tarifa semanal, temporada y adicionales con tope', async () =
 test('flujo completo: reserva, entrega, devolución con cargos y pagos', async () => {
   const cats = (await call('GET', '/api/categories')).data;
   const b = cats.find((c) => c.code === 'B'); // 300 km/día incluidos, 300 por km extra
-  const cust = await call('POST', '/api/customers', { full_name: 'Test Flujo', doc_number: '1', license_number: 'L1', license_expiry: '2035-01-01' });
+  const cust = await call('POST', '/api/customers', { full_name: 'Test Flujo', doc_number: '1', phone: '+507 6000 0000', email: 't@ejemplo.com', address: 'Calle 1', birth_date: '1990-01-01', license_number: 'L1', license_expiry: '2035-01-01' });
   const created = await call('POST', '/api/reservations', {
     customer_id: cust.data.id,
     category_id: b.id,
@@ -171,11 +171,22 @@ test('no se entrega sin licencia del cliente', async () => {
   assert.match(out.data.error, /licencia/i);
 });
 
+test('no se entrega si a la ficha del cliente le falta algún dato', async () => {
+  const cust = await call('POST', '/api/customers', { full_name: 'Incompleto', doc_number: '77', phone: '+507 6000 0001', license_number: 'L7', license_expiry: '2099-01-01' });
+  const r = await call('POST', '/api/reservations', { customer_id: cust.data.id, category_id: 1, pickup_at: '2027-07-01T10:00', return_at: '2027-07-02T10:00' });
+  const v = (await call('GET', `/api/reservations/${r.data.id}/available-vehicles`)).data[0];
+  const out = await call('POST', `/api/reservations/${r.data.id}/checkout`, { vehicle_id: v.id });
+  assert.equal(out.status, 400);
+  assert.match(out.data.error, /Falta: email, domicilio, fecha de nacimiento$/);
+  await call('PUT', `/api/customers/${cust.data.id}`, { email: 'i@ejemplo.com', address: 'Calle 2', birth_date: '1985-05-05' });
+  assert.equal((await call('POST', `/api/reservations/${r.data.id}/checkout`, { vehicle_id: v.id })).status, 200);
+});
+
 test('no se guarda un cliente con la licencia vencida', async () => {
   const bad = await call('POST', '/api/customers', { full_name: 'Vencida', license_number: 'L1', license_expiry: '01/01/2020' });
   assert.equal(bad.status, 400);
   assert.match(bad.data.error, /vencida/i);
-  const ok = await call('POST', '/api/customers', { full_name: 'Vigente', license_number: 'L2', license_expiry: '2099-01-01' });
+  const ok = await call('POST', '/api/customers', { full_name: 'Vigente', doc_number: '2', phone: '+507 6000 0000', email: 't@ejemplo.com', address: 'Calle 1', birth_date: '1990-01-01', license_number: 'L2', license_expiry: '2099-01-01' });
   assert.equal(ok.status, 201);
   const edit = await call('PUT', `/api/customers/${ok.data.id}`, { full_name: 'Vigente', license_expiry: '2020-01-01' });
   assert.equal(edit.status, 400);
@@ -325,7 +336,7 @@ test('mantenimiento abierto saca el vehículo de la flota y al cerrarlo vuelve',
 });
 
 test('devolución anticipada no genera cargos por demora', async () => {
-  const cust = await call('POST', '/api/customers', { full_name: 'Anticipado', license_number: 'L9' });
+  const cust = await call('POST', '/api/customers', { full_name: 'Anticipado', doc_number: '9', phone: '+507 6000 0000', email: 't@ejemplo.com', address: 'Calle 1', birth_date: '1990-01-01', license_number: 'L9', license_expiry: '2099-01-01' });
   const r = await call('POST', '/api/reservations', { customer_id: cust.data.id, category_id: 3, pickup_at: '2027-08-10T10:00', return_at: '2027-08-15T10:00' });
   const v = (await call('GET', `/api/reservations/${r.data.id}/available-vehicles`)).data.find((x) => x.status === 'disponible');
   await call('POST', `/api/reservations/${r.data.id}/checkout`, { vehicle_id: v.id, out_at: '2027-08-09T18:00' });

@@ -11,6 +11,17 @@ const { hashPassword } = require('./auth');
 const { fmtLocal } = require('./util');
 const choferes = require('./choferes');
 
+// Los datos de ejemplo se entregan con la ficha del cliente completa, como exige la entrega real.
+function deliver(db, id, input, user) {
+  db.prepare(
+    `UPDATE customers SET email = COALESCE(NULLIF(email, ''), 'cliente' || id || '@ejemplo.com'),
+       address = COALESCE(NULLIF(address, ''), 'Av. Principal ' || (100 + id)),
+       birth_date = COALESCE(NULLIF(birth_date, ''), '1990-01-01')
+     WHERE id = (SELECT customer_id FROM reservations WHERE id = ?)`,
+  ).run(id);
+  return checkout(db, id, input, user);
+}
+
 function seed(db) {
   if (db.prepare('SELECT COUNT(*) AS n FROM categories').get().n > 0) return false;
 
@@ -103,7 +114,7 @@ function seed(db) {
     customer_id: cust[0], category_id: cats.B, vehicle_id: vids.AE321HI, pickup_branch_id: aep, return_branch_id: aep,
     pickup_at: at(-2, 10), return_at: at(3, 10), status: 'confirmada', extras: [{ extra_id: extraId('GPS'), quantity: 1 }],
   });
-  checkout(db, r1.id, { out_km: 41000, out_fuel: 8 });
+  deliver(db, r1.id, { out_km: 41000, out_fuel: 8 });
   addPayment(db, r1.id, { amount: r1.total, method: 'tarjeta' });
   addPayment(db, r1.id, { amount: 350000, method: 'tarjeta', kind: 'garantia', reference: 'Preautorización' });
 
@@ -173,13 +184,13 @@ function seedDemo(db, { email, password } = {}) {
   ]) {
     const r = book(plate, from, to, 'confirmada', opts);
     const km = car(plate).km;
-    checkout(db, r.id, { out_km: km, out_fuel: 8, out_at: at(from, opts.hour) });
+    deliver(db, r.id, { out_km: km, out_fuel: 8, out_at: at(from, opts.hour) });
     checkin(db, r.id, { in_km: km + 180 * (to - from), in_fuel: 8, in_at: at(to, opts.hour) });
     addPayment(db, r.id, { amount: r.total, method: p % 3 ? 'tarjeta' : 'transferencia' });
   }
   // En la calle ahora.
   const now = book('AG789FG', -1, 2, 'confirmada');
-  checkout(db, now.id, { out_km: car('AG789FG').km, out_fuel: 8, out_at: at(-1) });
+  deliver(db, now.id, { out_km: car('AG789FG').km, out_fuel: 8, out_at: at(-1) });
   addPayment(db, now.id, { amount: Math.round(now.total / 2), method: 'efectivo' });
   // Por venir: confirmadas, con seña, y pedidos de la web para confirmar.
   for (const [plate, from, to, status, opts] of [
@@ -260,7 +271,7 @@ function seedChoferes(db) {
   const rent = (plate, name, from) => {
     const v = db.prepare('SELECT category_id, km FROM vehicles WHERE id = ?').get(car[plate]);
     const r = createReservation(db, { customer_id: who[name], category_id: v.category_id, vehicle_id: car[plate], pickup_branch_id: base, pickup_at: at(from), return_at: at(from + 7), status: 'confirmada' });
-    checkout(db, r.id, { out_at: at(from), out_km: v.km, out_fuel: 8 }, null);
+    deliver(db, r.id, { out_at: at(from), out_km: v.km, out_fuel: 8 }, null);
     return r.id;
   };
   // Terminado: Marcos lo tuvo 5 semanas y lo devolvió hace 5 días con km de más (ya pagó todo y se le devolvió la garantía).
@@ -376,7 +387,7 @@ function seedHistory(db, { months = 12 } = {}) {
         db.prepare('UPDATE reservations SET status = ? WHERE id = ?').run(rnd() < 0.7 ? 'cancelada' : 'no_show', r.id);
         continue;
       }
-      checkout(db, r.id, { out_at: fmtLocal(from), out_km: km, out_fuel: 8 }, null);
+      deliver(db, r.id, { out_at: fmtLocal(from), out_km: km, out_fuel: 8 }, null);
       const method = () => pickOne(['transferencia', 'transferencia', 'tarjeta', 'efectivo', 'mercadopago']);
       if (work) {
         pay(r.id, r.deposit || 300000, from, 'efectivo', 'garantia');
@@ -457,7 +468,7 @@ function seedSimulaciones(db) {
     const rent = (plate, customer, from) => {
       const v = free(plate);
       const r = createReservation(db, { customer_id: customer, category_id: v.category_id, vehicle_id: v.id, pickup_branch_id: base, pickup_at: at(from), return_at: at(from + 7), status: 'confirmada' });
-      checkout(db, r.id, { out_at: at(from), out_km: v.km, out_fuel: 8 }, null);
+      deliver(db, r.id, { out_at: at(from), out_km: v.km, out_fuel: 8 }, null);
       return r;
     };
     // Nicolás debe la última semana; Sofía está al día; Damián pidió un auto para la semana que viene.
@@ -490,7 +501,7 @@ function seedSimulaciones(db) {
       customer_id: person(name, doc, phone), category_id: v.category_id, vehicle_id: v.id, pickup_branch_id: pickup, return_branch_id: back,
       pickup_at: at(from, hour), return_at: at(to, hour), status, source, notes, allow_overbooking: true,
     });
-    if (out) checkout(db, r.id, { out_at: at(from, hour), out_km: v.km, out_fuel: 8 }, null);
+    if (out) deliver(db, r.id, { out_at: at(from, hour), out_km: v.km, out_fuel: 8 }, null);
     if (paid) pay(r.id, Math.round(r.total * paid), Math.min(from, 0), paid === 1 ? 'tarjeta' : 'transferencia');
   }
   // Vencimientos cerca, uno en cada sucursal.
