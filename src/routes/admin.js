@@ -166,7 +166,7 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
       quote_price_source: s.quote_price_source,
       quote_auto_confirm: s.quote_auto_confirm,
       // El token nunca vuelve al navegador: solo si está cargado.
-      whatsapp: { phone_id: s.wa_phone_id, template: s.wa_template, lang: s.wa_template_lang, has_token: Boolean(s.wa_token) },
+      whatsapp: { phone_id: s.wa_phone_id, template: s.wa_template, lang: s.wa_template_lang, has_token: Boolean(s.wa_token), reminder_auto: s.reminder_auto === '1' },
       mapping: getMapping(db),
       webform: {
         enabled: s.webform_enabled === '1',
@@ -226,6 +226,7 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
       if (!/^[a-z]{2}(_[A-Z]{2})?$/.test(String(b.wa_template_lang).trim())) fail(400, 'Idioma de la plantilla inválido (por ejemplo es o es_AR)');
       setSetting(db, 'wa_template_lang', String(b.wa_template_lang).trim());
     }
+    if (b.reminder_auto !== undefined) setSetting(db, 'reminder_auto', b.reminder_auto ? '1' : '0');
     // Vacío = dejar el que está; "-" = borrarlo.
     if (b.wa_token) setSetting(db, 'wa_token', b.wa_token === '-' ? '' : String(b.wa_token).trim());
     audit(db, req, 'integracion_modificada', Object.keys(b).join(', '));

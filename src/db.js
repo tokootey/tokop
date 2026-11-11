@@ -554,6 +554,7 @@ const DEFAULT_SETTINGS = {
   wa_token: '',
   wa_template: '',
   wa_template_lang: 'es',
+  reminder_auto: '0', // recordatorio al cliente 12 horas antes de la entrega (src/reminders.js)
   // Formulario web (ej. el cotizador de discoverushuaia.com.ar)
   webform_enabled: '1',
   webform_mapping: JSON.stringify(WEBFORM_MAPPING, null, 2),
@@ -607,6 +608,8 @@ function migrate(db) {
   if (!has('reservations', 'discount_amount')) db.exec('ALTER TABLE reservations ADD COLUMN discount_amount REAL NOT NULL DEFAULT 0');
   // Entrega o devolución en un hotel (JSON) y el código del link para que el cliente complete los datos.
   if (!has('reservations', 'hotel')) db.exec('ALTER TABLE reservations ADD COLUMN hotel TEXT');
+  // Cuándo se le mandó al cliente el recordatorio de la entrega ('error': falló el envío automático).
+  if (!has('reservations', 'reminder_at')) db.exec('ALTER TABLE reservations ADD COLUMN reminder_at TEXT');
   if (!has('reservations', 'hotel_token')) db.exec('ALTER TABLE reservations ADD COLUMN hotel_token TEXT');
   // El costo de la entrega en hotel es un adicional (código HOTEL): arranca en 0 y cada agencia le pone su precio.
   db.exec("INSERT OR IGNORE INTO extras (code, name, price, charge_type, max_price) VALUES ('HOTEL', 'Entrega en hotel', 0, 'fijo', 0)");

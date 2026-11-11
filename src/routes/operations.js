@@ -13,6 +13,7 @@ const { requireAdmin } = require('../auth');
 const { chargeInsurance } = require('./catalog');
 const delivery = require('../delivery');
 const whatsapp = require('../whatsapp');
+const reminders = require('../reminders');
 const { fail, normDateTime, nowLocal, parseLocal, fmtLocal } = require('../util');
 
 /**
@@ -176,6 +177,7 @@ function operationsRoutes(db) {
   // Firma del contrato, fotos para la entrega express y tarjeta del cliente.
   router.post('/reservations/:id/signature', (req, res) => res.json(delivery.requestSignature(db, req.params.id, (req.body || {}).terms, getSettings(db), req.user.id)));
   router.post('/reservations/:id/photos-link', (req, res) => res.json(delivery.photosLink(db, req.params.id)));
+  router.post('/reservations/:id/reminder', async (req, res) => res.json(await reminders.sendOne(db, req.params.id, req.user.id)));
   router.post('/reservations/:id/whatsapp', async (req, res) => {
     const r = R.getReservation(db, req.params.id);
     if (!r) fail(404, 'Reserva inexistente');
@@ -343,6 +345,8 @@ function operationsRoutes(db) {
         pickups: db.prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE r.status IN ('pendiente','confirmada') AND substr(r.pickup_at,1,10) = ?${atR}`).get(tomorrow).n,
         returns: db.prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE status IN ('pendiente','confirmada','en_curso') AND substr(return_at,1,10) = ? AND ${FIXED}${atR}`).get(tomorrow).n,
       },
+      // Recordatorios de las próximas 12 horas que falta mandar (los automáticos que ya salieron no aparecen).
+      reminders: reminders.pending(db, now),
       quote_errors: db.prepare(`SELECT COUNT(*) AS n FROM quote_inbox WHERE status = 'error'`).get().n,
       alerts: {
         documents: db
