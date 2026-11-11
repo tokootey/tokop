@@ -356,6 +356,17 @@ function moveOptions(db, id) {
 }
 
 /** ¿Se puede entregar? Lo comprueba la entrega y también la pre-entrega, para no enterarse recién cuando firma el cliente. */
+// Sin estos datos del cliente no se entrega el vehículo (ni se guarda la pre-entrega).
+const CUSTOMER_REQUIRED = [
+  ['doc_number', 'documento'],
+  ['phone', 'teléfono'],
+  ['email', 'email'],
+  ['address', 'domicilio'],
+  ['birth_date', 'fecha de nacimiento'],
+  ['license_number', 'número de licencia'],
+  ['license_expiry', 'vencimiento de la licencia'],
+];
+
 function checkoutCheck(db, r, input) {
   if (!['pendiente', 'confirmada'].includes(r.status)) fail(409, 'La reserva no está en condiciones de ser entregada');
   const vehicleId = Number(input.vehicle_id || r.vehicle_id);
@@ -364,7 +375,8 @@ function checkoutCheck(db, r, input) {
   if (!vehicle) fail(400, 'Vehículo inexistente');
   if (vehicle.status === 'alquilado') fail(409, `El vehículo ${vehicle.plate} figura como alquilado`);
   const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(r.customer_id);
-  if (!customer.license_number) fail(400, 'Cargá el número de licencia del cliente antes de entregar');
+  const missing = CUSTOMER_REQUIRED.filter(([f]) => !String(customer[f] || '').trim()).map(([, label]) => label);
+  if (missing.length) fail(400, `Completá los datos del cliente antes de entregar. Falta: ${missing.join(', ')}`);
   if (customer.license_expiry && customer.license_expiry < r.return_at.slice(0, 10)) {
     fail(400, 'La licencia del cliente vence antes de la devolución');
   }

@@ -1066,7 +1066,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
     $('#cust-q').value = '';
     $('#cust-selected').classList.remove('muted');
     $('#cust-selected').innerHTML = `✔ <b>${esc(c.full_name)}</b> · ${esc(c.doc_type || '')} ${esc(c.doc_number || '')} · ${esc(c.phone || '')} · ${esc(c.email || '')}
-      ${c.license_number ? '' : '<br><span class="error">Falta la licencia de conducir (se pide al entregar).</span>'}`;
+      ${c.doc_number && c.phone && c.email && c.address && c.birth_date && c.license_number && c.license_expiry ? '' : '<br><span class="error">Le faltan datos al cliente (se piden al entregar).</span>'}`;
   };
   let t;
   $('#cust-q').addEventListener('input', (e) => {
@@ -3176,9 +3176,17 @@ function enableDragToMove(container, p, days) {
 /* ============================================================
    Pantallas de ABM (flota, clientes, tarifas, mantenimiento)
    ============================================================ */
-// Entrega y pre-entrega piden la licencia del cliente: sin ella, o vencida antes de la devolución, no se entrega.
+// Entrega y pre-entrega piden los datos del cliente que falten y su licencia: sin ellos, o con la licencia vencida antes de la devolución, no se entrega.
+const DELIVERY_CUSTOMER = [
+  ['doc_number', 'customer_doc', { label: 'Documento del cliente N°' }],
+  ['phone', 'customer_phone', { label: 'Teléfono del cliente' }],
+  ['email', 'customer_email', { label: 'Email del cliente', type: 'email' }],
+  ['birth_date', 'customer_birth_date', { label: 'Fecha de nacimiento del cliente', type: 'date' }],
+  ['address', 'customer_address', { label: 'Domicilio del cliente', full: true }],
+];
 function licenseFields(r) {
   return [
+    ...DELIVERY_CUSTOMER.filter(([, key]) => !r[key]).map(([name, , f]) => ({ name, required: true, ...f })),
     { name: 'license_number', label: 'Licencia del cliente N°', required: true },
     { name: 'license_expiry', label: 'Vencimiento de la licencia', type: 'date', required: true },
   ];
@@ -3188,6 +3196,8 @@ const licenseValues = (r) => ({ license_number: r.customer_license || '', licens
 // Si vence antes de la devolución, avisa debajo del campo y devuelve null (la ventana queda abierta).
 async function saveLicense(r, d, form) {
   const { license_number, license_expiry, ...rest } = d;
+  const extra = {};
+  for (const [name, key] of DELIVERY_CUSTOMER) if (!r[key] && name in rest) { extra[name] = rest[name]; delete rest[name]; }
   const input = form.license_expiry;
   form.querySelector('.field-error[data-for=license_expiry]')?.remove();
   input.removeAttribute('aria-invalid');
@@ -3199,8 +3209,8 @@ async function saveLicense(r, d, form) {
     input.focus();
     return null;
   }
-  if (license_number !== (r.customer_license || '') || license_expiry !== (r.customer_license_expiry || ''))
-    await PUT(`/customers/${r.customer_id}`, { license_number, license_expiry });
+  if (Object.keys(extra).length || license_number !== (r.customer_license || '') || license_expiry !== (r.customer_license_expiry || ''))
+    await PUT(`/customers/${r.customer_id}`, { ...extra, license_number, license_expiry });
   return rest;
 }
 
@@ -5301,7 +5311,12 @@ async function bookingPage() {
         <div style="display:flex;flex-direction:column;gap:8px">
           <label class="qr-field">${L('Nombre y apellido', 'Full name')}<input name="name" autocomplete="name" maxlength="120" required></label>
           <label class="qr-field">${L('WhatsApp (con código de país)', 'WhatsApp (with country code)')}<input name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" placeholder="${esc(cfg.phone_hint)}" required></label>
-          <label class="qr-field">${L('Email (opcional)', 'Email (optional)')}<input name="email" type="email" autocomplete="email" maxlength="160"></label>
+          <label class="qr-field">${L('Email', 'Email')}<input name="email" type="email" autocomplete="email" maxlength="160" required></label>
+          <label class="qr-field">${L('Documento o pasaporte N°', 'ID or passport number')}<input name="doc_number" maxlength="40" required></label>
+          <label class="qr-field">${L('Fecha de nacimiento', 'Date of birth')}<input name="birth_date" type="date" autocomplete="bday" required></label>
+          <label class="qr-field">${L('Domicilio', 'Home address')}<input name="address" autocomplete="street-address" maxlength="200" required></label>
+          <label class="qr-field">${L('Licencia de conducir N°', 'Driver license number')}<input name="license_number" maxlength="40" required></label>
+          <label class="qr-field">${L('Vencimiento de la licencia', 'License expiry date')}<input name="license_expiry" type="date" required></label>
           <label class="trap" aria-hidden="true">No completar<input name="_gotcha" tabindex="-1" autocomplete="off"></label>
         </div>
       </section>
@@ -5424,6 +5439,11 @@ async function bookingPage() {
         name,
         phone,
         email: form.email.value.trim(),
+        doc_number: form.doc_number.value.trim(),
+        birth_date: form.birth_date.value,
+        address: form.address.value.trim(),
+        license_number: form.license_number.value.trim(),
+        license_expiry: form.license_expiry.value,
         _gotcha: form._gotcha.value,
         notes: L('', 'El cliente eligió inglés'),
       });

@@ -144,6 +144,18 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
       // Queda en la bandeja del cotizador para que la gestione una persona; al público no se le muestran detalles.
       return res.status(202).json({ ok: true, pending_review: true });
     }
+    // Lo que el cliente completó al reservar va directo a su ficha, sin pisar lo que ya cargó la agencia.
+    const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v);
+    const extra = {
+      doc_number: str(b.doc_number, 40),
+      address: str(b.address, 200),
+      birth_date: isDate(str(b.birth_date, 10)) ? str(b.birth_date, 10) : '',
+      license_number: str(b.license_number, 40),
+      license_expiry: isDate(str(b.license_expiry, 10)) ? str(b.license_expiry, 10) : '',
+    };
+    for (const [f, v] of Object.entries(extra)) {
+      if (v) db.prepare(`UPDATE customers SET ${f} = ? WHERE id = (SELECT customer_id FROM reservations WHERE code = ?) AND (${f} IS NULL OR ${f} = '')`).run(v, result.reservation.code);
+    }
     const card_url = cardUrlFor(db, result.reservation.code, req, publicQuery);
     res.status(201).json({ ok: true, code: result.reservation.code, ...(card_url ? { card_url } : {}) });
   });

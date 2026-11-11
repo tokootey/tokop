@@ -51,7 +51,7 @@ function fleet(mode = 'choferes') {
   );
   const vehicle = Number(db.prepare("INSERT INTO vehicles (plate, category_id, km, service_every_km) VALUES ('AB123CD', ?, 50000, 10000)").run(cat).lastInsertRowid);
   const customer = Number(
-    db.prepare("INSERT INTO customers (full_name, license_number, license_expiry, license_class, work_apps) VALUES ('Chofer Prueba', '123', '2099-01-01', 'D1', 'Uber, DiDi')").run().lastInsertRowid,
+    db.prepare("INSERT INTO customers (full_name, doc_number, phone, email, address, birth_date, license_number, license_expiry, license_class, work_apps) VALUES ('Chofer Prueba', '1', '+54 9 11 5555 0000', 'c@ejemplo.com', 'Calle 1', '1990-01-01', '123', '2099-01-01', 'D1', 'Uber, DiDi')").run().lastInsertRowid,
   );
   return { db, cat, vehicle, customer };
 }
