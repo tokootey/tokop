@@ -14,7 +14,7 @@ const { chargeInsurance } = require('./catalog');
 const delivery = require('../delivery');
 const whatsapp = require('../whatsapp');
 const reminders = require('../reminders');
-const { fail, normDateTime, nowLocal, parseLocal, fmtLocal } = require('../util');
+const { fail, normDateTime, nowLocal, parseLocal, fmtLocal, toCsv, dmy, hm } = require('../util');
 
 /**
  * Primeros pasos para una empresa que recién empieza a usar el sistema. El Panel los muestra
@@ -260,6 +260,30 @@ function operationsRoutes(db) {
     const return_at = normDateTime(req.query.return_at);
     if (!pickup_at || !return_at || !req.query.category_id) fail(400, 'Indicá categoría y fechas');
     res.json(availableVehicles(db, { category_id: Number(req.query.category_id), pickup_at, return_at, exclude_reservation_id: Number(req.query.exclude) || 0 }));
+  });
+
+  // --- Alquileres activos: los autos que están en la calle, con su planilla para Excel (?format=csv) ---
+  router.get('/rentals/active', (req, res) => {
+    const branch = branchOf(req);
+    const rows = db
+      .prepare(
+        `SELECT r.id, r.code, v.plate, c.full_name AS customer_name, COALESCE(ct.out_at, r.pickup_at) AS out_at, r.return_at,
+                ${placeSql('deliver', 'pb')} AS pickup_branch_name, ${placeSql('return', 'rb')} AS return_branch_name
+         FROM reservations r JOIN customers c ON c.id = r.customer_id
+         LEFT JOIN vehicles v ON v.id = r.vehicle_id LEFT JOIN contracts ct ON ct.reservation_id = r.id
+         LEFT JOIN branches pb ON pb.id = r.pickup_branch_id LEFT JOIN branches rb ON rb.id = r.return_branch_id
+         WHERE r.status = 'en_curso'${branch ? ` AND (r.pickup_branch_id = ${branch} OR r.return_branch_id = ${branch})` : ''}
+         ORDER BY r.return_at`,
+      )
+      .all();
+    if (req.query.format !== 'csv') return res.json(rows);
+    res.type('text/csv').send(
+      toCsv(
+        ['Referencia', 'Placa', 'Cliente', 'Salida', 'Hora', 'Devolución prevista'],
+        rows.map((r) => [r.code, r.plate, r.customer_name, dmy(r.out_at), hm(r.out_at), `${dmy(r.return_at)} ${hm(r.return_at)}`]),
+        req.query.sep === ';' ? ';' : ',',
+      ),
+    );
   });
 
   // --- Planning (grilla vehículos x días) ---

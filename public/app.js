@@ -837,6 +837,40 @@ on(/^\/reservas$/, async (view) => {
 }, 'reservas');
 
 /* ============================================================
+   Alquileres activos: los autos que están en la calle
+   ============================================================ */
+// En Argentina y Uruguay se dice patente; en el resto, placa.
+const plateWord = () => (['AR', 'UY'].includes(state.settings.country) ? 'Patente' : 'Placa');
+/** Baja una planilla del servidor (?format=csv). Con coma decimal en la compu, Excel separa por punto y coma. */
+async function downloadCsv(path, filename) {
+  const sep = (1.1).toLocaleString().includes(',') ? ';' : ',';
+  const res = await fetch(`/api${path}${path.includes('?') ? '&' : '?'}format=csv&sep=${encodeURIComponent(sep)}`, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error('No se pudo armar la planilla');
+  downloadBlob(await res.blob(), filename);
+}
+on(/^\/alquileres$/, async (view) => {
+  const rows = await GET(`/rentals/active${branchQS()}`);
+  const branch = state.branch && state.branches.find((b) => String(b.id) === String(state.branch));
+  view.innerHTML = `
+    <div class="page-head"><h1>Alquileres activos</h1><button class="btn" id="act-csv"${rows.length ? '' : ' disabled'}>Exportar a Excel</button></div>
+    <p class="muted">${plural(rows.length, 'auto en la calle', 'autos en la calle')} · ${branch ? esc(branch.name) : 'todas las sucursales'}</p>
+    ${
+      rows.length
+        ? `<div class="table-wrap"><table><thead><tr><th>Referencia</th><th>${plateWord()}</th><th>Cliente</th><th>Salida</th><th>Hora</th><th>Devolución prevista</th></tr></thead><tbody>
+        ${rows
+          .map(
+            (r) => `<tr class="click" data-href="#/reservas/${r.id}">
+              <td class="nowrap"><b>${esc(r.code)}</b></td><td class="nowrap">${esc(r.plate || '—')}</td><td>${esc(r.customer_name)}</td>
+              <td class="nowrap">${fmtD(r.out_at)}</td><td>${esc(String(r.out_at).slice(11, 16))}</td>
+              <td class="nowrap">${fmtDT(r.return_at)}<br><small class="muted">${esc(r.return_branch_name || '')}</small></td></tr>`,
+          )
+          .join('')}</tbody></table></div>`
+        : '<div class="card muted">No hay autos alquilados en este momento.</div>'
+    }`;
+  $('#act-csv').addEventListener('click', () => run(() => downloadCsv(`/rentals/active${branchQS()}`, `alquileres-activos-${ymd(new Date())}.csv`)));
+}, 'reservas');
+
+/* ============================================================
    Nueva reserva / cotización en mostrador
    ============================================================ */
 const branchOptions = () => state.branches.filter((b) => b.active).map((b) => [b.id, b.name]);
@@ -1509,6 +1543,7 @@ on(/^\/mas$/, async (view) => {
     <div class="mas-group">Reservas y clientes</div>
     <div class="mas">
       ${tile('#/reservas', 'Todas las reservas', 'Buscar, filtrar y ver las anteriores', ICON.list)}
+      ${tile('#/alquileres', 'Alquileres activos', 'Los autos que están en la calle, con planilla para Excel', ICON.list, 'green')}
       ${tile('#/reservas/completa', 'Reserva con más opciones', 'Adicionales, descuento, vuelo, otro lugar de devolución', ICON.plus)}
       ${tile('#/clientes', 'Clientes', 'Datos, licencia y sus reservas', ICON.user)}
       ${tile('#/flota?estado=mantenimiento', 'Taller', 'Autos en el taller: mandar, sacar y su historial', ICON.wrench, 'warm')}

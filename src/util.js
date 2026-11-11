@@ -86,7 +86,28 @@ function getPath(obj, path) {
     .reduce((acc, key) => (acc === undefined || acc === null ? undefined : acc[key]), obj);
 }
 
+/**
+ * Planilla CSV que Excel abre bien: marca UTF-8 para los acentos y comillas donde hacen falta.
+ * `sep`: ';' en las computadoras que usan coma decimal (ahí Excel no separa por comas).
+ */
+function toCsv(headers, rows, sep = ',') {
+  const cell = (v) => {
+    let s = v === null || v === undefined ? '' : String(v);
+    // Un texto que empieza como fórmula (lo pudo escribir un cliente) no se ejecuta en Excel.
+    if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+    return /["\r\n,;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  return '﻿' + [headers, ...rows].map((r) => r.map(cell).join(sep)).join('\r\n') + '\r\n';
+}
+
+/** "2026-11-11T09:30" → "11/11/2026" y "09:30", para planillas y listados. */
+const dmy = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : '');
+const hm = (s) => (s ? String(s).slice(11, 16) : '');
+
 module.exports = {
+  toCsv,
+  dmy,
+  hm,
   HttpError,
   fail,
   normDateTime,
