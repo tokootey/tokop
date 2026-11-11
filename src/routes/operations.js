@@ -338,7 +338,7 @@ function operationsRoutes(db) {
     const operational = total - (byStatus.mantenimiento || 0) - (byStatus.fuera_servicio || 0);
     // total y paid: la pantalla Hoy muestra cuánto debe cada cliente.
     // notes y la licencia: antes de confirmar un pedido se muestran sus notas y lo que falta.
-    const baseSelect = `SELECT r.id, r.code, r.status, r.source, r.pickup_at, r.return_at, r.total, r.notes, c.full_name AS customer_name, c.phone AS customer_phone,
+    const baseSelect = `SELECT r.id, r.code, r.status, r.vehicle_id, r.source, r.pickup_at, r.return_at, r.total, r.notes, c.full_name AS customer_name, c.phone AS customer_phone,
         c.license_number AS customer_license,
         cat.code AS category_code, cat.name AS category_name, v.plate AS vehicle_plate, v.brand AS vehicle_brand, v.model AS vehicle_model,
         ${placeSql('deliver', 'pb')} AS pickup_branch_name, ${placeSql('return', 'rb')} AS return_branch_name,
@@ -379,12 +379,13 @@ function operationsRoutes(db) {
       alerts: {
         documents: db
           .prepare(
-            `SELECT v.id, v.plate, v.insurance_expiry, v.vtv_expiry, v.permit_expiry FROM vehicles v
+            `SELECT v.id, v.plate, v.insurance_expiry, v.vtv_expiry, v.permit_expiry, v.registration_expiry FROM vehicles v
              WHERE ((v.insurance_expiry IS NOT NULL AND v.insurance_expiry <= date(?, '+30 day')) OR (v.vtv_expiry IS NOT NULL AND v.vtv_expiry <= date(?, '+30 day'))
-               OR (v.permit_expiry IS NOT NULL AND v.permit_expiry <= date(?, '+30 day')))${atV}
+               OR (v.permit_expiry IS NOT NULL AND v.permit_expiry <= date(?, '+30 day'))
+               OR (v.registration_expiry IS NOT NULL AND v.registration_expiry <= date(?, '+30 day')))${atV}
              ORDER BY v.plate`,
           )
-          .all(today, today, today),
+          .all(today, today, today, today),
         maintenance_open: db.prepare(`SELECT COUNT(*) AS n FROM maintenance m JOIN vehicles v ON v.id = m.vehicle_id WHERE m.status = 'abierto'${atV}`).get().n,
       },
       setup: setupSteps(db),

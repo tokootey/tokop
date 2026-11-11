@@ -10,6 +10,7 @@ const { FAQ_DEFAULT } = require('./chat');
 const { fail } = require('../util');
 const { parseDynamicRules } = require('../pricing');
 const whatsapp = require('../whatsapp');
+const { ROLES } = require('../auxiliar');
 
 const SECRET_KEYS = ['api_key', 'webhook_secret', 'wa_token'];
 // Sólo los cambia el dueño de Floty, desde el panel.
@@ -117,8 +118,8 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
       // La contraseña la eligió el administrador: la persona la cambia en su primer ingreso.
       const r = db
         .prepare('INSERT INTO users (name, email, password_hash, role, must_change_password) VALUES (?, ?, ?, ?, 1)')
-        .run(name, email, hashPassword(password), role === 'admin' ? 'admin' : 'operador');
-      audit(db, req, 'usuario_creado', `${email} (${role === 'admin' ? 'admin' : 'operador'})`);
+        .run(name, email, hashPassword(password), ROLES.includes(role) ? role : 'operador');
+      audit(db, req, 'usuario_creado', `${email} (${ROLES.includes(role) ? role : 'operador'})`);
       res.status(201).json({ id: Number(r.lastInsertRowid) });
     } catch (err) {
       if (/UNIQUE/.test(err.message)) fail(409, 'Ya existe un usuario con ese email');
@@ -130,12 +131,12 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
     const { name, role, active, password } = req.body || {};
     const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
     if (!u) fail(404, 'Usuario inexistente');
-    if (Number(req.params.id) === req.user.id && (role === 'operador' || active === 0 || active === false)) {
+    if (Number(req.params.id) === req.user.id && ((ROLES.includes(role) && role !== 'admin') || active === 0 || active === false)) {
       fail(400, 'No podés quitarte permisos de administrador ni desactivarte');
     }
     db.prepare('UPDATE users SET name = ?, role = ?, active = ? WHERE id = ?').run(
       name || u.name,
-      role === 'admin' || role === 'operador' ? role : u.role,
+      ROLES.includes(role) ? role : u.role,
       active === undefined ? u.active : active ? 1 : 0,
       u.id,
     );

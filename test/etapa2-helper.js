@@ -42,6 +42,11 @@ async function start() {
       }
       return { status: res.status, data };
     };
+    // Un archivo tal cual (fotos): el tipo va en el encabezado.
+    sessions[role].raw = async (p, body, type = 'image/jpeg') => {
+      const res = await fetch(base + p, { method: 'POST', headers: { 'Content-Type': type, Cookie: cookie }, body });
+      return { status: res.status, data: await res.json().catch(() => null) };
+    };
     return sessions[role];
   };
 

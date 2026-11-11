@@ -21,6 +21,7 @@ const { hotelRoutes } = require('./hotel');
 const { deliveryPublicRoutes } = require('./routes/delivery-public');
 const { demandExample } = require('./demand-example');
 const { log: reservationLog } = require('./reservations');
+const { auxiliarGuard } = require('./auxiliar');
 
 /** Crea el usuario administrador inicial si no hay ninguno. */
 function ensureAdmin(db) {
@@ -107,6 +108,7 @@ function companyApi(db, { uploadsDir, company, platform }) {
   app.use(
     '/api',
     guarded,
+    auxiliarGuard(db),
     catalogRoutes(db, { uploadsDir }),
     operationsRoutes(db),
     fileRoutes(db, uploadsDir),

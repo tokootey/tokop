@@ -479,6 +479,11 @@ async function route() {
     location.hash = '#/empresas'; // vuelve a entrar acá por hashchange
     return;
   }
+  // El auxiliar de flota solo tiene Hoy, el calendario, los autos y su cuenta.
+  if (isAux() && !/^\/(panel|planning|flota|mas)$/.test(hash)) {
+    location.hash = '#/panel';
+    return;
+  }
   for (const r of routes) {
     const m = hash.match(r.pattern);
     if (m) {
@@ -486,7 +491,7 @@ async function route() {
       const key = group || r.navKey;
       const menu = key in NAV_MENU ? NAV_MENU[key] : group || r.navKey;
       if (menu !== null) $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === menu));
-      $('#fab').classList.toggle('hidden', ['nueva', 'completa'].includes(r.navKey));
+      $('#fab').classList.toggle('hidden', isAux() || ['nueva', 'completa'].includes(r.navKey));
       renderSubnav(group, r.navKey);
       closeModal(); // un cartel abierto no queda encima de otra pantalla
       const view = $('#view');
@@ -565,6 +570,7 @@ const waLink = (phone) => {
 
 on(/^\/panel$/, async (view) => {
   const d = await GET(`/dashboard${branchQS()}`);
+  if (isAux()) return auxPanel(view, d);
   const car = (r) => (r.vehicle_plate ? `${esc([r.vehicle_brand, r.vehicle_model].filter(Boolean).join(' ') || r.category_name)} · ${esc(r.vehicle_plate)}` : `${esc(r.category_name)} · sin auto asignado`);
   const owes = (r) => {
     const due = Math.round((Number(r.total) - Number(r.paid)) * 100) / 100;
@@ -761,6 +767,128 @@ document.addEventListener('click', (e) => {
   const tr = e.target.closest('[data-href]');
   if (tr && !e.target.closest('button, a, input, select')) location.hash = tr.dataset.href;
 });
+
+/* ============================================================
+   Auxiliar de flota: fotos, km y combustible. No entra a las reservas ni ve precios.
+   ============================================================ */
+const isAux = () => !!state.user && state.user.role === 'auxiliar';
+const ROLE_LABEL = { admin: 'Administrador', operador: 'Operador', auxiliar: 'Auxiliar de flota' };
+// VTV es de Argentina; en Panamá es el revisado.
+const inspectionWord = () => ({ AR: 'VTV', PA: 'Revisado' })[state.settings.country] || 'Inspección técnica';
+/** Vencimientos de un auto: seguro, inspección y cédula de circulación (rojo si venció, ámbar si falta poco). */
+const dueDocs = (v) =>
+  [['Seguro', v.insurance_expiry], [inspectionWord(), v.vtv_expiry], ['Cédula de circulación', v.registration_expiry]]
+    .map(([label, d]) => `<div><small>${label}</small><b class="doc-${d ? dueTone(d) : 'wait'}">${fmtD(d) || '—'}</b></div>`)
+    .join('');
+
+/** Km y combustible de un auto: quedan como punto de partida de la entrega y de la devolución. */
+const auxReadingFields = (v) => [
+  { name: 'km', label: `Km (tiene ${num(v.km || 0)})`, type: 'number', required: true, attrs: `min="${Number(v.km) || 0}"` },
+  { name: 'fuel', label: 'Combustible (octavos)', type: 'select', options: FUEL_OPTS, required: true },
+];
+const auxSaveReading = (v, d) => (d.km !== v.km || Number(d.fuel) !== v.fuel ? PUT(`/vehicles/${v.id}`, { km: d.km, fuel: Number(d.fuel) }) : null);
+
+/** Lo que hace el auxiliar con un alquiler: ver y sumar fotos de entrega y devolución, y cargar km y combustible. */
+async function auxTrip(r) {
+  const [files, v] = await Promise.all([GET(`/reservations/${r.id}/files`), r.vehicle_id ? GET(`/vehicles/${r.vehicle_id}`) : null]);
+  const thumbs = (stage) => {
+    const list = files.filter((f) => f.stage === stage);
+    return `<h3 style="margin-top:12px">${STAGE_LABEL[stage]} <small class="muted">(${list.length})</small></h3>
+      <div class="thumbs">${
+        list
+          .map((f) => `<a class="thumb" target="_blank" rel="noopener" title="${esc(f.name)}">${f.mime.startsWith('image/') ? `<img alt="${esc(f.name)}" data-thumb="${f.id}"/>` : `<span data-thumb="${f.id}">PDF</span>`}</a>`)
+          .join('') || '<span class="muted">Sin fotos todavía.</span>'
+      }</div>`;
+  };
+  openModal(
+    `${r.code} · ${v ? v.plate : 'sin auto asignado'}`,
+    `<p class="muted">${esc(r.customer_name)} · ${fmtDT(r.pickup_at)} → ${fmtDT(r.return_at)}</p>
+     ${thumbs('entrega')}${thumbs('devolucion')}
+     ${formHtml(
+       [
+         { name: 'stage', label: 'Las fotos nuevas son de', type: 'select', options: [['entrega', 'La entrega'], ['devolucion', 'La devolución']], required: true },
+         { name: 'fotos', label: 'Fotos del auto (frente, laterales, cola, interior, tablero con km y combustible)', type: 'photos' },
+         ...(v ? auxReadingFields(v) : []),
+       ],
+       { stage: r.status === 'en_curso' ? 'devolucion' : 'entrega', ...(v || {}) },
+     )}`,
+    async (d, form) => {
+      if (v) await auxSaveReading(v, d);
+      await uploadFiles(r.id, d.stage, form.fotos.files);
+      toast('Guardado');
+      route();
+    },
+  );
+  $$('#modal-body [data-thumb]').forEach((el) =>
+    fileUrl(Number(el.dataset.thumb))
+      .then((u) => {
+        if (el.tagName === 'IMG') el.src = u;
+        el.closest('a').href = u;
+      })
+      .catch(() => {}),
+  );
+}
+
+/** Hoy del auxiliar: qué autos salen y vuelven, y los vencimientos. */
+function auxPanel(view, d) {
+  const out = [...d.late_pickups, ...d.pickups_today];
+  const back = [...d.overdue, ...d.returns_today];
+  const trips = [...out, ...back];
+  const row = (r, isOut) => `<div class="dayrow"><span class="plate">${esc(r.vehicle_plate || '—')}</span>
+      <div class="who"><b>${esc(r.customer_name)}</b><small>${esc([r.vehicle_brand, r.vehicle_model].filter(Boolean).join(' ') || r.category_name)} · ${esc((isOut ? r.pickup_branch_name : r.return_branch_name) || '')}</small></div>
+      <div class="when"><b>${fmtDT(isOut ? r.pickup_at : r.return_at).slice(11)}</b><small>${dayName(isOut ? r.pickup_at : r.return_at)}</small></div>
+      <button class="btn small" type="button" data-trip="${r.id}">Fotos y km</button></div>`;
+  const list = (title, rows, isOut, empty) =>
+    `<div class="card"><h2>${title}${rows.length ? ` <span class="count">${rows.length}</span>` : ''}</h2>${rows.length ? `<div class="daylist">${rows.map((r) => row(r, isOut)).join('')}</div>` : `<p class="muted">${empty}</p>`}</div>`;
+  const docs = d.alerts.documents;
+  view.innerHTML = `
+    <div class="page-head"><h1>Hoy</h1></div>
+    ${list('Salen hoy', out, true, 'Hoy no sale ningún auto.')}
+    ${list('Vuelven hoy', back, false, 'Hoy no vuelve ningún auto.')}
+    <div class="card"><h2>Vencimientos de los próximos 30 días${docs.length ? ` <span class="count">${docs.length}</span>` : ''}</h2>
+      ${docs.length ? `<div class="daylist">${docs.map((v) => `<div class="dayrow docs" style="grid-template-columns:120px repeat(3,minmax(0,1fr))"><span class="plate">${esc(v.plate)}</span>${dueDocs(v)}</div>`).join('')}</div>` : '<p class="muted">Ningún seguro, inspección ni cédula por vencer.</p>'}
+    </div>`;
+  $$('[data-trip]', view).forEach((b) => b.addEventListener('click', () => run(() => auxTrip(trips.find((r) => r.id === Number(b.dataset.trip))))));
+}
+
+/** Autos del auxiliar: dónde está cada uno, su km y combustible y sus vencimientos. Puede moverlos de sucursal. */
+async function auxFleet(view) {
+  const rows = await GET(`/vehicles${branchQS()}`);
+  const branches = branchOptions();
+  view.innerHTML = `
+    <div class="page-head"><h1>Autos</h1></div>
+    <div class="table-wrap"><table><thead><tr><th>${plateWord()}</th><th>Auto</th><th>Estado</th><th>Sucursal</th><th>Km</th><th>Combustible</th><th>Vencimientos</th><th></th></tr></thead><tbody>
+    ${rows
+      .map(
+        (v) => `<tr data-id="${v.id}"><td class="nowrap"><span class="plate">${esc(v.plate)}</span></td><td>${esc([v.brand, v.model].filter(Boolean).join(' '))}</td><td>${badge(v.status)}</td>
+          <td>${
+            v.status === 'alquilado' || branches.length < 2
+              ? esc(v.branch_name || '—')
+              : `<select data-move aria-label="Sucursal de ${esc(v.plate)}">${v.branch_id ? '' : '<option value=""></option>'}${branches.map(([id, name]) => `<option value="${id}"${id === v.branch_id ? ' selected' : ''}>${esc(name)}</option>`).join('')}</select>`
+          }</td>
+          <td class="right">${num(v.km || 0)}</td><td>${fuel(v.fuel) || '—'}</td>
+          <td><div class="dayrow docs" style="grid-template-columns:repeat(3,minmax(0,1fr));padding:0;border:0">${dueDocs(v)}</div></td>
+          <td><button class="btn small" type="button" data-reading>Km y combustible</button></td></tr>`,
+      )
+      .join('')}</tbody></table></div>`;
+  const of = (el) => rows.find((v) => v.id === Number(el.closest('tr').dataset.id));
+  $$('[data-move]', view).forEach((sel) =>
+    sel.addEventListener('change', async () => {
+      await run(() => PUT(`/vehicles/${of(sel).id}`, { branch_id: Number(sel.value) }), 'Auto movido de sucursal');
+      route();
+    }),
+  );
+  $$('[data-reading]', view).forEach((b) =>
+    b.addEventListener('click', () => {
+      const v = of(b);
+      openModal(`Km y combustible · ${v.plate}`, formHtml(auxReadingFields(v), v), async (d) => {
+        await auxSaveReading(v, d);
+        toast('Guardado');
+        route();
+      });
+    }),
+  );
+}
 
 /* ============================================================
    Reservas: listado
@@ -1618,7 +1746,7 @@ on(/^\/mas$/, async (view) => {
   const admin = isAdmin();
   view.innerHTML = `
     <div class="page-head"><h1>Más</h1></div>
-    ${admin ? `<div class="mas-group">Información</div><div class="mas">${tile('#/estadisticas', 'Estadísticas', 'Qué autos se piden más, categorías, seguros, ingresos, daños y taller', ICON.chart, 'green')}</div>` : ''}
+    ${isAux() ? '' : `${admin ? `<div class="mas-group">Información</div><div class="mas">${tile('#/estadisticas', 'Estadísticas', 'Qué autos se piden más, categorías, seguros, ingresos, daños y taller', ICON.chart, 'green')}</div>` : ''}
     <div class="mas-group">Reservas y clientes</div>
     <div class="mas">
       ${tile('#/reservas', 'Todas las reservas', 'Buscar, filtrar y ver las anteriores', ICON.list)}
@@ -1642,7 +1770,7 @@ on(/^\/mas$/, async (view) => {
       ${admin && !choferesMode() ? tile('#/cotizador', 'Página web: formulario', 'Que las cotizaciones de tu página entren solas', ICON.globe) : ''}
       ${admin && !choferesMode() ? tile('#/asistente', 'Link de reservas (opcional)', '¿No tenés reservas por internet? Un link para Instagram y WhatsApp', ICON.link) : ''}
       ${admin ? tile('#/importar', 'Pasar datos de una planilla', 'Autos, clientes y reservas desde Excel o Drive', ICON.sheet) : ''}
-    </div>
+    </div>`}
     <div class="mas-group">Tu cuenta</div>
     <div class="mas">
       ${state.user.platform_admin ? tile('#/empresas', 'Panel de Floty', 'Agencias y sus direcciones (solo vos lo ves)', ICON.panel, 'gray') : ''}
@@ -2008,7 +2136,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'fotos', label: 'Fotos del auto al recibirlo (daños, km y combustible)', type: 'photos' },
             { name: 'send_to_maintenance', label: 'Enviar el vehículo a taller', type: 'checkbox', full: true },
           ],
-          { in_at: localISO(new Date()), return_branch_id: r.return_branch_id, in_fuel: c.out_fuel },
+          // Si el auxiliar de flota ya cargó el km y el combustible del auto al recibirlo, vienen puestos.
+          { in_at: localISO(new Date()), return_branch_id: r.return_branch_id, ...(r.vehicle_km > c.out_km ? { in_km: r.vehicle_km, in_fuel: r.vehicle_fuel } : { in_fuel: c.out_fuel }) },
           'Cerrar contrato',
         ),
         async (d, form) => {
@@ -3027,7 +3156,7 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
     const l = Math.max(0, pos(r.pickup_at));
     const rr = Math.min(100, pos(r.return_at));
     if (rr <= 0 || l >= 100) return '';
-    return `<div class="pl-bar ${r.status}${String(r.id) === highlight ? ' just-made' : ''}${['pendiente', 'confirmada'].includes(r.status) ? ' pl-move' : ''}" data-id="${r.id}" style="left:${l}%;width:${Math.max(rr - l, 0.8)}%" data-href="#/reservas/${r.id}"
+    return `<div class="pl-bar ${r.status}${String(r.id) === highlight ? ' just-made' : ''}${['pendiente', 'confirmada'].includes(r.status) ? ' pl-move' : ''}" data-id="${r.id}" style="left:${l}%;width:${Math.max(rr - l, 0.8)}%"${isAux() ? '' : ` data-href="#/reservas/${r.id}"`}
       title="${esc(r.code)} · ${esc(r.customer_name)} · ${fmtDT(r.pickup_at)} → ${fmtDT(r.return_at)}">${esc(r.customer_name)}</div>`;
   };
   const mbar = (m) => {
@@ -3084,8 +3213,13 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
       route();
     }),
   );
-  enableDragToBook($('.planning', view), p, days);
-  enableDragToMove($('.planning', view), p, days);
+  if (isAux()) {
+    // El auxiliar no entra a la reserva: una barra abre sus fotos y el km del auto.
+    $$('.pl-bar[data-id]', view).forEach((b) => b.addEventListener('click', () => run(() => auxTrip(p.reservations.find((r) => r.id === Number(b.dataset.id))))));
+  } else {
+    enableDragToBook($('.planning', view), p, days);
+    enableDragToMove($('.planning', view), p, days);
+  }
   $('.just-made', view)?.scrollIntoView({ block: 'center', inline: 'center' });
 }, 'planning');
 
@@ -3366,6 +3500,7 @@ const VEHICLE_FIELDS = [
   { name: 'fuel', label: 'Combustible (octavos)', type: 'number', default: 8, attrs: 'min="0" max="8"' },
   { name: 'insurance_expiry', label: 'Vencimiento seguro', type: 'date' },
   { name: 'vtv_expiry', label: 'Vencimiento VTV', type: 'date' },
+  { name: 'registration_expiry', label: 'Vencimiento de la cédula de circulación', type: 'date', when: () => state.settings.country !== 'AR' },
   { name: 'insurance_company', label: 'Aseguradora' },
   { name: 'insurance_policy', label: 'N° de póliza' },
   { name: 'insurance_cost', label: 'Cuota mensual del seguro (se carga sola como gasto el día 1)', type: 'number', default: 0 },
@@ -3497,6 +3632,7 @@ const nextMove = (v) => {
 on(
   /^\/flota(?:\?estado=(\w+))?$/,
   async (view, estado) => {
+    if (isAux()) return auxFleet(view);
     let filter = FLEET_FILTERS.some(([k]) => k === estado) ? estado : '';
     view.innerHTML = `<div class="page-head"><h1>Autos</h1><button class="btn primary" data-new>${ICON.plus}Agregar auto</button></div>
       <div class="fleet-bar"><input id="fleet-q" type="search" placeholder="Buscar por patente, marca o modelo" aria-label="Buscar auto"/>
@@ -3514,7 +3650,7 @@ on(
         <dl class="vcard-facts">
           <div><dt>Km</dt><dd>${num(v.km || 0)}</dd></div>
           <div><dt>Combustible</dt><dd>${fuel(v.fuel) || '—'}</dd></div>
-          ${doc('Seguro', v.insurance_expiry)}${doc('VTV', v.vtv_expiry)}${choferesMode() && v.permit_expiry ? doc('Habilitación', v.permit_expiry) : ''}
+          ${doc('Seguro', v.insurance_expiry)}${doc('VTV', v.vtv_expiry)}${v.registration_expiry ? doc('Cédula de circulación', v.registration_expiry) : ''}${choferesMode() && v.permit_expiry ? doc('Habilitación', v.permit_expiry) : ''}
         </dl>
         <div class="vcard-actions">
           <button class="btn pill small" type="button" data-hist>${ICON.list}Historial</button>
@@ -4356,10 +4492,10 @@ on(/^\/usuarios$/, async (view) => {
     <div class="table-wrap"><table><thead><tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Activo</th><th></th></tr></thead><tbody>${users
       .map(
         (u) =>
-          `<tr data-id="${u.id}"><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.role === 'admin' ? 'Administrador' : 'Operador'}</td><td>${u.active ? '✔' : '—'}${u.must_change_password ? ' <span class="badge b-pendiente">cambia la clave al entrar</span>' : ''}</td><td class="right"><button class="btn small" data-edit>Editar</button></td></tr>`,
+          `<tr data-id="${u.id}"><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${esc(ROLE_LABEL[u.role] || u.role)}</td><td>${u.active ? '✔' : '—'}${u.must_change_password ? ' <span class="badge b-pendiente">cambia la clave al entrar</span>' : ''}</td><td class="right"><button class="btn small" data-edit>Editar</button></td></tr>`,
       )
       .join('')}</tbody></table></div>
-    <p class="muted">Los operadores manejan reservas, flota y clientes. Los administradores además configuran tarifas, el cotizador y los usuarios, y son los únicos que pueden borrar o anonimizar clientes. Cada persona debería tener su propio usuario.</p>
+    <p class="muted">El auxiliar de flota saca las fotos de entrega y devolución, carga km y combustible y mueve autos de sucursal: no entra a las reservas ni ve precios. Los operadores manejan reservas, flota y clientes. Los administradores además configuran tarifas, el cotizador y los usuarios, y son los únicos que pueden borrar o anonimizar clientes. Cada persona debería tener su propio usuario.</p>
     <div class="card" style="margin-top:16px"><h2>Actividad reciente</h2>
       <p class="muted">Ingresos, intentos fallidos y cambios importantes. Muchos "login fallido" seguidos pueden ser alguien probando contraseñas.</p>
       <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Qué pasó</th><th>Usuario</th><th>Detalle</th><th>IP</th></tr></thead><tbody>${
@@ -4370,7 +4506,7 @@ on(/^\/usuarios$/, async (view) => {
           )
           .join('') || '<tr><td colspan="5" class="muted">Sin actividad registrada.</td></tr>'
       }</tbody></table></div></div>`;
-  const roleField = { name: 'role', label: 'Rol', type: 'select', options: [['operador', 'Operador'], ['admin', 'Administrador']], required: true };
+  const roleField = { name: 'role', label: 'Rol', type: 'select', options: Object.entries(ROLE_LABEL).reverse(), required: true };
   $('[data-new]', view).addEventListener('click', () =>
     openModal(
       'Nuevo usuario',
