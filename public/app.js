@@ -635,6 +635,18 @@ on(/^\/panel$/, async (view) => {
       <a href="#/flota?estado=mantenimiento"><i class="ic shop" aria-hidden="true">${ICON.wrench}</i><b>${d.fleet.mantenimiento || 0}</b><span>en el taller</span></a>
     </div>
     ${d.quote_errors ? `<div class="notice warn">Hay <b>${plural(d.quote_errors, 'solicitud', 'solicitudes')}</b> del cotizador o del formulario web con error. <a href="#/cotizador">Revisar bandeja</a></div>` : ''}
+    ${
+      (d.reminders || []).length
+        ? `<div class="card"><h2>Recordatorios para mandar <span class="count">${d.reminders.length}</span></h2>
+            <p class="muted">Clientes que retiran su auto en las próximas 12 horas.</p>
+            <div class="daylist">${d.reminders
+              .map(
+                (r) => `<div class="reminder-row"><span><b>${esc(r.customer_name)}</b> · ${fmtDT(r.pickup_at)}${r.reminder_at === 'error' ? ' <small class="error">No salió solo</small>' : ''}</span>
+                  <a class="btn small ok" data-remind="${r.id}" href="${esc(waText(r, r.text))}" target="_blank" rel="noopener">${WA_ICON}Mandar recordatorio</a></div>`,
+              )
+              .join('')}</div></div>`
+        : ''
+    }
     ${d.pending.length ? `<div class="hoy-col"><h2>Para confirmar <span class="count">${d.pending_confirmation}</span></h2><div class="hoy-pending">${d.pending.map(pend).join('')}</div></div>` : ''}
     <div class="hoy-cols">
       ${column('Salen hoy', 'M5 12h14M13 6l6 6-6 6', 'var(--primary)', out, 'out', 'Hoy no sale ningún auto.')}
@@ -654,6 +666,14 @@ on(/^\/panel$/, async (view) => {
         : ''
     }`;
   // Antes de confirmar se ve lo importante (auto, notas, lo que falta); al confirmar se abre el voucher.
+  // Con el WhatsApp de la agencia conectado lo manda el sistema; si no, se abre WhatsApp con el mensaje escrito y queda anotado.
+  $$('[data-remind]', view).forEach((a) =>
+    a.addEventListener('click', async (e) => {
+      if (state.settings.whatsapp_api) e.preventDefault();
+      await run(() => POST(`/reservations/${a.dataset.remind}/reminder`), state.settings.whatsapp_api ? 'Recordatorio enviado' : null).catch(() => {});
+      route();
+    }),
+  );
   $$('[data-confirm]', view).forEach((b) =>
     b.addEventListener('click', () => {
       const r = d.pending.find((x) => x.id === Number(b.dataset.confirm));
@@ -2277,6 +2297,8 @@ const LOG_LABEL = {
   no_show: 'No se presentó',
   pendiente: 'Reabierta',
   vehiculo_asignado: 'Vehículo asignado',
+  recordatorio_enviado: 'Recordatorio de entrega enviado',
+  recordatorio_fallido: 'El recordatorio no se pudo mandar',
   vehiculo_intercambiado: 'Auto intercambiado',
   entregado: 'Auto entregado',
   devuelto: 'Auto devuelto',
@@ -3940,6 +3962,8 @@ on(/^\/cotizador$/, async (view) => {
           <label>Token de acceso<input name="wa_token" type="password" autocomplete="off" placeholder="${d.whatsapp.has_token ? 'Cargado. Dejalo vacío para no cambiarlo' : 'EAAG…'}"/></label>
           <label>Nombre de la plantilla<input name="wa_template" value="${esc(d.whatsapp.template)}" placeholder="floty_aviso"/></label>
           <label>Idioma de la plantilla<input name="wa_template_lang" value="${esc(d.whatsapp.lang || 'es')}"/></label>
+          <label class="check"><input type="checkbox" name="reminder_auto" ${d.whatsapp.reminder_auto ? 'checked' : ''}/> Mandarle solo al cliente un recordatorio 12 horas antes de la entrega</label>
+          <small class="muted">Sin WhatsApp conectado, los recordatorios aparecen en Hoy para mandarlos con un toque.</small>
           <p>${d.whatsapp.phone_id && d.whatsapp.has_token && d.whatsapp.template ? badge('confirmada') + ' Conectado' : '<span class="muted">Sin conectar: los mensajes salen con tu WhatsApp, como siempre.</span>'}</p>
           <div class="actions"><button class="btn primary">Guardar</button></div>
         </form>
