@@ -45,6 +45,14 @@ test('documentos del cliente: subir, reemplazar, ver, borrar y anonimizar', asyn
     assert.equal((await up('dni_dorso', Buffer.from('<script>alert(1)</script>'))).status, 415);
     assert.equal((await up('dni_dorso', Buffer.from('hola'), 'text/html')).status, 415);
 
+    // Pasaporte: uno solo. Otros conductores: se suman, cada uno con su nombre, y el nombre es obligatorio.
+    assert.equal((await up('pasaporte', jpg(7))).status, 201);
+    const driver = (name, n) => call('POST', `/customers/${c.id}/documents?kind=conductor&name=${encodeURIComponent(name)}`, jpg(n), 'image/jpeg');
+    assert.equal((await driver('Ana Ruiz', 8)).status, 201);
+    assert.equal((await driver('Luis Paz', 9)).status, 201);
+    assert.equal((await driver('', 10)).status, 400);
+    assert.deepEqual((await list()).filter((d) => d.kind === 'conductor').map((d) => d.name), ['Ana Ruiz', 'Luis Paz']);
+    for (const d of (await list()).filter((x) => ['pasaporte', 'conductor'].includes(x.kind))) await call('DELETE', `/documents/${d.id}`);
     assert.equal((await call('DELETE', `/documents/${nuevo.id}`)).status, 204);
     assert.deepEqual((await list()).map((d) => d.kind), ['dni_frente']);
 
@@ -62,4 +70,23 @@ test('documentos del cliente: subir, reemplazar, ver, borrar y anonimizar', asyn
   } finally {
     server.close();
   }
+});
+
+test('documentos: una base anterior pasa a aceptar varios conductores y sigue con un documento por tipo', () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'rc-mig-')), 'vieja.db');
+  const old = new DatabaseSync(file);
+  old.exec(`CREATE TABLE customers (id INTEGER PRIMARY KEY, full_name TEXT);
+    CREATE TABLE customer_files (id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE, kind TEXT NOT NULL, name TEXT,
+      mime TEXT NOT NULL, size INTEGER NOT NULL, path TEXT NOT NULL, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE (customer_id, kind));
+    INSERT INTO customers VALUES (1, 'Ana');
+    INSERT INTO customer_files (customer_id, kind, mime, size, path) VALUES (1, 'carnet_frente', 'image/jpeg', 4, 'x');`);
+  old.close();
+  const db = openDb(file);
+  const ins = db.prepare("INSERT INTO customer_files (customer_id, kind, mime, size, path) VALUES (1, ?, 'image/jpeg', 4, 'y')");
+  ins.run('conductor');
+  ins.run('conductor');
+  assert.throws(() => ins.run('carnet_frente'));
+  assert.deepEqual(db.prepare('SELECT kind FROM customer_files ORDER BY id').all().map((r) => r.kind), ['carnet_frente', 'conductor', 'conductor']);
+  db.close();
 });

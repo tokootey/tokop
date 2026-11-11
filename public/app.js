@@ -1222,7 +1222,7 @@ function clientCardHtml(r) {
 }
 
 function signatureCardHtml(r) {
-  if (!proOn() || choferesMode() || ['cancelada', 'no_show'].includes(r.status)) return '';
+  if (['cancelada', 'no_show'].includes(r.status)) return '';
   const s = r.signature;
   const open = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
   const ask = open ? `<div class="actions no-print" style="margin-top:12px"><button class="btn" type="button" data-act="sign">${s && s.requested ? 'Volver a mandar el link de firma' : 'Pedir la firma del cliente'}</button></div>` : '';
@@ -2037,9 +2037,10 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
     },
     pdf: async () => {
       if (!window.jspdf) return toast('No se pudo cargar el generador de PDF. Recargá la página e intentá de nuevo.', true);
+      const photos = await contractPhotos(r);
       let built;
       try {
-        built = buildContractPdf(r);
+        built = buildContractPdf(r, photos);
       } catch (e) {
         console.error(e);
         return toast('No se pudo generar el PDF del contrato.', true);
@@ -2099,6 +2100,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       toast('Datos del cliente guardados');
       reload();
     });
+    docsButton(cust);
   });
   // Con ?accion=checkout|checkin|pay se abre ese paso directo si el estado lo permite (pay: sólo si queda saldo).
   if (accion) {
@@ -2442,14 +2444,55 @@ function wireFiles(view, r, reload) {
 const DOC_KINDS = [
   ['carnet_frente', 'Licencia de conducir · frente'],
   ['carnet_dorso', 'Licencia de conducir · dorso'],
-  ['dni_frente', 'Identificación · frente'],
-  ['dni_dorso', 'Identificación · dorso'],
+  ['dni_frente', 'DNI o cédula · frente'],
+  ['dni_dorso', 'DNI o cédula · dorso'],
+  ['pasaporte', 'Pasaporte (hoja con la foto)'],
 ];
+const docLabel = (d) => (d.kind === 'conductor' ? `${L('Conductor', 'Driver')}: ${d.name}` : (DOC_KINDS.find(([k]) => k === d.kind) || [])[1] || d.kind);
+/** En "Editar cliente": guarda lo cargado y abre sus fotos (licencias, DNI o cédula, pasaporte y otros conductores). */
+function docsButton(cust) {
+  const form = $('#modal-body form');
+  if (!form) return;
+  form.insertAdjacentHTML(
+    'afterbegin',
+    `<div class="full notice" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1">${L('Fotos de la licencia, DNI o cédula, pasaporte y de otros conductores.', 'Photos of the licence, ID card, passport and other drivers.')}</span>
+      <button type="button" class="btn small" data-open-docs>${L('Fotos y documentos', 'Photos and documents')}</button></div>`,
+  );
+  $('[data-open-docs]', form).addEventListener('click', async () => {
+    await run(() => PUT(`/customers/${cust.id}`, formData(form)));
+    openDocuments(cust.id, form.full_name ? form.full_name.value : cust.full_name);
+  });
+}
+
+/** Fotos para el contrato: la documentación del cliente y las fotos del auto cargadas para la entrega, achicadas. */
+async function contractPhotos(r) {
+  const docs = await GET(`/customers/${r.customer_id}/documents`).catch(() => []);
+  const list = [
+    ...docs.filter((d) => d.mime.startsWith('image/')).map((d) => ({ url: `/api/documents/${d.id}`, label: docLabel(d) })),
+    ...(r.files || []).filter((f) => f.stage === 'entrega' && f.mime.startsWith('image/')).map((f) => ({ url: `/api/files/${f.id}`, label: L('Auto en la entrega', 'Car at pick-up') })),
+  ];
+  const out = [];
+  for (const p of list.slice(0, 24)) {
+    try {
+      const blob = await (await fetch(p.url, { credentials: 'same-origin' })).blob();
+      const img = await createImageBitmap(blob);
+      const k = Math.min(1, 700 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k);
+      c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      out.push({ label: p.label, src: c.toDataURL('image/jpeg', 0.75), w: c.width, h: c.height });
+    } catch {
+      // una foto que el navegador no puede abrir (p. ej. HEIC) no frena el contrato
+    }
+  }
+  return out;
+}
+
 /** Los documentos de la persona: se cargan una vez y se ven desde todas sus reservas. Subir otro reemplaza al anterior. */
 async function openDocuments(customerId, name) {
   const docs = await GET(`/customers/${customerId}/documents`);
-  const slot = ([kind, label]) => {
-    const d = docs.find((x) => x.kind === kind);
+  const slot = ([kind, label], d = docs.find((x) => x.kind === kind)) => {
     return `<div class="doc-slot" data-kind="${kind}">
       <b>${label}</b>
       ${d ? `<button type="button" class="thumb" data-open="${d.id}" title="Ver">${d.mime.startsWith('image/') ? `<img alt="${label}" data-doc-img="${d.id}"/>` : '<span>PDF</span>'}</button>` : '<div class="thumb empty"><span>Falta</span></div>'}
@@ -2457,7 +2500,17 @@ async function openDocuments(customerId, name) {
       ${d ? `<button type="button" class="btn small danger" data-del="${d.id}">Borrar</button>` : ''}</div>
     </div>`;
   };
-  openModal(`Documentación · ${name}`, `<p class="muted">Se cargan una vez y quedan en la ficha del cliente para todos sus alquileres.</p><div class="doc-slots">${DOC_KINDS.map(slot).join('')}</div>`);
+  const drivers = docs.filter((d) => d.kind === 'conductor');
+  openModal(
+    `Documentación · ${name}`,
+    `<p class="muted">Se cargan una vez y quedan en la ficha del cliente para todos sus alquileres. Salen también en el pre-contrato y en el contrato.</p>
+    <div class="doc-slots">${DOC_KINDS.map((k) => slot(k)).join('')}</div>
+    <h3 style="margin-top:18px">Otros conductores</h3>
+    <p class="muted">Si maneja más de una persona: el nombre y una foto de su licencia.</p>
+    ${drivers.length ? `<div class="doc-slots">${drivers.map((d) => slot(['conductor', esc(d.name)], d)).join('')}</div>` : ''}
+    <div class="actions" data-kind="conductor" style="margin-top:10px"><input id="driver-name" maxlength="80" placeholder="Nombre y apellido del conductor" style="flex:1;min-width:200px"/>
+      <label class="btn small">Agregar su licencia<input type="file" accept="image/*,application/pdf" hidden data-up></label></div>`,
+  );
   const box = $('#modal-body');
   const blobOf = (id) => fetch(`/api/documents/${id}`, { credentials: 'same-origin' }).then((r) => (r.ok ? r.blob() : Promise.reject(new Error('No se pudo abrir el archivo'))));
   $$('[data-doc-img]', box).forEach((img) =>
@@ -2471,9 +2524,15 @@ async function openDocuments(customerId, name) {
       const f = input.files[0];
       if (!f) return;
       const kind = input.closest('[data-kind]').dataset.kind;
+      // Un conductor nuevo va con su nombre (en "Cambiar" de uno cargado, el botón está en su tarjeta).
+      const driver = kind === 'conductor' && !input.closest('.doc-slot') ? $('#driver-name').value.trim() : null;
+      if (kind === 'conductor' && !input.closest('.doc-slot') && driver.length < 3) {
+        input.value = '';
+        return toast('Escribí primero el nombre del conductor', true);
+      }
       toast('Subiendo…');
       const blob = await shrinkImage(f);
-      const res = await fetch(`/api/customers/${customerId}/documents?kind=${kind}&name=${encodeURIComponent(f.name)}`, {
+      const res = await fetch(`/api/customers/${customerId}/documents?kind=${kind}&name=${encodeURIComponent(driver || f.name)}`, {
         method: 'POST',
         headers: { 'Content-Type': blob.type || f.type || 'application/octet-stream' },
         credentials: 'same-origin',
@@ -2644,12 +2703,17 @@ const CAR_SVG = `<svg viewBox="0 0 220 110" width="220" height="110" aria-label=
   <text x="214" y="42" font-size="9" fill="#555" transform="rotate(90 214 42)">FRENTE</text>
 </svg>`;
 
-function printContract(r) {
+async function printContract(r) {
   const s = state.settings;
   const c = r.contract;
   const delivered = Boolean(c);
   const w = window.open('', '_blank');
   if (!w) return toast('El navegador bloqueó la ventana del contrato: permití las ventanas emergentes para esta página.', true);
+  const photos = await contractPhotos(r);
+  const sig = r.signature && r.signature.signed_at && !r.signature.stale ? r.signature : null;
+  const signedBy = sig
+    ? `<img class="sig" src="${esc(sig.image)}" alt="Firma"/><small class="sig-by">Firma electrónica: ${esc(sig.name)} · ${esc(sig.doc)} · ${esc(String(sig.signed_at).slice(0, 16).replace('T', ' '))} UTC · ${esc(String(sig.hash).slice(0, 16))}</small>`
+    : '';
   const q = r.pricing || {};
   const line = (label, value) => `<tr><th>${label}</th><td>${value || '<span class="blank"></span>'}</td></tr>`;
   const priceRows = [
@@ -2684,6 +2748,9 @@ function printContract(r) {
   .notes { border: 1px solid #999; min-height: 64px; padding: 4px 6px; white-space: pre-wrap; }
   .sign { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 36px; }
   .sign div { border-top: 1px solid #111; padding-top: 3px; text-align: center; } .sign small { display: block; color: #555; margin-top: 10px; text-align: left; }
+  .sign .sig { display: block; height: 46px; margin: -50px auto 4px; } .sign .sig-by { margin-top: 2px; font-size: 9px; }
+  .annex { page-break-before: always; } .pgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .pgrid figure { margin: 0; break-inside: avoid; } .pgrid img { width: 100%; height: 160px; object-fit: contain; border: 1px solid #ccc; } .pgrid figcaption { font-size: 10px; color: #444; }
   .terms { columns: 2; column-gap: 16px; font-size: 9.5px; line-height: 1.35; text-align: justify; } .terms p { margin: 0 0 5px; break-inside: avoid; }
   .page2 { break-before: page; }
   .badge { display: inline-block; border: 1px solid #111; padding: 1px 6px; font-weight: 700; }
@@ -2767,7 +2834,7 @@ function printContract(r) {
 
 <p style="margin-top:10px">El Cliente declara haber leído y aceptado las condiciones generales que forman parte de este contrato (página siguiente) y recibir el vehículo en el estado indicado.</p>
 <div class="sign">
-  <div>Firma del cliente<small>Aclaración:<br>DNI:</small></div>
+  <div>${signedBy}Firma del cliente<small>Aclaración:<br>DNI:</small></div>
   <div>${choferesMode() ? 'Garante' : 'Conductor adicional'}<small>Aclaración:<br>DNI:</small></div>
   <div>Por ${esc(s.company_name || 'la Empresa')}<small>Aclaración:</small></div>
 </div>
@@ -2777,10 +2844,15 @@ function printContract(r) {
   <h2>Condiciones generales del alquiler</h2>
   <div class="terms">${contractTerms(r)}</div>
   <div class="sign" style="grid-template-columns:1fr 1fr">
-    <div>Firma del cliente (conformidad)<small>Aclaración:<br>DNI:</small></div>
+    <div>${signedBy}Firma del cliente (conformidad)<small>Aclaración:<br>DNI:</small></div>
     <div>Por ${esc(s.company_name || 'la Empresa')}</div>
   </div>
 </div>
+${
+  photos.length
+    ? `<div class="annex"><h2>Anexo: documentación y estado del auto</h2><div class="pgrid">${photos.map((p) => `<figure><img src="${p.src}" alt=""/><figcaption>${esc(p.label)}</figcaption></figure>`).join('')}</div></div>`
+    : ''
+}
 </body></html>`);
   w.document.close();
   // La demo muestra el contrato en la misma página (sin body propio) y lo traduce ella.
@@ -3162,7 +3234,7 @@ const VEHICLE_FIELDS = [
 /** Pantalla de listado + alta/edición/baja genérica. */
 // rowFilter: qué filas mostrar (p. ej. solo los seguros); defaults: valores que se agregan al crear.
 // summary(rows): una línea arriba de la tabla (p. ej. el total de los gastos que se ven).
-function crudPage({ title, endpoint, fields, columns, searchable, after, before, extraActions, canWrite = () => true, canDelete, nav, rowFilter, defaults, summary }) {
+function crudPage({ title, endpoint, fields, columns, searchable, after, before, extraActions, onEdit, canWrite = () => true, canDelete, nav, rowFilter, defaults, summary }) {
   const mayDelete = () => (canDelete ? canDelete() : canWrite());
   return async (view) => {
     if (before) await before();
@@ -3192,6 +3264,7 @@ function crudPage({ title, endpoint, fields, columns, searchable, after, before,
             if (after) await after();
             load();
           });
+          if (onEdit) onEdit(row);
         }),
       );
       $$('[data-del]', view).forEach((b) =>
@@ -3478,6 +3551,9 @@ on(
           openModal(`Reservas de ${r.full_name}`, historyTable(rows));
         });
       tr.querySelector('[data-docs]')?.addEventListener('click', () => openDocuments(r.id, r.full_name));
+    },
+    onEdit: (r) => {
+      if (!r.anonymized_at) docsButton(r);
       const a = tr.querySelector('[data-anon]');
       if (a)
         a.addEventListener('click', () =>

@@ -23,7 +23,7 @@ function localizeTable(opts) {
   return out;
 }
 
-function buildContractPdf(r) {
+function buildContractPdf(r, photos = []) {
   const { jsPDF } = window.jspdf;
   const doc = localizePdf(new jsPDF({ unit: 'mm', format: 'a4' }));
   const table = (opts) => (typeof window.autoTable === 'function' ? window.autoTable(doc, localizeTable(opts)) : doc.autoTable(localizeTable(opts)));
@@ -250,6 +250,29 @@ function buildContractPdf(r) {
     cy += bodyLines.length * lh + 2;
   }
   signatures(H - 26, ['Firma del cliente (conformidad)', `Por ${company}`]);
+
+  /* ---------- Anexo: documentación del cliente y fotos del auto para la entrega ---------- */
+  if (photos.length) {
+    doc.addPage();
+    doc.setFont('helvetica', 'bold').setFontSize(10).setTextColor(17).text('ANEXO: DOCUMENTACIÓN Y ESTADO DEL AUTO', M, 16);
+    const gap = 6;
+    const cw = (W - 2 * M - 2 * gap) / 3;
+    const ch = 46;
+    let py = 22;
+    photos.forEach((p, i) => {
+      const colN = i % 3;
+      if (colN === 0 && i > 0) py += ch + 9;
+      if (colN === 0 && py + ch + 8 > H - 14) {
+        doc.addPage();
+        py = 16;
+      }
+      const k = Math.min(cw / p.w, ch / p.h);
+      const x = M + colN * (cw + gap);
+      doc.addImage(p.src, 'JPEG', x + (cw - p.w * k) / 2, py + (ch - p.h * k) / 2, p.w * k, p.h * k);
+      doc.setDrawColor(200).setLineWidth(0.2).rect(x, py, cw, ch);
+      doc.setFont('helvetica', 'normal').setFontSize(7).setTextColor(70).text(doc.splitTextToSize(p.label, cw), x, py + ch + 3.5);
+    });
+  }
 
   /* ---------- Pie de página ---------- */
   const pages = doc.getNumberOfPages();
