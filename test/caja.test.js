@@ -46,3 +46,27 @@ function db_yesterday(db, reservationId) {
   const y = new Date(Date.now() - 36 * 3600000).toISOString().slice(0, 19).replace('T', ' ');
   db.prepare("INSERT INTO payments (reservation_id, kind, method, amount, created_at) VALUES (?, 'pago', 'efectivo', 999, ?)").run(reservationId, y);
 }
+
+test('estadísticas: ganancias por sucursal (cobrado menos taller y gastos de sus autos)', async () => {
+  const app = await start();
+  try {
+    const call = await app.as('admin');
+    const a = app.reserve();
+    const b = app.reserve({ vehicle_id: 2, pickup_branch_id: 2, return_branch_id: 2 });
+    await call('POST', `/api/reservations/${a.id}/payments`, { kind: 'pago', amount: 300 });
+    await call('POST', `/api/reservations/${b.id}/payments`, { kind: 'pago', amount: 100 });
+    await call('POST', `/api/reservations/${b.id}/payments`, { kind: 'garantia', amount: 500 }); // la garantía no es ganancia
+    const today = nowLocal().slice(0, 10);
+    app.db.prepare("INSERT INTO maintenance (vehicle_id, kind, description, start_date, cost, status) VALUES (1, 'service', 'Aceite', ?, 40, 'cerrado')").run(today);
+    app.db.prepare("INSERT INTO expenses (vehicle_id, date, kind, amount) VALUES (2, ?, 'combustible', 15), (NULL, ?, 'otro', 999)").run(today, today);
+
+    const s = (await call('GET', `/api/stats?from=${today}&to=${today}`)).data;
+    assert.deepEqual(
+      s.branches.map((x) => [x.name, x.rentals, x.collected, x.costs, x.net]),
+      [['Tocumen', 1, 300, 40, 260], ['Centro', 1, 100, 15, 85]],
+    );
+    assert.equal((await (await app.as('operador'))('GET', '/api/stats')).status, 403);
+  } finally {
+    app.close();
+  }
+});

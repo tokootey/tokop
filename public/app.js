@@ -4490,6 +4490,15 @@ async function statsView(view, url, { owner = false } = {}) {
         <h2>Qué categorías dejan más</h2>
         ${bars(s.categories.filter((c) => c.requested || c.shop_cost), (c) => c.net, (c) => `${esc(c.code)} · ${esc(c.name)}`, (c) => `${plural(c.requested, 'reserva', 'reservas')} · ${plural(c.days, 'día alquilado', 'días alquilados')} · cobrado ${moneyRound(c.collected)}${c.shop_cost ? ` · taller ${moneyRound(c.shop_cost)}` : ''}${c.occupancy !== null ? ` · ocupación ${c.occupancy} %` : ''}`, moneyRound)}
       </section>
+      ${
+        (s.branches || []).length > 1
+          ? `<section class="card">
+        <h2>Ganancias por sucursal</h2>
+        <p class="muted">Lo cobrado de las reservas que se retiran en cada sucursal, menos el taller y los gastos de sus autos.</p>
+        ${bars(s.branches, (b) => b.net, (b) => esc(b.name || 'Sin sucursal (hotel u otro lugar)'), (b) => `${plural(b.rentals, 'alquiler', 'alquileres')} · cobrado ${moneyRound(b.collected)} · gastos ${moneyRound(b.costs)}`, moneyRound)}
+      </section>`
+          : ''
+      }
       <section class="card">
         <h2>Modelos que más facturan</h2>
         ${bars(s.models, (m) => m.revenue, (m) => esc([m.brand, m.model].filter(Boolean).join(' ')), (m) => `${plural(m.rentals, 'alquiler', 'alquileres')} · ${plural(m.days, 'día', 'días')}`, moneyRound)}
