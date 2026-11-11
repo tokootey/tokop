@@ -162,6 +162,13 @@ test('flujo completo: reserva, entrega, devolución con cargos y pagos', async (
   assert.equal(paid.data.balance.pending, 0);
 });
 
+test('no se manda un auto al taller sin justificación', async () => {
+  const v = (await call('GET', '/api/vehicles')).data[0];
+  const bad = await call('POST', '/api/maintenance', { vehicle_id: v.id, kind: 'service', description: '  ', status: 'cerrado', start_date: '2027-01-01' });
+  assert.equal(bad.status, 400);
+  assert.match(bad.data.error, /justificación/);
+});
+
 test('no se entrega sin licencia del cliente', async () => {
   const cust = await call('POST', '/api/customers', { full_name: 'Sin Licencia' });
   const r = await call('POST', '/api/reservations', { customer_id: cust.data.id, category_id: 1, pickup_at: '2027-06-01T10:00', return_at: '2027-06-02T10:00' });
@@ -329,7 +336,7 @@ test('operador no puede modificar tarifas', async () => {
 
 test('mantenimiento abierto saca el vehículo de la flota y al cerrarlo vuelve', async () => {
   const v = (await call('GET', '/api/vehicles')).data.find((x) => x.status === 'disponible');
-  const m = await call('POST', '/api/maintenance', { vehicle_id: v.id, kind: 'service', status: 'abierto', start_date: '2027-01-01' });
+  const m = await call('POST', '/api/maintenance', { vehicle_id: v.id, kind: 'service', description: 'Service', status: 'abierto', start_date: '2027-01-01' });
   assert.equal((await call('GET', `/api/vehicles/${v.id}`)).data.status, 'mantenimiento');
   await call('PUT', `/api/maintenance/${m.data.id}`, { status: 'cerrado' });
   assert.equal((await call('GET', `/api/vehicles/${v.id}`)).data.status, 'disponible');

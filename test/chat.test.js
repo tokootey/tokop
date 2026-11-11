@@ -89,6 +89,23 @@ test('el pedido entra como reserva pendiente desde la web', async () => {
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM reservations').get().n, before + 1);
 });
 
+test('auto de consulta: en la web se ofrece por WhatsApp, sin precio y sin reserva', async () => {
+  const range = { pickup_at: day(70), return_at: day(72), pickup_branch: 'USH' };
+  const catB = db.prepare("SELECT id FROM categories WHERE code = 'B'").get().id;
+  db.prepare('UPDATE vehicles SET web_inquiry = 1 WHERE category_id = ?').run(catB);
+  try {
+    const b = (await call('POST', '/api/public/chat/quote', range)).data.options.find((o) => o.code === 'B');
+    assert.equal(b.inquiry_only, true);
+    assert.equal(b.total, null);
+    const book = await call('POST', '/api/public/chat/book', { ...range, category: 'B', name: 'Quiere Pagar', phone: '+507 6000 0002' });
+    assert.equal(book.status, 409);
+  } finally {
+    db.prepare('UPDATE vehicles SET web_inquiry = 0').run();
+  }
+  const again = (await call('POST', '/api/public/chat/quote', range)).data.options.find((o) => o.code === 'B');
+  assert.ok(again.total > 0 && !again.inquiry_only);
+});
+
 test('valida los datos y descarta robots', async () => {
   const ok = { pickup_at: day(50), return_at: day(52), pickup_branch: 'USH', category: 'A' };
   assert.equal((await call('POST', '/api/public/chat/book', { ...ok, name: 'Al', email: 'a@b.co' })).status, 400, 'nombre corto');

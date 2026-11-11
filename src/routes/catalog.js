@@ -9,7 +9,7 @@ const { removeCustomerDocuments } = require('./files');
  * CRUD genérico para tablas maestras.
  * `adminWrite`: sólo administradores pueden crear/editar/borrar (tarifas, sucursales).
  */
-function crud(db, { table, fields, required = [], order = 'id', search = [], adminWrite = false, listSql, dateFields = [], afterWrite, afterDelete, adminDelete = false }) {
+function crud(db, { table, fields, required = [], order = 'id', search = [], adminWrite = false, listSql, dateFields = [], afterWrite, afterDelete, adminDelete = false, needOnCreate = {} }) {
   const router = express.Router();
   const guard = adminWrite ? [requireAdmin] : [];
   const deleteGuard = adminWrite || adminDelete ? [requireAdmin] : [];
@@ -58,6 +58,8 @@ function crud(db, { table, fields, required = [], order = 'id', search = [], adm
   router.post('/', ...guard, (req, res) => {
     const data = clean(req.body);
     for (const f of required) if (data[f] === undefined || data[f] === null) fail(400, `Campo obligatorio: ${f}`);
+    // Textos que no pueden faltar al crear (los registros viejos sin ese dato se siguen pudiendo editar).
+    for (const [f, message] of Object.entries(needOnCreate)) if (!String(data[f] ?? '').trim()) fail(400, message);
     const keys = Object.keys(data);
     const r = db.prepare(`INSERT INTO ${table} (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`).run(...keys.map((k) => data[k]));
     const row = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(r.lastInsertRowid);
@@ -219,7 +221,7 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     '/vehicles',
     crud(db, {
       table: 'vehicles',
-      fields: ['plate', 'brand', 'model', 'year', 'color', 'category_id', 'branch_id', 'status', 'km', 'fuel', 'insurance_expiry', 'vtv_expiry', 'service_every_km', 'notes', 'period_rate', 'rest_day_rate', 'rest_day_free', 'pay_every',
+      fields: ['plate', 'brand', 'model', 'year', 'color', 'category_id', 'branch_id', 'status', 'km', 'fuel', 'insurance_expiry', 'vtv_expiry', 'service_every_km', 'notes', 'web_inquiry', 'period_rate', 'rest_day_rate', 'rest_day_free', 'pay_every',
         'insurance_company', 'insurance_policy', 'insurance_cost', 'permit_number', 'permit_expiry'],
       required: ['plate', 'category_id'],
       order: 'plate',
@@ -269,6 +271,8 @@ function catalogRoutes(db, { uploadsDir } = {}) {
       table: 'maintenance',
       fields: ['vehicle_id', 'kind', 'description', 'start_date', 'end_date', 'km', 'cost', 'status'],
       required: ['vehicle_id'],
+      // Sin justificación no se manda un auto al taller.
+      needOnCreate: { description: 'Escribí la justificación: por qué va al taller' },
       order: 'start_date DESC',
       search: ['plate', 'description'],
       dateFields: ['start_date', 'end_date'],
