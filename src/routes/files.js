@@ -54,7 +54,9 @@ function uploadedType(req) {
 }
 
 // Documentos de la persona (no del alquiler): se cargan una vez y sirven para todas sus reservas.
-const DOC_KINDS = ['carnet_frente', 'carnet_dorso', 'dni_frente', 'dni_dorso'];
+// "conductor": la licencia de otra persona que también maneja; puede haber varios, cada uno con su nombre.
+const DOC_KINDS = ['carnet_frente', 'carnet_dorso', 'dni_frente', 'dni_dorso', 'pasaporte', 'conductor'];
+const MAX_DRIVERS = 10;
 
 /** Borra los documentos de un cliente (al anonimizarlo o borrarlo): las filas y los archivos. */
 function removeCustomerDocuments(db, uploadsDir, customerId) {
@@ -128,7 +130,7 @@ function fileRoutes(db, uploadsDir) {
     res.status(204).end();
   });
 
-  // Carnet y DNI del cliente: uno por lugar (frente y dorso); subir otro reemplaza al anterior.
+  // Carnet, DNI o cédula y pasaporte del cliente: uno por lugar (frente y dorso); subir otro reemplaza al anterior. Los otros conductores se suman.
   const docOf = (id) => db.prepare('SELECT * FROM customer_files WHERE id = ?').get(Number(id));
   router.post('/customers/:id/documents', express.raw({ type: () => true, limit: MAX_PDF }), (req, res) => {
     const c = db.prepare('SELECT id, anonymized_at FROM customers WHERE id = ?').get(Number(req.params.id));
@@ -136,12 +138,17 @@ function fileRoutes(db, uploadsDir) {
     if (c.anonymized_at) fail(409, 'El cliente está anonimizado');
     const kind = req.query.kind;
     if (!DOC_KINDS.includes(kind)) fail(400, 'Documento inválido');
+    const driver = kind === 'conductor';
+    if (driver && String(req.query.name || '').trim().length < 3) fail(400, 'Escribí el nombre del conductor');
+    if (driver && db.prepare("SELECT COUNT(*) AS n FROM customer_files WHERE customer_id = ? AND kind = 'conductor'").get(c.id).n >= MAX_DRIVERS) {
+      fail(409, `Ya hay ${MAX_DRIVERS} conductores cargados`);
+    }
     const mime = uploadedType(req);
     const rel = path.join('clientes', String(c.id), `${kind}-${crypto.randomBytes(6).toString('hex')}.${TYPES[mime]}`);
     const abs = path.join(uploadsDir, rel);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, req.body);
-    const old = db.prepare('SELECT * FROM customer_files WHERE customer_id = ? AND kind = ?').get(c.id, kind);
+    const old = !driver && db.prepare('SELECT * FROM customer_files WHERE customer_id = ? AND kind = ?').get(c.id, kind);
     if (old) {
       db.prepare('DELETE FROM customer_files WHERE id = ?').run(old.id);
       fs.rmSync(path.join(uploadsDir, old.path), { force: true });

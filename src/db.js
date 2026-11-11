@@ -244,7 +244,7 @@ CREATE TABLE IF NOT EXISTS delivery_links (
   card_ip TEXT
 );
 
--- Carnet y DNI de cada cliente (frente y dorso): de la persona, no de un alquiler.
+-- Licencia, DNI o cédula y pasaporte de cada cliente (uno por tipo) y licencias de otros conductores (varias): de la persona, no de un alquiler.
 CREATE TABLE IF NOT EXISTS customer_files (
   id INTEGER PRIMARY KEY,
   customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
@@ -254,8 +254,7 @@ CREATE TABLE IF NOT EXISTS customer_files (
   size INTEGER NOT NULL,
   path TEXT NOT NULL,
   created_by INTEGER,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE (customer_id, kind)
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 -- Cada reserva busca sus pagos y su historial: sin índice se recorre la tabla entera.
 CREATE INDEX IF NOT EXISTS ix_payments_reservation ON payments(reservation_id);
@@ -600,6 +599,18 @@ function openDb(file = process.env.DB_FILE || path.join(__dirname, '..', 'data',
 /** Columnas agregadas después de la primera versión (las bases existentes se actualizan solas). */
 function migrate(db) {
   const has = (table, col) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
+  // Otros conductores: un cliente puede tener varias licencias "conductor"; el resto de los documentos sigue siendo uno por tipo.
+  const filesSql = (db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'customer_files'").get() || {}).sql || '';
+  if (filesSql.includes('UNIQUE (customer_id, kind)')) {
+    db.exec(`BEGIN;
+      CREATE TABLE customer_files_new (id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE, kind TEXT NOT NULL, name TEXT,
+        mime TEXT NOT NULL, size INTEGER NOT NULL, path TEXT NOT NULL, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+      INSERT INTO customer_files_new SELECT id, customer_id, kind, name, mime, size, path, created_by, created_at FROM customer_files;
+      DROP TABLE customer_files;
+      ALTER TABLE customer_files_new RENAME TO customer_files;
+      COMMIT;`);
+  }
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS ux_customer_files_kind ON customer_files(customer_id, kind) WHERE kind <> 'conductor'");
   if (!has('users', 'must_change_password')) db.exec('ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0');
   if (!has('sessions', 'created_at')) db.exec('ALTER TABLE sessions ADD COLUMN created_at TEXT');
   if (!has('sessions', 'last_seen')) db.exec('ALTER TABLE sessions ADD COLUMN last_seen TEXT');

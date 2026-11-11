@@ -149,8 +149,11 @@ test('API: apagado por defecto y la agencia no se activa sola', async () => {
     await req('POST', '/api/auth/login', { email: 'admin@rentacar.local', password: 'admin123' });
     await req('POST', '/api/auth/password', { current: 'admin123', password: 'Ushuaia2026Segura' });
     const r = book(at(80), at(82));
-    assert.equal((await req('POST', `/api/reservations/${r.id}/signature`, { terms: TERMS })).status, 403);
+    // La firma del contrato la tienen todas las agencias; la tarjeta y la pre-entrega siguen siendo de prueba.
     assert.equal((await req('GET', `/api/reservations/${r.id}`)).data.signature, null);
+    assert.equal((await req('POST', `/api/reservations/${r.id}/signature`, { terms: TERMS })).status, 200);
+    assert.equal((await req('GET', `/api/reservations/${r.id}`)).data.signature.requested, true);
+    assert.equal((await req('POST', `/api/reservations/${r.id}/card-link`)).status, 403);
     await req('PUT', '/api/settings', { pro_features: '1' });
     assert.equal(getSetting(db, 'pro_features'), '0', 'la activa solo el dueño de Floty');
 
@@ -477,5 +480,22 @@ test('dominio propio: la pantalla recibe el dominio para armar los links del cli
     assert.equal((await me()).domain, 'reservas.ancon.test', 'sin reiniciar el servidor');
   } finally {
     server.close();
+  }
+});
+
+test('firma: la tienen todas las agencias, también en autos para trabajo y sin las funciones en prueba', () => {
+  const { seedChoferes } = require('../src/seed');
+  for (const load of [seed, seedChoferes]) {
+    const db = openDb(':memory:');
+    ensureAdmin(db);
+    load(db);
+    assert.notEqual(getSetting(db, 'pro_features'), '1');
+    const r = db.prepare("SELECT id FROM reservations WHERE status IN ('confirmada', 'en_curso') ORDER BY id").get();
+    const s = D.requestSignature(db, r.id, TERMS, { company_name: 'X' }, null);
+    assert.equal(D.viewContract(db, s.token).can_sign, true);
+    D.sign(db, s.token, { name: 'Ana López', doc: '30111222', accepted: true, image: PNG }, { ip: '200.1.1.1', userAgent: 'test' });
+    assert.equal(D.stateOf(db, R.getReservation(db, r.id)).name, 'Ana López');
+    assert.throws(() => D.cardLink(db, r.id), /no está activada/);
+    db.close();
   }
 });

@@ -22,8 +22,9 @@ function ensureRow(db, id) {
   return rowOf(db, id);
 }
 
-function reservationOf(db, id) {
-  if (!proOn(db)) fail(403, 'Esta función no está activada para tu agencia');
+// pro = false: la firma del contrato y las fotos de la entrega, que tienen todas las agencias.
+function reservationOf(db, id, pro = true) {
+  if (pro && !proOn(db)) fail(403, 'Esta función no está activada para tu agencia');
   const r = R.getReservation(db, id);
   if (!r) fail(404, 'Reserva inexistente');
   return r;
@@ -35,7 +36,6 @@ const changed = (snap, r) =>
 
 /** Lo que ve la agencia en la reserva. */
 function stateOf(db, r) {
-  if (!proOn(db)) return null;
   const row = rowOf(db, r.id);
   if (!row) return null;
   return {
@@ -58,7 +58,7 @@ function stateOf(db, r) {
 
 /** Deja el contrato listo para firmar. Las condiciones llegan armadas desde el panel de la agencia, con sus datos ya completos. */
 function requestSignature(db, id, terms, settings, userId) {
-  const r = reservationOf(db, id);
+  const r = reservationOf(db, id, false);
   if (!OPEN.includes(r.status)) fail(409, 'Sólo se pide la firma de una reserva pendiente, confirmada o en curso');
   if (!Array.isArray(terms) || !terms.length || terms.length > 80) fail(400, 'Faltan las condiciones del contrato');
   const row = ensureRow(db, r.id);
@@ -94,7 +94,7 @@ function requestSignature(db, id, terms, settings, userId) {
 
 /** Link de las fotos de la entrega. */
 function photosLink(db, id) {
-  const r = reservationOf(db, id);
+  const r = reservationOf(db, id, false);
   return { photos_token: ensureRow(db, r.id).photos_token };
 }
 
@@ -158,7 +158,7 @@ function returnUploadTarget(db, token) {
 
 function publicContract(db, token) {
   const row = token && db.prepare('SELECT * FROM delivery_links WHERE token = ?').get(String(token));
-  if (!row || !row.snapshot || !proOn(db)) fail(404, 'Este link ya no está disponible');
+  if (!row || !row.snapshot) fail(404, 'Este link ya no está disponible');
   const snap = JSON.parse(row.snapshot);
   const r = R.getReservation(db, row.reservation_id);
   const stale = changed(snap, r);
@@ -235,7 +235,7 @@ function sign(db, token, body, { ip, userAgent }) {
 
 /** Fotos del auto al entregarlo, para el link del cliente. */
 function deliveryPhotos(db, token) {
-  const row = token && proOn(db) && db.prepare('SELECT reservation_id, left_place, snapshot, signed_at FROM delivery_links WHERE photos_token = ?').get(String(token));
+  const row = token && db.prepare('SELECT reservation_id, left_place, snapshot, signed_at FROM delivery_links WHERE photos_token = ?').get(String(token));
   if (!row) fail(404, 'Este link ya no está disponible');
   const r = db.prepare('SELECT code FROM reservations WHERE id = ?').get(row.reservation_id);
   const hidden = row.snapshot && !row.signed_at; // firma pedida y todavía sin firmar: el lugar queda oculto

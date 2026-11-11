@@ -18,9 +18,12 @@ const TYPES = {
 const STAGES = ['entrega', 'devolucion', 'contrato', 'otro'];
 const MAX_PHOTO = 1024 * 1024; // los mismos topes que src/routes/files.js
 const MAX_PDF = 10 * 1024 * 1024;
+const DOC_KINDS = ['carnet_frente', 'carnet_dorso', 'dni_frente', 'dni_dorso', 'pasaporte', 'conductor'];
+const MAX_DRIVERS = 10;
 
 function fileRoutes(db) {
   db.exec('CREATE TABLE IF NOT EXISTS demo_blobs (file_id INTEGER PRIMARY KEY, data BLOB)');
+  db.exec('CREATE TABLE IF NOT EXISTS demo_doc_blobs (file_id INTEGER PRIMARY KEY, data BLOB)');
   const router = express.Router();
   const logAction = (reservationId, userId, action, detail) =>
     db.prepare('INSERT INTO reservation_log (reservation_id, user_id, action, detail) VALUES (?, ?, ?, ?)').run(reservationId, userId || null, action, detail);
@@ -72,7 +75,59 @@ function fileRoutes(db) {
     res.status(204).end();
   });
 
+  // Documentos del cliente (como en src/routes/files.js): uno por tipo; los otros conductores se suman con su nombre.
+  router.post('/customers/:id/documents', async (req, res, next) => {
+    try {
+      const c = db.prepare('SELECT id, anonymized_at FROM customers WHERE id = ?').get(Number(req.params.id));
+      if (!c) fail(404, 'Cliente inexistente');
+      if (c.anonymized_at) fail(409, 'El cliente está anonimizado');
+      const kind = req.query.kind;
+      if (!DOC_KINDS.includes(kind)) fail(400, 'Documento inválido');
+      const driver = kind === 'conductor';
+      if (driver && String(req.query.name || '').trim().length < 3) fail(400, 'Escribí el nombre del conductor');
+      if (driver && db.prepare("SELECT COUNT(*) AS n FROM customer_files WHERE customer_id = ? AND kind = 'conductor'").get(c.id).n >= MAX_DRIVERS) fail(409, `Ya hay ${MAX_DRIVERS} conductores cargados`);
+      const mime = String(req.get('content-type') || '').split(';')[0].trim().toLowerCase();
+      if (!TYPES[mime]) fail(415, 'Formato no admitido: subí fotos (JPG, PNG, HEIC) o PDF');
+      const bytes = new Uint8Array(await req.body.arrayBuffer());
+      if (!bytes.length) fail(400, 'El archivo está vacío');
+      if (mime !== 'application/pdf' && bytes.length > MAX_PHOTO) fail(413, 'La foto pesa más de 1 MB. Subila desde el panel, que la achica sola.');
+      const old = !driver && db.prepare('SELECT id FROM customer_files WHERE customer_id = ? AND kind = ?').get(c.id, kind);
+      if (old) {
+        db.prepare('DELETE FROM customer_files WHERE id = ?').run(old.id);
+        db.prepare('DELETE FROM demo_doc_blobs WHERE file_id = ?').run(old.id);
+      }
+      const name = String(req.query.name || `${kind}.${TYPES[mime]}`).slice(0, 120);
+      const id = Number(
+        db
+          .prepare('INSERT INTO customer_files (customer_id, kind, name, mime, size, path, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(c.id, kind, name, mime, bytes.length, 'demo', req.user.id, nowLocal().replace('T', ' ')).lastInsertRowid,
+      );
+      db.prepare('INSERT INTO demo_doc_blobs (file_id, data) VALUES (?, ?)').run(id, bytes);
+      res.status(201).json(db.prepare('SELECT id, kind, name, mime, size, created_at FROM customer_files WHERE id = ?').get(id));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get('/customers/:id/documents', (req, res) => {
+    res.json(db.prepare('SELECT id, kind, name, mime, size, created_at FROM customer_files WHERE customer_id = ? ORDER BY id').all(Number(req.params.id)));
+  });
+
+  router.get('/documents/:id', (req, res) => {
+    const f = db.prepare('SELECT * FROM customer_files WHERE id = ?').get(Number(req.params.id));
+    const b = f && db.prepare('SELECT data FROM demo_doc_blobs WHERE file_id = ?').get(f.id);
+    if (!b) fail(404, 'Archivo inexistente');
+    res.set('Content-Type', f.mime);
+    res.blob(new Blob([b.data], { type: f.mime }));
+  });
+
+  router.delete('/documents/:id', (req, res) => {
+    db.prepare('DELETE FROM customer_files WHERE id = ?').run(Number(req.params.id));
+    db.prepare('DELETE FROM demo_doc_blobs WHERE file_id = ?').run(Number(req.params.id));
+    res.status(204).end();
+  });
+
   return router;
 }
 
-module.exports = { fileRoutes, TYPES, STAGES };
+module.exports = { fileRoutes, TYPES, STAGES, DOC_KINDS };
