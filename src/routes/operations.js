@@ -195,6 +195,8 @@ function operationsRoutes(db) {
   router.post('/reservations/:id/assign', (req, res) => res.json(R.assignVehicle(db, req.params.id, req.body.vehicle_id, req.user.id)));
   router.post('/reservations/:id/checkout', (req, res) => res.json(R.checkout(db, req.params.id, req.body, req.user.id)));
   router.post('/reservations/:id/checkin', (req, res) => res.json(R.checkin(db, req.params.id, req.body, req.user.id)));
+  router.post('/reservations/:id/checkin-preview', (req, res) => res.json(R.checkinPreview(db, req.params.id, req.body || {})));
+  router.post('/reservations/:id/close-contract', (req, res) => res.json(R.closeContract(db, req.params.id, req.user.id)));
   router.post('/reservations/:id/payments', (req, res) => res.json(R.addPayment(db, req.params.id, req.body, req.user.id)));
 
   // Choferes: multas u otros cargos a cuenta del chofer, y lectura de km (cobra los km extra del período).
@@ -373,6 +375,11 @@ function operationsRoutes(db) {
         pickups: db.prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE r.status IN ('pendiente','confirmada') AND substr(r.pickup_at,1,10) = ?${atR}`).get(tomorrow).n,
         returns: db.prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE status IN ('pendiente','confirmada','en_curso') AND substr(return_at,1,10) = ? AND ${FIXED}${atR}`).get(tomorrow).n,
       },
+      // Contratos que quedaron pendientes después de la devolución (saldo, daños o faltantes).
+      open_contracts: db
+        .prepare(`${baseSelect} JOIN contracts ct ON ct.reservation_id = r.id WHERE ct.in_at IS NOT NULL AND ct.closed_at IS NULL${atR} ORDER BY ct.in_at`)
+        .all()
+        .map((r) => ({ ...r, pending_note: db.prepare('SELECT pending_note FROM contracts WHERE reservation_id = ?').get(r.id).pending_note })),
       // Recordatorios de las próximas 12 horas que falta mandar (los automáticos que ya salieron no aparecen).
       reminders: reminders.pending(db, now),
       quote_errors: db.prepare(`SELECT COUNT(*) AS n FROM quote_inbox WHERE status = 'error'`).get().n,

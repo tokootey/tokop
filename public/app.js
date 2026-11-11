@@ -658,6 +658,13 @@ on(/^\/panel$/, async (view) => {
       ${column('Salen hoy', 'M5 12h14M13 6l6 6-6 6', 'var(--primary)', out, 'out', 'Hoy no sale ningún auto.')}
       ${column('Vuelven hoy', 'M19 12H5M11 6l-6 6 6 6', '#c2410c', back, 'back', 'Hoy no vuelve ningún auto.')}
     </div>
+    ${
+      (d.open_contracts || []).length
+        ? `<div class="card"><h2>Contratos pendientes de cierre <span class="count">${d.open_contracts.length}</span></h2><div class="daylist">${d.open_contracts
+            .map((r) => `<div class="dayrow click" data-href="#/reservas/${r.id}"><span class="plate">${esc(r.vehicle_plate || '—')}</span><div class="who"><b>${esc(r.customer_name)}</b><small>${esc(r.code)} · ${esc(r.pending_note || '')}</small></div><span></span><span></span></div>`)
+            .join('')}</div></div>`
+        : ''
+    }
     <p class="hoy-next">Mañana: ${tomorrow.pickups === 1 ? 'sale 1 auto' : `salen ${tomorrow.pickups} autos`}, ${tomorrow.returns === 1 ? 'vuelve 1' : `vuelven ${tomorrow.returns}`}. <a href="#/planning">Ver calendario</a></p>
     ${d.choferes ? choferesCards(d.choferes) : ''}
     ${/* Lo del día va primero; los primeros pasos de una empresa nueva, abajo. */ setupCard(d.setup)}
@@ -1907,13 +1914,19 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       }
       ${
         c
-          ? `<div class="card"><h2>Contrato ${esc(c.number)}</h2>
+          ? `<div class="card"><h2>Contrato ${esc(c.number)}${c.in_at && !c.closed_at ? ' <span class="badge b-pendiente">Pendiente de cierre</span>' : ''}</h2>
+        ${
+          c.in_at && !c.closed_at
+            ? `<div class="notice warn no-print">El auto ya volvió, pero el contrato quedó pendiente: <b>${esc(c.pending_note || 'sin motivo cargado')}</b>.${r.balance.pending > 0 ? ` Hay ${money(r.balance.pending)} sin cobrar: no se puede cerrar hasta resolverlo.` : ''}
+                <div class="actions" style="margin-top:8px"><button class="btn small" data-act="fine">Sumar un cargo</button>${r.balance.pending > 0 ? '' : '<button class="btn small primary" data-act="closeContract">Cerrar contrato</button>'}</div></div>`
+            : ''
+        }
         <dl class="info">
           <dt>Salida</dt><dd>${fmtDT(c.out_at)} · ${c.out_km} km · combustible ${fuel(c.out_fuel)}</dd>
           ${c.out_notes ? `<dt>Obs. salida</dt><dd>${esc(c.out_notes)}</dd>` : ''}
           <dt>Devolución</dt><dd>${c.in_at ? `${fmtDT(c.in_at)} · ${c.in_km} km · combustible ${fuel(c.in_fuel)}` : '<span class="muted">Pendiente</span>'}</dd>
           ${c.in_notes ? `<dt>Obs. devolución</dt><dd>${esc(c.in_notes)}</dd>` : ''}
-          ${c.charges ? `<dt>Km recorridos</dt><dd>${c.charges.km_driven}</dd>` : ''}
+          ${c.charges ? `<dt>Km recorridos</dt><dd>${num(c.charges.km_driven)}${c.charges.km_excess ? ` · <b class="warn-text">${num(c.charges.km_excess)} de más</b>` : ''}${c.charges.fuel_missing ? ` · <b class="warn-text">faltaron ${c.charges.fuel_missing}/8 de combustible</b>` : ''}</dd>` : ''}
         </dl>
         ${
           c.charges && c.charges.lines.length
@@ -2122,7 +2135,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         if (v && v.fuel !== undefined) $('#modal-body [name=out_fuel]').value = v.fuel;
       });
     },
-    checkin: () =>
+    checkin: () => {
       openModal(
         `Devolución · ${r.code}`,
         formHtml(
@@ -2135,6 +2148,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'in_notes', label: 'Observaciones / daños detectados', type: 'textarea', full: true },
             { name: 'fotos', label: 'Fotos del auto al recibirlo (daños, km y combustible)', type: 'photos' },
             { name: 'send_to_maintenance', label: 'Enviar el vehículo a taller', type: 'checkbox', full: true },
+            { name: 'pending_note', label: 'Dejar el contrato pendiente por (con saldo sin cobrar queda pendiente solo)', type: 'select', options: [['Daños por definir', 'Daños por definir'], ['Faltantes', 'Faltantes (accesorios, llaves, documentos)'], ['Saldo sin cobrar', 'Saldo sin cobrar']], full: true, when: () => proOn() && !choferesMode() },
           ],
           // Si el auxiliar de flota ya cargó el km y el combustible del auto al recibirlo, vienen puestos.
           { in_at: localISO(new Date()), return_branch_id: r.return_branch_id, ...(r.vehicle_km > c.out_km ? { in_km: r.vehicle_km, in_fuel: r.vehicle_fuel } : { in_fuel: c.out_fuel }) },
@@ -2151,7 +2165,33 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           // Si quedó saldo (km o combustible de más, daños), se abre el cobro directo.
           location.hash = `#/reservas/${r.id}?accion=pay`;
         },
-      ),
+      );
+      // Mientras se cargan el km y el combustible: cuánto recorrió, si hay km de más o falta combustible, y los cargos que salen.
+      const form = $('#modal-body form');
+      form.querySelector('.actions').insertAdjacentHTML('beforebegin', '<div id="ret-preview" role="status" style="margin-top:12px"></div>');
+      let timer;
+      const preview = async () => {
+        const d = formData(form);
+        const box = $('#ret-preview');
+        if (!box || d.in_km === null) return;
+        const p = await POST(`/reservations/${r.id}/checkin-preview`, d).catch((e) => ({ error: e.message }));
+        if (!$('#ret-preview')) return; // la ventana se cerró mientras tanto
+        if (p.error) return (box.innerHTML = `<p class="notice warn">${esc(p.error)}</p>`);
+        const alerts = [p.km_excess > 0 && `${num(p.km_excess)} km de más`, p.fuel_missing > 0 && `faltan ${p.fuel_missing}/8 de combustible`].filter(Boolean);
+        box.innerHTML = `<p><b>Recorrió ${num(p.km_driven)} km</b>${p.km_allowed === null ? '' : ` · incluidos ${num(p.km_allowed)}`}</p>
+          ${alerts.length ? `<p class="notice warn">Atención: ${alerts.join(' y ')}.</p>` : ''}
+          ${p.lines.length ? `<table class="breakdown"><tbody>${p.lines.map((l) => `<tr><td>${esc(l.concept)}</td><td class="right">${money(l.amount)}</td></tr>`).join('')}<tr class="total"><td>Cargos adicionales</td><td class="right">${money(p.total)}</td></tr></tbody></table>` : ''}`;
+      };
+      form.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(preview, 400);
+      });
+      preview();
+    },
+    closeContract: async () => {
+      await run(() => POST(`/reservations/${r.id}/close-contract`), 'Contrato cerrado');
+      reload();
+    },
     pay: () =>
       openModal(
         'Registrar movimiento',
@@ -2548,6 +2588,8 @@ const LOG_LABEL = {
   vehiculo_intercambiado: 'Auto intercambiado',
   entregado: 'Auto entregado',
   devuelto: 'Auto devuelto',
+  contrato_pendiente: 'Contrato pendiente de cierre',
+  contrato_cerrado: 'Contrato cerrado',
   pago: 'Pago registrado',
   devolucion: 'Devolución de dinero',
   garantia: 'Garantía recibida',

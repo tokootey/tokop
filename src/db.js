@@ -645,6 +645,10 @@ function migrate(db) {
   }
   if (!has('vehicles', 'insurance_cost')) db.exec('ALTER TABLE vehicles ADD COLUMN insurance_cost REAL NOT NULL DEFAULT 0');
   // Notas de cada pago (por ejemplo: pagó una parte y otra en un repuesto).
+  // Contrato pendiente después de la devolución (saldo, daños o faltantes): se cierra aparte. Los ya devueltos quedan cerrados.
+  if (!has('contracts', 'closed_at')) {
+    db.exec('ALTER TABLE contracts ADD COLUMN closed_at TEXT; ALTER TABLE contracts ADD COLUMN pending_note TEXT; UPDATE contracts SET closed_at = in_at WHERE in_at IS NOT NULL');
+  }
   if (!has('payments', 'notes')) db.exec('ALTER TABLE payments ADD COLUMN notes TEXT');
   // Sucursal donde se cobró (caja diaria). En los pagos viejos queda vacía: cuenta la sucursal de retiro.
   if (!has('payments', 'branch_id')) db.exec('ALTER TABLE payments ADD COLUMN branch_id INTEGER');

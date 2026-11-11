@@ -3,7 +3,7 @@
 const { computeQuote, computeReturnCharges } = require('./pricing');
 const { categoryAvailability, isVehicleFree, paddedRange } = require('./availability');
 const { emit } = require('./webhooks');
-const { getSettings } = require('./db');
+const { getSettings, proOn } = require('./db');
 const { refundFor } = require('./refunds');
 const { fail, normDateTime, nowLocal, round2, tx, parseLocal, fmtLocal } = require('./util');
 const { placeSql, saveHotel, hotelMissing, normalizeHotel, withHotelExtra } = require('./hotel');
@@ -411,16 +411,29 @@ function checkout(db, id, input, userId) {
   return updated;
 }
 
-/** Devolución del vehículo (check-in): cierra el contrato y calcula cargos adicionales. */
-function checkin(db, id, input, userId) {
-  let r = getReservation(db, id);
+/** Los datos de una devolución, revisados: reserva con contrato abierto, km no menor al de salida y combustible entre 0 y 8. */
+function checkinInput(db, id, input) {
+  const r = getReservation(db, id);
   if (!r) fail(404, 'Reserva inexistente');
   if (r.status !== 'en_curso' || !r.contract) fail(409, 'La reserva no tiene un contrato abierto');
   const inKm = Number(input.in_km);
   if (!(inKm >= r.contract.out_km)) fail(400, `El km de devolución debe ser mayor o igual al de salida (${r.contract.out_km})`);
   const inFuel = Number(input.in_fuel);
   if (!(inFuel >= 0 && inFuel <= 8)) fail(400, 'Combustible: valor entre 0 y 8 (octavos)');
-  const inAt = normDateTime(input.in_at) || nowLocal();
+  return { r, inKm, inFuel, inAt: normDateTime(input.in_at) || nowLocal() };
+}
+
+/** Antes de cerrar la devolución: km recorridos, km de más, combustible faltante y los cargos que saldrían. No guarda nada. */
+function checkinPreview(db, id, input) {
+  const { r, inKm, inFuel, inAt } = checkinInput(db, id, input);
+  return computeReturnCharges(db, r, r.contract, { ...input, in_km: inKm, in_fuel: inFuel, in_at: inAt }, { byPeriods: r.periods.length > 0 });
+}
+
+/** Devolución del vehículo (check-in): cierra el contrato y calcula cargos adicionales. */
+function checkin(db, id, input, userId) {
+  const checked = checkinInput(db, id, input);
+  const { inKm, inFuel, inAt } = checked;
+  let { r } = checked;
   // Choferes: el período en que lo devuelve se cobra entero, y los km se controlan contra los de todos los períodos.
   const byPeriods = r.periods.length > 0;
   if (byPeriods) {
@@ -452,9 +465,27 @@ function checkin(db, id, input, userId) {
     }
     log(db, r.id, userId, 'devuelto', { km: inKm, combustible: inFuel, cargos: charges.total });
   });
-  const updated = getReservation(db, r.id);
+  let updated = getReservation(db, r.id);
+  // Agencias con contratos pendientes: con saldo sin cobrar, o si el operador lo deja pendiente (daños, faltantes), el contrato no se cierra todavía.
+  const note = String(input.pending_note || '').trim().slice(0, 300);
+  const pending = proOn(db) && (updated.balance.pending > 0.005 || note);
+  db.prepare('UPDATE contracts SET closed_at = ?, pending_note = ? WHERE id = ?').run(pending ? null : inAt, pending ? note || 'Saldo sin cobrar' : null, r.contract.id);
+  if (pending) log(db, r.id, userId, 'contrato_pendiente', note || 'Saldo sin cobrar');
+  updated = getReservation(db, r.id);
   emit(db, 'reservation.checked_in', publicView(updated));
   return updated;
+}
+
+/** Cierra un contrato que quedó pendiente después de la devolución. Con saldo o cargos sin cobrar no se puede. */
+function closeContract(db, id, userId) {
+  const r = getReservation(db, id);
+  if (!r) fail(404, 'Reserva inexistente');
+  if (!r.contract || !r.contract.in_at) fail(409, 'El auto todavía no fue devuelto');
+  if (r.contract.closed_at) fail(409, 'El contrato ya está cerrado');
+  if (r.balance.pending > 0.005) fail(409, `No se puede cerrar el contrato: hay ${r.balance.pending} sin cobrar. Cobralo o corregí los cargos primero.`);
+  db.prepare('UPDATE contracts SET closed_at = ?, pending_note = NULL WHERE id = ?').run(nowLocal(), r.contract.id);
+  log(db, r.id, userId, 'contrato_cerrado');
+  return getReservation(db, r.id);
 }
 
 function addPayment(db, id, input, userId) {
@@ -522,6 +553,8 @@ module.exports = {
   checkoutCheck,
   checkout,
   checkin,
+  checkinPreview,
+  closeContract,
   addPayment,
   publicView,
   nextCode,
