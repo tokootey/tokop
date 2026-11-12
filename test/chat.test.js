@@ -143,6 +143,25 @@ test('horario de retiro de la sucursal en el cotizador', async () => {
   assert.equal(pickupProblem(b, '2030-05-02T08:30', '2030-05-01T19:59'), null, 'antes de las 20 no hay tope');
   assert.match(pickupProblem(b, '2030-05-01T08:30', '2030-05-01T02:00'), /09:00/, 'de madrugada, hoy desde las 9');
   assert.equal(pickupProblem({ name: 'Sin horario' }, '2030-05-10T03:00', '2030-05-01T23:00'), null);
+  // Fuera de hora: de 20 a 23 se cobra el recargo; después de las 23 no se entrega. Licencia vencida: no entra.
+  const { lastPickupProblem, licenseProblem } = require('../src/routes/chat');
+  const late = { after_hours_fee: '25', after_hours_from: '20:00', after_hours_to: '23:00' };
+  assert.equal(lastPickupProblem(late, '2030-05-10T23:00'), null);
+  assert.match(lastPickupProblem(late, '2030-05-10T23:30'), /hasta las 23:00/);
+  assert.equal(lastPickupProblem({ ...late, after_hours_fee: '0' }, '2030-05-10T23:30'), null, 'sin recargo cargado no hay tope');
+  assert.match(licenseProblem('2020-01-01', '2030-05-12T10:00'), /vencida/);
+  assert.match(licenseProblem('2030-05-11', '2030-05-12T10:00'), /antes de la devolución/);
+  assert.equal(licenseProblem('2030-05-12', '2030-05-12T10:00'), null);
+  assert.equal(licenseProblem('', '2030-05-12T10:00'), null, 'sin fecha se revisa al entregar');
+  for (const [k, v] of Object.entries(late)) setSetting(db, k, v);
+  const at = async (h) => (await call('POST', '/api/public/chat/quote', { pickup_at: day(80, h), return_at: day(83, 10), pickup_branch: 'USH' }));
+  const normal = (await at(10)).data.options[0];
+  const night = (await call('POST', '/api/public/chat/quote', { pickup_at: day(80, 21), return_at: day(83, 21), pickup_branch: 'USH' })).data.options[0];
+  assert.equal(normal.after_hours_fee, 0);
+  assert.equal(night.after_hours_fee, 25, 'retiro y devolución de noche: se cobra una sola vez');
+  assert.equal((await call('POST', '/api/public/chat/quote', { pickup_at: day(80, 10), return_at: day(83, 22), pickup_branch: 'USH' })).data.options[0].after_hours_fee, 25, 'sólo la devolución de noche');
+  assert.equal((await call('POST', '/api/public/chat/quote', { pickup_at: day(80, 23).replace(':00', ':30'), return_at: day(83, 10), pickup_branch: 'USH' })).status, 400, 'después de las 23 no se entrega');
+  setSetting(db, 'after_hours_fee', '0');
   assert.equal(agencyNow('PA', new Date('2030-05-02T01:30:00Z')), '2030-05-01T20:30', 'hora de Panamá, no la del servidor');
 
   db.prepare("UPDATE branches SET pickup_from = '08:00' WHERE code = 'USH'").run();
@@ -151,4 +170,28 @@ test('horario de retiro de la sucursal en el cotizador', async () => {
   assert.match(early.data.error, /08:00/);
   assert.equal((await call('POST', '/api/public/chat/quote', { pickup_at: day(30, 8), return_at: day(33), pickup_branch: 'USH' })).status, 200);
   db.prepare("UPDATE branches SET pickup_from = NULL WHERE code = 'USH'").run();
+});
+
+test('reserva express: menos de 24 hs y fuera de la oficina', () => {
+  const { isExpress } = require('../src/routes/chat');
+  assert.equal(isExpress('2027-01-10T15:00', '2027-01-11T14:00', true), true);
+  assert.equal(isExpress('2027-01-10T15:00', '2027-01-11T16:00', true), false, 'con más de 24 hs no');
+  assert.equal(isExpress('2027-01-10T15:00', '2027-01-11T14:00', false), false, 'en la oficina no');
+});
+
+test('link de datos: el cliente completa lo que falta y sin la foto de la licencia no termina', () => {
+  const D = require('../src/delivery');
+  const r = db.prepare("SELECT id, customer_id FROM reservations WHERE status IN ('pendiente', 'confirmada') LIMIT 1").get();
+  db.prepare('UPDATE customers SET address = NULL, license_expiry = NULL WHERE id = ?').run(r.customer_id);
+  const { docs_token } = D.docsLink(db, r.id);
+  const v = D.viewDocs(db, docs_token);
+  assert.deepEqual(v.missing.filter((f) => ['address', 'license_expiry'].includes(f)), ['address', 'license_expiry']);
+  assert.equal(v.doc_number, undefined, 'no devuelve los datos guardados');
+  assert.throws(() => D.saveDocs(db, docs_token, { address: 'Calle 1', license_expiry: '2099-01-01' }), /foto del frente/);
+  require('../src/routes/files').saveCustomerDocument(db, uploadsDir, r.customer_id, { kind: 'carnet_frente', mime: 'image/jpeg', body: Buffer.from([0xff, 0xd8, 0xff]) });
+  assert.throws(() => D.saveDocs(db, docs_token, { license_expiry: '2000-01-01' }), /vence antes/);
+  D.saveDocs(db, docs_token, { address: 'Calle 1', license_expiry: '2099-01-01' });
+  assert.deepEqual({ ...db.prepare('SELECT address, license_expiry FROM customers WHERE id = ?').get(r.customer_id) }, { address: 'Calle 1', license_expiry: '2099-01-01' });
+  assert.deepEqual(D.viewDocs(db, docs_token).photos, ['carnet_frente']);
+  assert.throws(() => D.viewDocs(db, 'otro-token'), /ya no está disponible/);
 });

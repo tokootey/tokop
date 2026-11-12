@@ -45,6 +45,27 @@ function seasonMultiplier(seasons, dateStr) {
   return mult;
 }
 
+/** Recargo por conductor menor: lo paga quien el día del retiro no llegó a la edad que cargó la agencia. Sin fecha de nacimiento no se cobra. */
+function youngDriverFee(db, settings, input) {
+  const fee = Number(settings.young_driver_fee) || 0;
+  if (!(fee > 0) || !input.pickup_at) return 0;
+  const birth = String(input.birth_date || (input.customer_id && (db.prepare('SELECT birth_date FROM customers WHERE id = ?').get(input.customer_id) || {}).birth_date) || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(birth)) return 0;
+  const day = String(input.pickup_at).slice(0, 10);
+  const age = Number(day.slice(0, 4)) - Number(birth.slice(0, 4)) - (day.slice(5) < birth.slice(5) ? 1 : 0);
+  return age < (Number(settings.young_driver_age) || 21) ? fee : 0;
+}
+
+/** Fuera de hora: si el retiro o la devolución cae entre after_hours_from y after_hours_to (por ejemplo de 20:00 a 23:00) se paga un recargo fijo, una sola vez. */
+function afterHoursFee(settings, input) {
+  const fee = Number(settings.after_hours_fee) || 0;
+  const late = (at) => {
+    const time = String(at || '').slice(11, 16);
+    return Boolean(time) && time >= (settings.after_hours_from || '20:00') && time <= (settings.after_hours_to || '23:00');
+  };
+  return fee > 0 && (late(input.pickup_at) || late(input.return_at)) ? fee : 0;
+}
+
 /**
  * Calcula la cotización de un alquiler.
  * @returns desglose con base, temporada, adicionales, recargo one-way, descuento, impuestos y total.
@@ -119,7 +140,9 @@ function computeQuote(db, input) {
   const demandPct = input.dynamic_pct !== undefined ? Number(input.dynamic_pct) || 0 : dynamicPct(db, settings, input);
   const demandExtra = ((base - promoDays * perDay + seasonExtra) * demandPct) / 100;
 
-  const subtotal = base + seasonExtra + demandExtra - promoDiscount + extrasTotal + oneWay;
+  const young = youngDriverFee(db, settings, input);
+  const afterHours = choferes ? 0 : afterHoursFee(settings, input);
+  const subtotal = base + seasonExtra + demandExtra - promoDiscount + extrasTotal + oneWay + young + afterHours;
   const discountPct = Math.min(100, Math.max(0, Number(input.discount_pct) || 0));
   // El porcentaje y el monto fijo (por ejemplo 10.000 para redondear) se suman; nunca más que el subtotal.
   const discountAmount = Math.max(0, Number(input.discount_amount) || 0);
@@ -144,6 +167,9 @@ function computeQuote(db, input) {
     extras: extrasLines,
     extras_total: round2(extrasTotal),
     one_way_fee: round2(oneWay),
+    young_driver_fee: round2(young),
+    after_hours_fee: round2(afterHours),
+    young_driver_age: young ? Number(settings.young_driver_age) || 21 : undefined,
     subtotal: round2(subtotal),
     discount_pct: discountPct,
     discount_amount: round2(discountAmount),
@@ -202,7 +228,7 @@ function computeReturnCharges(db, reservation, contract, input, { byPeriods = fa
     if (Number(c.amount)) lines.push({ concept: String(c.concept || 'Otro cargo'), amount: round2(c.amount) });
   }
 
-  return { km_driven: kmDriven, km_allowed: kmAllowed, km_excess: kmExcess, fuel_missing: missingEighths, lines, total: round2(lines.reduce((a, l) => a + l.amount, 0)) };
+  return { km_driven: kmDriven, km_allowed: kmAllowed, km_excess: kmExcess, late_days: byPeriods ? 0 : lateDays, fuel_missing: missingEighths, lines, total: round2(lines.reduce((a, l) => a + l.amount, 0)) };
 }
 
-module.exports = { rentalDays, computeQuote, computeReturnCharges, parseDynamicRules };
+module.exports = { youngDriverFee, rentalDays, computeQuote, computeReturnCharges, parseDynamicRules };

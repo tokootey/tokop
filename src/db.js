@@ -537,6 +537,12 @@ const DEFAULT_SETTINGS = {
   turnaround_minutes: '0', // minutos entre la devolución de un auto y su próximo alquiler
   dynamic_pricing_rules: '', // recargo según ocupación de la categoría, "ocupación:recargo": 70:10, 90:20
   pay_modes: '0', // '1': cobrando por día, cada auto elige si paga cada 24 o cada 12 horas (lo activa el dueño de Floty por agencia)
+  young_driver_age: '21', // conductor menor de esta edad el día del retiro: paga young_driver_fee, una vez por alquiler
+  young_driver_fee: '0',
+  after_hours_fee: '0', // retiro o devolución entre after_hours_from y after_hours_to: recargo fijo, una vez; después de esa hora el link de reservas no entrega
+  after_hours_from: '20:00',
+  after_hours_to: '23:00',
+  paypal_surcharge_pct: '0', // recargo al cobrar con PayPal (%), lo carga cada agencia
   late_fee_per_day: '0', // recargo por cada día de atraso en el pago
   late_grace_days: '0', // días de tolerancia antes de cobrar el recargo
   holidays: '', // feriados con la tarifa de domingos de la categoría (cobro por día), DD/MM/AAAA separados por coma
@@ -563,6 +569,10 @@ const DEFAULT_SETTINGS = {
   chat_enabled: '0',
   chat_welcome: '',
   chat_whatsapp: '',
+  payment_link_url: '', // link de pago de la agencia (su banco o pasarela) para cobrar la reserva
+  deposit_link_url: '', // ídem para cobrar la garantía; se ofrece apenas se registra el pago de la reserva
+  express_requires_payment: '0', // '1': la entrega express (pre-entrega) sólo se hace con la reserva paga
+  chat_hotel: '0', // '1': el link de reservas ofrece llevar el auto al hotel del cliente
   chat_faq: '',
   // Factura electrónica, sólo de prueba (src/invoicing): cada empresa carga sus datos fiscales.
   invoice_provider: '', // 'arca' (Argentina) o 'sii' (Chile)
@@ -667,6 +677,9 @@ function migrate(db) {
   for (const col of ['pickup_from', 'late_after', 'late_pickup_from']) {
     if (!has('branches', col)) db.exec(`ALTER TABLE branches ADD COLUMN ${col} TEXT`);
   }
+  // Reserva express: la del link con menos de 24 hs en un lugar sin personal de la agencia (un hotel, o la sucursal marcada así).
+  if (!has('branches', 'express_24h')) db.exec('ALTER TABLE branches ADD COLUMN express_24h INTEGER NOT NULL DEFAULT 0');
+  if (!has('reservations', 'express')) db.exec('ALTER TABLE reservations ADD COLUMN express INTEGER NOT NULL DEFAULT 0');
   // Saldo del Panapass (peajes de Panamá): el del auto, y con cuánto salió y volvió en cada contrato.
   if (!has('vehicles', 'panapass')) db.exec('ALTER TABLE vehicles ADD COLUMN panapass REAL');
   for (const col of ['out_panapass', 'in_panapass']) if (!has('contracts', col)) db.exec(`ALTER TABLE contracts ADD COLUMN ${col} REAL`);
@@ -676,10 +689,11 @@ function migrate(db) {
   if (!has('vehicles', 'service_due')) db.exec('ALTER TABLE vehicles ADD COLUMN service_due TEXT');
   if (!has('vehicles', 'service_every_km')) db.exec('ALTER TABLE vehicles ADD COLUMN service_every_km INTEGER NOT NULL DEFAULT 0');
   // Entrega express: dónde quedó el auto y el link para que el cliente suba las fotos de la devolución.
-  for (const col of ['left_place', 'return_token', 'pre_delivery']) {
+  for (const col of ['left_place', 'return_token', 'pre_delivery', 'docs_token']) {
     if (!has('delivery_links', col)) db.exec(`ALTER TABLE delivery_links ADD COLUMN ${col} TEXT`);
   }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ix_delivery_return ON delivery_links(return_token)');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ix_delivery_docs ON delivery_links(docs_token)');
   // La sucursal de ejemplo "Entrega en hotel" duplicaba la opción Hotel: se apaga una sola vez (sus reservas viejas quedan igual;
   // si la agencia la vuelve a activar, no se toca más).
   if (!getSetting(db, 'migracion_sucursal_hotel')) {

@@ -187,6 +187,8 @@ function buildContractPdf(r, photos = []) {
     q.dynamic_extra ? [`Recargo por alta demanda ${q.dynamic_pct}%`, money(q.dynamic_extra)] : null,
     ...(q.extras || []).map((x) => [`${x.name}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
+    q.young_driver_fee ? [`Conductor menor de ${q.young_driver_age} años`, money(q.young_driver_fee)] : null,
+    q.after_hours_fee ? ['Fuera de hora', money(q.after_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct}%` : ''}`, `- ${money(q.discount)}`] : null,
     q.tax_rate ? [`${taxName()} ${q.tax_rate}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
     [{ content: 'Total del alquiler', styles: { fontStyle: 'bold' } }, { content: money(r.total), styles: { fontStyle: 'bold' } }],

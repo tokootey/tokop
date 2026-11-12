@@ -16,9 +16,10 @@ const rowOf = (db, id) => db.prepare('SELECT * FROM delivery_links WHERE reserva
 
 function ensureRow(db, id) {
   const row = rowOf(db, id);
-  if (row && row.return_token) return row;
-  if (row) db.prepare('UPDATE delivery_links SET return_token = ? WHERE reservation_id = ?').run(newToken(), id); // fila anterior a este link
-  else db.prepare('INSERT INTO delivery_links (reservation_id, token, photos_token, card_token, return_token) VALUES (?, ?, ?, ?, ?)').run(id, newToken(), newToken(), newToken(), newToken());
+  if (row && row.return_token && row.docs_token) return row;
+  // fila anterior a estos links: se completan los que falten
+  if (row) db.prepare('UPDATE delivery_links SET return_token = COALESCE(return_token, ?), docs_token = COALESCE(docs_token, ?) WHERE reservation_id = ?').run(newToken(), newToken(), id);
+  else db.prepare('INSERT INTO delivery_links (reservation_id, token, photos_token, card_token, return_token, docs_token) VALUES (?, ?, ?, ?, ?, ?)').run(id, newToken(), newToken(), newToken(), newToken(), newToken());
   return rowOf(db, id);
 }
 
@@ -118,10 +119,11 @@ function preDeliver(db, id, input, settings, userId) {
   if (r.status !== 'confirmada') fail(409, 'La pre-entrega se hace con la reserva confirmada');
   const place = String(input.left_place || '').trim().slice(0, 300);
   if (place.length < 3) fail(400, 'Escribí dónde queda el auto');
+  if (settings.express_requires_payment === '1' && r.balance.pending > 0.005) fail(409, `La entrega express se hace con la reserva paga: falta cobrar ${r.balance.pending}`);
   const { vehicleId, outKm, outFuel } = R.checkoutCheck(db, r, input);
   if (vehicleId !== r.vehicle_id) R.assignVehicle(db, r.id, vehicleId, userId);
   ensureRow(db, r.id);
-  const pre = { vehicle_id: vehicleId, out_km: outKm, out_fuel: outFuel, out_notes: String(input.out_notes || '').trim().slice(0, 2000) || null };
+  const pre = { vehicle_id: vehicleId, out_km: outKm, out_fuel: outFuel, out_panapass: R.balanceOf(input.out_panapass), out_notes: String(input.out_notes || '').trim().slice(0, 2000) || null };
   db.prepare('UPDATE delivery_links SET pre_delivery = ?, left_place = ? WHERE reservation_id = ?').run(JSON.stringify(pre), place, r.id);
   R.log(db, r.id, userId, 'pre_entrega', place);
   return requestSignature(db, r.id, input.terms, settings, userId);
@@ -132,6 +134,62 @@ function returnLink(db, id) {
   const r = reservationOf(db, id);
   if (r.status !== 'en_curso') fail(409, 'El link de devolución se manda con el alquiler en curso');
   return { return_token: ensureRow(db, r.id).return_token };
+}
+
+/**
+ * Link para que el cliente complete sus datos y suba las fotos de su licencia y documento antes de retirar
+ * (reserva express: a esa hora no lo recibe nadie). Sirve hasta que se entrega el auto.
+ */
+const BEFORE_PICKUP = ['pendiente', 'confirmada'];
+const DOC_FIELDS = ['doc_number', 'address', 'birth_date', 'license_number', 'license_expiry'];
+const DOC_PHOTOS = ['carnet_frente', 'carnet_dorso', 'dni_frente', 'pasaporte']; // los mismos lugares que la ficha del cliente
+const isDate = (v) => /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(v);
+
+function docsLink(db, id) {
+  const r = reservationOf(db, id, false);
+  if (!BEFORE_PICKUP.includes(r.status)) fail(409, 'Los datos se le piden al cliente antes de entregar el auto');
+  return { docs_token: ensureRow(db, r.id).docs_token };
+}
+
+function docsOf(db, token) {
+  const row = token && db.prepare('SELECT reservation_id FROM delivery_links WHERE docs_token = ?').get(String(token));
+  const r = row && db.prepare('SELECT id, code, status, customer_id, return_at FROM reservations WHERE id = ?').get(row.reservation_id);
+  if (!r || !BEFORE_PICKUP.includes(r.status)) fail(404, 'Este link ya no está disponible');
+  return r;
+}
+const docPhotos = (db, customerId) => db.prepare('SELECT kind FROM customer_files WHERE customer_id = ?').all(customerId).map((f) => f.kind);
+
+/** Al cliente no se le devuelven los datos guardados: sólo qué falta completar y qué fotos ya subió. */
+function viewDocs(db, token) {
+  const r = docsOf(db, token);
+  const c = db.prepare('SELECT * FROM customers WHERE id = ?').get(r.customer_id);
+  return {
+    company: getSettings(db).company_name || '',
+    code: r.code,
+    name: String(c.full_name || '').split(' ')[0],
+    missing: DOC_FIELDS.filter((f) => !String(c[f] || '').trim()),
+    photos: docPhotos(db, r.customer_id).filter((k) => DOC_PHOTOS.includes(k)),
+  };
+}
+
+/** Guarda lo que completó el cliente, sin pisar lo que ya cargó la agencia. Sin la foto de la licencia no se da por terminado. */
+function saveDocs(db, token, input) {
+  const r = docsOf(db, token);
+  const data = {};
+  for (const f of DOC_FIELDS) data[f] = String(input[f] || '').trim().slice(0, 200);
+  for (const f of ['birth_date', 'license_expiry']) if (data[f] && !isDate(data[f])) fail(400, 'Revisá las fechas');
+  if (data.license_expiry && data.license_expiry < r.return_at.slice(0, 10)) fail(400, 'Tu licencia vence antes de la devolución. Tiene que estar vigente todo el alquiler.');
+  if (!docPhotos(db, r.customer_id).includes('carnet_frente')) fail(400, 'Subí la foto del frente de tu licencia de conducir');
+  for (const f of DOC_FIELDS) if (data[f]) db.prepare(`UPDATE customers SET ${f} = ? WHERE id = ? AND (${f} IS NULL OR ${f} = '')`).run(data[f], r.customer_id);
+  R.log(db, r.id, null, 'datos_cliente', 'El cliente completó sus datos y subió sus fotos desde el link');
+  return { ok: true };
+}
+
+/** ¿Se puede subir otra foto? Se comprueba antes de leer el archivo: el link es público. */
+function docsUploadTarget(db, token, kind) {
+  const r = docsOf(db, token);
+  if (!DOC_PHOTOS.includes(kind)) fail(400, 'Foto desconocida');
+  return r;
 }
 
 const MAX_RETURN_PHOTOS = 30;
@@ -208,6 +266,8 @@ function sign(db, token, body, { ip, userAgent }) {
   if (!validImage(body.image)) fail(400, 'Dibujá tu firma');
   // Con pre-entrega, firmar completa la entrega. Si no se puede, la firma no se guarda: nunca queda firmado sin alquiler abierto.
   if (row.pre_delivery && r.status === 'confirmada') {
+    // Por si se devolvió un pago o se sumó un cargo después de la pre-entrega.
+    if (getSettings(db).express_requires_payment === '1' && r.balance.pending > 0.005) fail(409, 'Falta pagar la reserva. Escribile a la agencia.');
     try {
       R.checkout(db, r.id, JSON.parse(row.pre_delivery), null);
     } catch (e) {
@@ -311,4 +371,4 @@ function saveCard(db, token, body, { ip }) {
   return { ok: true, card: { holder, brand, last4, exp } };
 }
 
-module.exports = { stateOf, requestSignature, preDeliver, photosLink, setLeftPlace, returnLink, viewReturn, returnUploadTarget, viewContract, sign, deliveryPhotos, cardLink, cardUrlFor, viewCard, saveCard };
+module.exports = { docsLink, viewDocs, saveDocs, docsUploadTarget, stateOf, requestSignature, preDeliver, photosLink, setLeftPlace, returnLink, viewReturn, returnUploadTarget, viewContract, sign, deliveryPhotos, cardLink, cardUrlFor, viewCard, saveCard };

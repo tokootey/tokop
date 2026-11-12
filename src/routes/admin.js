@@ -86,6 +86,11 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
     if (body.country !== undefined && !COUNTRY_PRESETS[body.country]) fail(400, 'País inválido');
     if (body.business_mode !== undefined && !['turismo', 'choferes'].includes(body.business_mode)) fail(400, 'Tipo de negocio inválido');
     if (body.rent_period !== undefined && !['dia', 'semana', 'mes'].includes(body.rent_period)) fail(400, 'Período de alquiler inválido');
+    if (body.paypal_surcharge_pct !== undefined && !(Number(body.paypal_surcharge_pct) >= 0 && Number(body.paypal_surcharge_pct) <= 100)) fail(400, 'El recargo de PayPal tiene que ser un porcentaje entre 0 y 100');
+    for (const k of ['payment_link_url', 'deposit_link_url']) if (body[k] && !String(body[k]).trim().toLowerCase().startsWith('https://')) fail(400, 'El link de pago tiene que empezar con https://');
+    if (body.after_hours_fee !== undefined && !(Number(body.after_hours_fee) >= 0)) fail(400, 'El recargo fuera de hora tiene que ser un número positivo');
+    for (const k of ['after_hours_from', 'after_hours_to']) if (body[k] !== undefined && !/^[0-9]{2}:[0-9]{2}$/.test(body[k])) fail(400, 'Cargá el horario fuera de hora como 20:00');
+    for (const k of ['young_driver_age', 'young_driver_fee']) if (body[k] !== undefined && !(Number(body[k]) >= 0)) fail(400, 'La edad y el recargo por conductor menor tienen que ser números positivos');
     for (const k of ['late_fee_per_day', 'late_grace_days']) if (body[k] !== undefined && !(Number(body[k]) >= 0)) fail(400, 'El recargo y la tolerancia tienen que ser números positivos');
     const hrs = (k) => (body[k] !== undefined ? Number(body[k]) : Number(getSettings(db)[k]));
     for (const k of ['refund_full_hours', 'refund_partial_hours', 'refund_partial_pct']) {

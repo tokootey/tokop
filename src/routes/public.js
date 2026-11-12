@@ -5,7 +5,7 @@ const { requireApiKey } = require('../auth');
 const { computeQuote } = require('../pricing');
 const { categoryAvailability } = require('../availability');
 const { ingestQuote, reservationFromQuote, findByCodeOrName } = require('../integration');
-const { getReservation, changeStatus, publicView } = require('../reservations');
+const { getReservation, changeStatus, publicView, addPayment } = require('../reservations');
 const { getSetting } = require('../db');
 const { cardUrlFor } = require('../delivery');
 const { fail, normDateTime } = require('../util');
@@ -114,6 +114,23 @@ function publicRoutes(db, { publicQuery = '' } = {}) {
     const r = getReservation(db, req.params.code) || findByExternal(req.params.code);
     if (!r) fail(404, 'Reserva inexistente');
     res.json(publicView(changeStatus(db, r.id, 'cancelada', null, (req.body && req.body.reason) || 'Cancelada desde el cotizador')));
+  });
+
+  /**
+   * POST /payments { code, amount, kind: 'pago' | 'garantia', method, reference } — el link de pago o la pasarela avisa que el cliente pagó
+   * y el cobro entra solo al saldo de la reserva. Con la misma `reference` (el número de operación) no se anota dos veces.
+   */
+  router.post('/payments', (req, res) => {
+    const b = req.body || {};
+    const r = b.code ? getReservation(db, b.code) || findByExternal(b.code) : null;
+    if (!r) fail(404, 'Reserva inexistente');
+    const reference = String(b.reference || '').trim().slice(0, 120);
+    if (!reference) fail(400, 'reference es obligatorio: el número de operación del pago');
+    const duplicated = Boolean(db.prepare('SELECT 1 FROM payments WHERE reservation_id = ? AND reference = ?').get(r.id, reference));
+    const now = duplicated
+      ? r
+      : addPayment(db, r.id, { amount: b.amount, kind: b.kind === 'garantia' ? 'garantia' : 'pago', method: String(b.method || 'link de pago').slice(0, 40), reference, notes: 'Entró solo: lo avisó el medio de pago' }, null);
+    res.status(duplicated ? 200 : 201).json({ duplicated, pending: now.balance.pending, reservation: publicView(now) });
   });
 
   /**

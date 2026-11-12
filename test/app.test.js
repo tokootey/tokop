@@ -179,13 +179,13 @@ test('no se entrega sin licencia del cliente', async () => {
 });
 
 test('no se entrega si a la ficha del cliente le falta algún dato', async () => {
-  const cust = await call('POST', '/api/customers', { full_name: 'Incompleto', doc_number: '77', phone: '+507 6000 0001', license_number: 'L7', license_expiry: '2099-01-01' });
+  const cust = await call('POST', '/api/customers', { full_name: 'Incompleto', doc_number: '77', phone: '+507 6000 0001', license_expiry: '2099-01-01' });
   const r = await call('POST', '/api/reservations', { customer_id: cust.data.id, category_id: 1, pickup_at: '2027-07-01T10:00', return_at: '2027-07-02T10:00' });
   const v = (await call('GET', `/api/reservations/${r.data.id}/available-vehicles`)).data[0];
   const out = await call('POST', `/api/reservations/${r.data.id}/checkout`, { vehicle_id: v.id });
   assert.equal(out.status, 400);
-  assert.match(out.data.error, /Falta: email, domicilio, fecha de nacimiento$/);
-  await call('PUT', `/api/customers/${cust.data.id}`, { email: 'i@ejemplo.com', address: 'Calle 2', birth_date: '1985-05-05' });
+  assert.match(out.data.error, /Falta: domicilio, fecha de nacimiento$/);
+  await call('PUT', `/api/customers/${cust.data.id}`, { address: 'Calle 2', birth_date: '1985-05-05' });
   assert.equal((await call('POST', `/api/reservations/${r.data.id}/checkout`, { vehicle_id: v.id })).status, 200);
 });
 
@@ -234,6 +234,13 @@ test('API del cotizador: API key, disponibilidad y reserva idempotente', async (
   assert.equal(again.status, 200);
   assert.equal(again.data.duplicated, true);
   assert.equal(again.data.reservation.code, first.data.reservation.code);
+
+  // El medio de pago avisa el cobro: entra solo al saldo y el mismo aviso repetido no se anota dos veces.
+  const paid = await call('POST', '/api/public/v1/payments', { code: 'COT-77', amount: 100000, reference: 'OP-1' }, h);
+  assert.deepEqual([paid.status, paid.data.pending], [201, 150000]);
+  const paidAgain = await call('POST', '/api/public/v1/payments', { code: 'COT-77', amount: 100000, reference: 'OP-1' }, h);
+  assert.deepEqual([paidAgain.status, paidAgain.data.duplicated, paidAgain.data.pending], [200, true, 150000]);
+  assert.equal((await call('POST', '/api/public/v1/payments', { code: 'COT-77', amount: 5 }, h)).status, 400);
 
   const byExternal = await call('GET', '/api/public/v1/reservations/COT-77', undefined, h);
   assert.equal(byExternal.data.code, first.data.reservation.code);
@@ -509,4 +516,47 @@ test('contrato: el texto viejo se reemplaza al abrir la base', () => {
   const d3 = open(file);
   assert.equal(getSetting(d3, 'contract_terms'), 'Mis condiciones');
   d3.close();
+});
+
+test('recargo de PayPal: se anota aparte, entra a caja y no descuenta de la deuda', async () => {
+  assert.equal((await call('PUT', '/api/settings', { paypal_surcharge_pct: 150 })).status, 400);
+  assert.equal((await call('PUT', '/api/settings', { paypal_surcharge_pct: 5 })).status, 200);
+  const cust = await call('POST', '/api/customers', { full_name: 'Paga PayPal' });
+  const r = (await call('POST', '/api/reservations', { customer_id: cust.data.id, category_id: 1, pickup_at: '2027-09-01T10:00', return_at: '2027-09-02T10:00' })).data;
+  const paid = (await call('POST', `/api/reservations/${r.id}/payments`, { amount: 200, method: 'paypal' })).data;
+  assert.equal(paid.balance.paid, r.balance.paid + 200);
+  assert.deepEqual(paid.payments.filter((p) => p.kind === 'recargo').map((p) => [p.method, p.amount]), [['paypal', 10]]);
+  const cash = (await call('GET', '/api/cash')).data;
+  assert.equal(cash.rows.filter((p) => p.reservation_id === r.id).reduce((n, p) => n + p.amount, 0), 210);
+  // Con otro medio no hay recargo.
+  const cashPay = (await call('POST', `/api/reservations/${r.id}/payments`, { amount: 50, method: 'efectivo' })).data;
+  assert.equal(cashPay.payments.filter((p) => p.kind === 'recargo').length, 1);
+  await call('PUT', '/api/settings', { paypal_surcharge_pct: 0 });
+});
+
+test('recargo por conductor menor: se suma solo por la fecha de nacimiento, una vez por alquiler', async () => {
+  assert.equal((await call('PUT', '/api/settings', { young_driver_fee: -1 })).status, 400);
+  const trip = { category_id: 1, pickup_at: '2027-10-10T10:00', return_at: '2027-10-13T10:00' };
+  const base = (await call('POST', '/api/quote', trip)).data.total;
+  await call('PUT', '/api/settings', { young_driver_fee: 1000, young_driver_age: 21 });
+  // Cumple 21 el día después del retiro: paga. El que ya los cumplió ese día, no.
+  const young = await call('POST', '/api/customers', { full_name: 'Joven', birth_date: '2006-10-11' });
+  const adult = await call('POST', '/api/customers', { full_name: 'Adulto', birth_date: '2006-10-10' });
+  const q = (await call('POST', '/api/quote', { ...trip, customer_id: young.data.id })).data;
+  assert.deepEqual([q.young_driver_fee, q.young_driver_age, q.total], [1000, 21, base + 1000]);
+  assert.equal((await call('POST', '/api/quote', { ...trip, customer_id: adult.data.id })).data.total, base);
+  assert.equal((await call('POST', '/api/quote', trip)).data.total, base, 'sin fecha de nacimiento no se cobra');
+  const r = (await call('POST', '/api/reservations', { ...trip, customer_id: young.data.id })).data;
+  assert.equal(r.pricing.young_driver_fee, 1000);
+  // El menor lleva sí o sí el seguro de menor franquicia; el adulto, el que elija (acá ninguno).
+  const insurances = (await call('GET', '/api/extras')).data.filter((x) => x.kind === 'seguro' && x.active);
+  const best = insurances.sort((a, b) => (a.deductible || 0) - (b.deductible || 0) || b.price - a.price)[0];
+  assert.deepEqual(r.extras.filter((x) => x.kind === 'seguro').map((x) => x.extra_id), best ? [best.id] : []);
+  const r2 = (await call('POST', '/api/reservations', { ...trip, pickup_at: '2027-11-10T10:00', return_at: '2027-11-13T10:00', customer_id: adult.data.id })).data;
+  assert.equal(r2.extras.filter((x) => x.kind === 'seguro').length, 0);
+  // Recargo propio de la agencia: se suma al tildarlo y el cotizador público no lo ofrece.
+  const fee = (await call('POST', '/api/extras', { name: 'Entrega nocturna', price: 300, charge_type: 'fijo', kind: 'recargo', active: 1 })).data;
+  assert.equal((await call('POST', '/api/quote', { ...trip, extras: [{ extra_id: fee.id }] })).data.total, base + 300);
+  assert.equal((await call('GET', '/api/public/chat/config')).data.extras.some((x) => x.name === 'Entrega nocturna'), false);
+  await call('PUT', '/api/settings', { young_driver_fee: 0 });
 });

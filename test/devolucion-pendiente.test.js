@@ -70,6 +70,15 @@ test('contrato pendiente: con saldo o daños no se cierra hasta resolverlo (solo
     assert.equal((await close(c)).status, 409);
     await call('POST', `/api/reservations/${c.id}/payments`, { kind: 'pago', amount: 80 });
     assert.equal((await close(c)).status, 200);
+
+    // Km de más sin tarifa de km excedente: no hay cargo, pero el contrato queda en suspenso igual.
+    app.db.prepare('UPDATE categories SET extra_km_rate = 0').run();
+    const d = app.reserve({ vehicle_id: 1, pickup_at: at(8, 8), return_at: at(10, 8) });
+    await call('POST', `/api/reservations/${d.id}/payments`, { kind: 'pago', amount: d.total });
+    await call('POST', `/api/reservations/${d.id}/checkout`, { out_at: at(8, 9) });
+    const far = (await back(d, { in_km: 9000, in_at: at(10, 8) })).data;
+    assert.deepEqual([far.contract.closed_at, far.contract.pending_note, far.balance.pending], [null, 'Km de más', 0]);
+    assert.equal((await close(d)).status, 200);
   } finally {
     app.close();
   }

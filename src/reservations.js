@@ -1,6 +1,6 @@
 'use strict';
 
-const { computeQuote, computeReturnCharges } = require('./pricing');
+const { computeQuote, computeReturnCharges, youngDriverFee } = require('./pricing');
 const { categoryAvailability, isVehicleFree, paddedRange } = require('./availability');
 const { emit } = require('./webhooks');
 const { getSettings, proOn } = require('./db');
@@ -123,6 +123,15 @@ function assertAvailability(db, data, excludeId = 0) {
   }
 }
 
+/** Conductor menor (con recargo cargado): lleva sí o sí el seguro de menor franquicia, en lugar del que tenga elegido. */
+function withYoungInsurance(db, data) {
+  if (!youngDriverFee(db, getSettings(db), data)) return data.extras;
+  const best = db.prepare("SELECT id FROM extras WHERE kind = 'seguro' AND active = 1 ORDER BY COALESCE(deductible, 0), price DESC LIMIT 1").get();
+  if (!best) return data.extras;
+  const insurances = new Set(db.prepare("SELECT id FROM extras WHERE kind = 'seguro'").all().map((x) => x.id));
+  return [...(data.extras || []).filter((e) => !insurances.has(Number(e.extra_id))), { extra_id: best.id, quantity: 1 }];
+}
+
 /**
  * Crea una reserva. Si `price_override` viene definido (por ejemplo, el total que ya cotizó
  * el cotizador externo) se respeta ese total en lugar del calculado.
@@ -135,6 +144,7 @@ function createReservation(db, input, userId) {
   const status = data.status && ['pendiente', 'confirmada'].includes(data.status) ? data.status : 'pendiente';
   // Entrega en hotel: se suma sola su tarifa (adicional "Entrega en hotel"), si la agencia le puso precio.
   if (normalizeHotel(data.hotel)) data.extras = withHotelExtra(db, data.extras, true);
+  data.extras = withYoungInsurance(db, data);
 
   const id = tx(db, () => {
     assertAvailability(db, data);
@@ -207,6 +217,7 @@ function updateReservation(db, id, input, userId) {
     ...input,
   };
   const data = normalizeInput(merged);
+  data.extras = withYoungInsurance(db, data);
   tx(db, () => {
     assertAvailability(db, data, current.id);
     const sameTrip = data.pickup_at === current.pickup_at && data.return_at === current.return_at && Number(data.category_id) === current.category_id;
@@ -453,10 +464,8 @@ function extendReservation(db, id, input, userId) {
 const CUSTOMER_REQUIRED = [
   ['doc_number', 'documento'],
   ['phone', 'teléfono'],
-  ['email', 'email'],
   ['address', 'domicilio'],
   ['birth_date', 'fecha de nacimiento'],
-  ['license_number', 'número de licencia'],
   ['license_expiry', 'vencimiento de la licencia'],
 ];
 
@@ -486,6 +495,7 @@ function checkout(db, id, input, userId) {
   const r = getReservation(db, id);
   if (!r) fail(404, 'Reserva inexistente');
   const { vehicleId, outKm, outFuel } = checkoutCheck(db, r, input);
+  if (r.express && getSettings(db).express_requires_payment === '1' && r.balance.pending > 0.005) fail(409, `Reserva express: se entrega con todo pago. Falta cobrar ${r.balance.pending}`);
   const outPanapass = balanceOf(input.out_panapass) ?? db.prepare('SELECT panapass FROM vehicles WHERE id = ?').get(vehicleId).panapass;
 
   tx(db, () => {
@@ -563,9 +573,12 @@ function checkin(db, id, input, userId) {
   let updated = getReservation(db, r.id);
   // Agencias con contratos pendientes: con saldo sin cobrar, o si el operador lo deja pendiente (daños, faltantes), el contrato no se cierra todavía.
   const note = String(input.pending_note || '').trim().slice(0, 300);
-  const pending = proOn(db) && (updated.balance.pending > 0.005 || note);
-  db.prepare('UPDATE contracts SET closed_at = ?, pending_note = ? WHERE id = ?').run(pending ? null : inAt, pending ? note || 'Saldo sin cobrar' : null, r.contract.id);
-  if (pending) log(db, r.id, userId, 'contrato_pendiente', note || 'Saldo sin cobrar');
+  // Días o km de más: queda en suspenso aunque no generen cargo (por ejemplo, sin tarifa de km excedente), hasta que la agencia lo resuelva.
+  const over = [charges.late_days > 0 && 'Días de más', charges.km_excess > 0 && 'Km de más'].filter(Boolean).join(' y ');
+  const why = note || (updated.balance.pending > 0.005 ? 'Saldo sin cobrar' : over);
+  const pending = proOn(db) && Boolean(why);
+  db.prepare('UPDATE contracts SET closed_at = ?, pending_note = ? WHERE id = ?').run(pending ? null : inAt, pending ? why : null, r.contract.id);
+  if (pending) log(db, r.id, userId, 'contrato_pendiente', why);
   updated = getReservation(db, r.id);
   emit(db, 'reservation.checked_in', publicView(updated));
   return updated;
@@ -600,6 +613,17 @@ function addPayment(db, id, input, userId) {
     notes,
     Number(input.branch_id) || r.pickup_branch_id || null,
   );
+  // Recargo de PayPal: se anota aparte, entra a caja y no descuenta de la deuda.
+  const pct = Number(getSettings(db).paypal_surcharge_pct) || 0;
+  if (kind === 'pago' && input.method === 'paypal' && pct > 0) {
+    db.prepare("INSERT INTO payments (reservation_id, kind, method, amount, created_by, notes, branch_id) VALUES (?, 'recargo', 'paypal', ?, ?, ?, ?)").run(
+      r.id,
+      round2((amount * pct) / 100),
+      userId || null,
+      `Recargo PayPal ${pct}%`,
+      Number(input.branch_id) || r.pickup_branch_id || null,
+    );
+  }
   // Pagó con un repuesto o un arreglo del auto: cuenta como pago y también como gasto del auto (la plata no entró a caja).
   if (kind === 'pago' && input.method === 'repuesto' && r.vehicle_id) {
     db.prepare("INSERT INTO expenses (vehicle_id, date, kind, description, amount) VALUES (?, ?, 'repuestos', ?, ?)").run(
@@ -637,6 +661,7 @@ function publicView(r) {
 }
 
 module.exports = {
+  balanceOf,
   driverOf,
   addDriver,
   STATUSES,
