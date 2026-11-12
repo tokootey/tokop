@@ -166,7 +166,7 @@ function upsertCustomer(db, c) {
   }
   const res = db
     .prepare('INSERT INTO customers (full_name, doc_type, doc_number, email, phone, license_number) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(...fields.map((f) => (c[f] === undefined || c[f] === null ? (f === 'doc_type' ? 'DNI' : null) : String(c[f]))));
+    .run(...fields.map((f) => (c[f] === undefined || c[f] === null ? (f === 'doc_type' && getSetting(db, 'country') === 'AR' ? 'DNI' : null) : String(c[f]))));
   return Number(res.lastInsertRowid);
 }
 

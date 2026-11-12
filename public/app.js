@@ -3652,7 +3652,7 @@ async function saveLicense(r, d, form) {
 }
 
 // Tipos de documento según el país: en Argentina DNI; en el resto, cédula, pasaporte o R.U.C. (el primero es el que viene elegido).
-const docTypes = () => (state.settings.country === 'AR' ? ['DNI', 'Pasaporte', 'CI', 'CUIT', 'RUT', 'Otro'] : ['Cédula', 'Pasaporte', 'R.U.C.', 'DNI', 'Otro']);
+const docTypes = () => (state.settings.country === 'AR' ? ['DNI', 'Pasaporte', 'CI', 'CUIT', 'RUT', 'Otro'] : ['Cédula', 'Pasaporte', 'R.U.C.', 'Otro']);
 const docWord = () => (state.settings.country === 'AR' ? 'DNI' : 'Documento');
 // Titular y conductores adicionales, lugar de trabajo y contacto alternativo: agencias con funciones en prueba, alquiler por días.
 const partiesOn = () => proOn() && !choferesMode();
