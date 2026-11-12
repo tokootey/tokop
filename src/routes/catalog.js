@@ -222,11 +222,11 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     crud(db, {
       table: 'vehicles',
       fields: ['plate', 'brand', 'model', 'year', 'color', 'category_id', 'branch_id', 'status', 'km', 'fuel', 'insurance_expiry', 'vtv_expiry', 'service_every_km', 'notes', 'web_inquiry', 'period_rate', 'rest_day_rate', 'rest_day_free', 'pay_every',
-        'insurance_company', 'insurance_policy', 'insurance_cost', 'permit_number', 'permit_expiry', 'registration_expiry'],
+        'insurance_company', 'insurance_policy', 'insurance_cost', 'permit_number', 'permit_expiry', 'registration_expiry', 'service_due'],
       required: ['plate', 'category_id'],
       order: 'plate',
       search: ['plate', 'brand', 'model'],
-      dateFields: ['insurance_expiry', 'vtv_expiry', 'permit_expiry', 'registration_expiry'],
+      dateFields: ['insurance_expiry', 'vtv_expiry', 'permit_expiry', 'registration_expiry', 'service_due'],
       adminDelete: true,
       // Con su próximo movimiento (la próxima salida y, si está alquilado, cuándo vuelve) y su trabajo abierto en el taller.
       listSql: `SELECT v.*, c.name AS category_name, c.code AS category_code, b.name AS branch_name,

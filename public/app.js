@@ -670,11 +670,16 @@ on(/^\/panel$/, async (view) => {
     ${/* Lo del día va primero; los primeros pasos de una empresa nueva, abajo. */ setupCard(d.setup)}
     ${
       d.alerts.documents.length
-        ? `<div class="card"><h2>${choferesMode() ? 'Seguro, VTV o habilitación' : 'Seguro o VTV'} por vencer (30 días) <span class="count">${d.alerts.documents.length}</span></h2><div class="daylist">${d.alerts.documents
-            .map(
-              (v) =>
-                `<div class="dayrow docs"><span class="plate">${esc(v.plate)}</span><div><small>Seguro</small><b>${fmtD(v.insurance_expiry) || '—'}</b></div><div><small>VTV</small><b>${fmtD(v.vtv_expiry) || '—'}</b></div>${choferesMode() ? `<div><small>Habilitación</small><b>${fmtD(v.permit_expiry) || '—'}</b></div>` : ''}</div>`,
-            )
+        ? `<div class="card"><h2>Vencimientos de los próximos 30 días <span class="count">${d.alerts.documents.length}</span></h2>
+            <p class="muted">Seguro, ${inspectionWord()}, cédula de circulación y service de cada auto: avisa un mes antes.</p>
+            <div class="daylist">${d.alerts.documents.map(dueRow).join('')}</div></div>`
+        : ''
+    }
+    ${
+      // En el modo choferes esta lista ya sale en su propia tarjeta.
+      !d.choferes && (d.alerts.service_km || []).length
+        ? `<div class="card"><h2>Les toca service por kilómetros <span class="count">${d.alerts.service_km.length}</span></h2><div class="daylist">${d.alerts.service_km
+            .map((v) => `<div class="dayrow"><span class="plate">${esc(v.plate)}</span><div><small>Tiene</small><b>${num(v.km)} km</b></div><div><small>Service a los</small><b>${num(v.next_service_km)} km</b></div><span></span></div>`)
             .join('')}</div></div>`
         : ''
     }`;
@@ -783,8 +788,17 @@ const ROLE_LABEL = { admin: 'Administrador', operador: 'Operador', auxiliar: 'Au
 // VTV es de Argentina; en Panamá es el revisado.
 const inspectionWord = () => ({ AR: 'VTV', PA: 'Revisado' })[state.settings.country] || 'Inspección técnica';
 /** Vencimientos de un auto: seguro, inspección y cédula de circulación (rojo si venció, ámbar si falta poco). */
+const dueList = (v) => [
+  ['Seguro', v.insurance_expiry],
+  [inspectionWord(), v.vtv_expiry],
+  ...(state.settings.country === 'AR' ? [] : [['Cédula de circulación', v.registration_expiry]]),
+  ...(choferesMode() ? [['Habilitación', v.permit_expiry]] : []),
+  ['Service', v.service_due],
+];
+/** Un renglón por auto con todos sus vencimientos. */
+const dueRow = (v) => `<div class="dayrow docs" style="grid-template-columns:120px repeat(${dueList(v).length},minmax(0,1fr))"><span class="plate">${esc(v.plate)}</span>${dueDocs(v)}</div>`;
 const dueDocs = (v) =>
-  [['Seguro', v.insurance_expiry], [inspectionWord(), v.vtv_expiry], ['Cédula de circulación', v.registration_expiry]]
+  dueList(v)
     .map(([label, d]) => `<div><small>${label}</small><b class="doc-${d ? dueTone(d) : 'wait'}">${fmtD(d) || '—'}</b></div>`)
     .join('');
 
@@ -853,7 +867,7 @@ function auxPanel(view, d) {
     ${list('Salen hoy', out, true, 'Hoy no sale ningún auto.')}
     ${list('Vuelven hoy', back, false, 'Hoy no vuelve ningún auto.')}
     <div class="card"><h2>Vencimientos de los próximos 30 días${docs.length ? ` <span class="count">${docs.length}</span>` : ''}</h2>
-      ${docs.length ? `<div class="daylist">${docs.map((v) => `<div class="dayrow docs" style="grid-template-columns:120px repeat(3,minmax(0,1fr))"><span class="plate">${esc(v.plate)}</span>${dueDocs(v)}</div>`).join('')}</div>` : '<p class="muted">Ningún seguro, inspección ni cédula por vencer.</p>'}
+      ${docs.length ? `<div class="daylist">${docs.map(dueRow).join('')}</div>` : '<p class="muted">Ningún seguro, inspección, cédula ni service por vencer.</p>'}
     </div>`;
   $$('[data-trip]', view).forEach((b) => b.addEventListener('click', () => run(() => auxTrip(trips.find((r) => r.id === Number(b.dataset.trip))))));
 }
@@ -874,7 +888,7 @@ async function auxFleet(view) {
               : `<select data-move style="min-width:150px" aria-label="Sucursal de ${esc(v.plate)}">${v.branch_id ? '' : '<option value=""></option>'}${branches.map(([id, name]) => `<option value="${id}"${id === v.branch_id ? ' selected' : ''}>${esc(name)}</option>`).join('')}</select>`
           }</td>
           <td class="right">${num(v.km || 0)}</td><td>${fuel(v.fuel) || '—'}</td>
-          <td><div class="dayrow docs" style="grid-template-columns:repeat(3,minmax(0,1fr));padding:0;border:0">${dueDocs(v)}</div></td>
+          <td><div class="dayrow docs" style="grid-template-columns:repeat(${dueList(v).length},minmax(0,1fr));padding:0;border:0">${dueDocs(v)}</div></td>
           <td><button class="btn small" type="button" data-reading>Km y combustible</button></td></tr>`,
       )
       .join('')}</tbody></table></div>`;
@@ -3661,7 +3675,8 @@ const VEHICLE_FIELDS = [
   { name: 'insurance_cost', label: 'Cuota mensual del seguro (se carga sola como gasto el día 1)', type: 'number', default: 0 },
   { name: 'permit_number', label: 'N° de habilitación (remis / apps)', when: () => choferesMode() },
   { name: 'permit_expiry', label: 'Vencimiento de la habilitación', type: 'date', when: () => choferesMode() },
-  { name: 'service_every_km', label: 'Service cada (km, 0 = sin aviso)', type: 'number', default: 0, when: () => choferesMode() },
+  { name: 'service_due', label: 'Próximo service (fecha; avisa un mes antes)', type: 'date' },
+  { name: 'service_every_km', label: 'Service cada (km, 0 = sin aviso)', type: 'number', default: 0 },
   // Cada auto puede cobrar distinto: su precio manda sobre el de la categoría.
   { name: 'period_rate', get label() { return `Precio por ${periodWord()} de este auto (0 = el de la categoría)`; }, type: 'number', default: 0, when: () => choferesMode() && !payModes() },
   { name: 'rest_day_rate', label: 'Precio de domingos y feriados de este auto (0 = el mismo)', type: 'number', default: 0, when: () => choferesMode() && state.settings.rent_period === 'dia' },
@@ -3805,7 +3820,7 @@ on(
         <dl class="vcard-facts">
           <div><dt>Km</dt><dd>${num(v.km || 0)}</dd></div>
           <div><dt>Combustible</dt><dd>${fuel(v.fuel) || '—'}</dd></div>
-          ${doc('Seguro', v.insurance_expiry)}${doc('VTV', v.vtv_expiry)}${v.registration_expiry ? doc('Cédula de circulación', v.registration_expiry) : ''}${choferesMode() && v.permit_expiry ? doc('Habilitación', v.permit_expiry) : ''}
+          ${doc('Seguro', v.insurance_expiry)}${doc('VTV', v.vtv_expiry)}${v.registration_expiry ? doc('Cédula de circulación', v.registration_expiry) : ''}${v.service_due ? doc('Service', v.service_due) : ''}${choferesMode() && v.permit_expiry ? doc('Habilitación', v.permit_expiry) : ''}
         </dl>
         <div class="vcard-actions">
           <button class="btn pill small" type="button" data-hist>${ICON.list}Historial</button>

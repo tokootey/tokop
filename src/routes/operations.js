@@ -388,13 +388,16 @@ function operationsRoutes(db) {
       alerts: {
         documents: db
           .prepare(
-            `SELECT v.id, v.plate, v.insurance_expiry, v.vtv_expiry, v.permit_expiry, v.registration_expiry FROM vehicles v
+            `SELECT v.id, v.plate, v.insurance_expiry, v.vtv_expiry, v.permit_expiry, v.registration_expiry, v.service_due FROM vehicles v
              WHERE ((v.insurance_expiry IS NOT NULL AND v.insurance_expiry <= date(?, '+30 day')) OR (v.vtv_expiry IS NOT NULL AND v.vtv_expiry <= date(?, '+30 day'))
                OR (v.permit_expiry IS NOT NULL AND v.permit_expiry <= date(?, '+30 day'))
-               OR (v.registration_expiry IS NOT NULL AND v.registration_expiry <= date(?, '+30 day')))${atV}
+               OR (v.registration_expiry IS NOT NULL AND v.registration_expiry <= date(?, '+30 day'))
+               OR (v.service_due IS NOT NULL AND v.service_due <= date(?, '+30 day')))${atV}
              ORDER BY v.plate`,
           )
-          .all(today, today, today, today),
+          .all(today, today, today, today, today),
+        // Service por kilómetros (autos con "service cada X km"), en cualquier tipo de agencia.
+        service_km: choferes.serviceDue(db, branch),
         maintenance_open: db.prepare(`SELECT COUNT(*) AS n FROM maintenance m JOIN vehicles v ON v.id = m.vehicle_id WHERE m.status = 'abierto'${atV}`).get().n,
       },
       setup: setupSteps(db),
