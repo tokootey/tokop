@@ -663,6 +663,10 @@ function migrate(db) {
   }
   // Autos que en la web sólo se consultan por WhatsApp (la agencia quiere escuchar ofertas): no se reservan ni se pagan online.
   if (!has('vehicles', 'web_inquiry')) db.exec('ALTER TABLE vehicles ADD COLUMN web_inquiry INTEGER NOT NULL DEFAULT 0');
+  // Horario de retiro que acepta el cotizador público en cada sucursal (vacío = sin límite).
+  for (const col of ['pickup_from', 'late_after', 'late_pickup_from']) {
+    if (!has('branches', col)) db.exec(`ALTER TABLE branches ADD COLUMN ${col} TEXT`);
+  }
   // Cédula de circulación (registro del vehículo): su vencimiento se avisa como el del seguro.
   if (!has('vehicles', 'registration_expiry')) db.exec('ALTER TABLE vehicles ADD COLUMN registration_expiry TEXT');
   // Fecha del próximo service: se avisa un mes antes, como el seguro.

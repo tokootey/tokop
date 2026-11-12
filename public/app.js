@@ -1890,7 +1890,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         <h2>Datos de la reserva</h2>
         <dl class="info">
           <dt>Cliente</dt><dd><b>${esc(r.customer_name)}</b>${r.customer_id ? ' <button class="btn small no-print" type="button" data-edit-customer style="margin-left:6px">Editar datos</button>' : ''}<br><small>${esc(r.customer_doc || '')} · ${esc(r.customer_phone || '')} · ${esc(r.customer_email || '')}</small>
-            <br><button class="btn small no-print" type="button" data-docs style="margin-top:6px">Documentación</button></dd>
+            <br><button class="btn small no-print" type="button" data-docs style="margin-top:6px">Documentación</button>${!choferesMode() && ['pendiente', 'confirmada', 'en_curso'].includes(r.status) ? ' <button class="btn small no-print" type="button" data-act="addDriver" style="margin-top:6px">+ Conductor adicional</button>' : ''}</dd>
           <dt>Retiro</dt><dd>${fmtDT(r.pickup_at)} · ${esc(r.pickup_branch_name || '')}</dd>
           <dt>Devolución</dt><dd>${fmtDT(r.return_at)} · ${esc(r.return_branch_name || '')}</dd>
           <dt>Categoría</dt><dd>${esc(r.category_code)} · ${esc(r.category_name)}</dd>
@@ -2230,6 +2230,32 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           reload();
         },
       ),
+    addDriver: () => {
+      // shortcut: el precio sugerido sale del adicional que se llame "conductor"; si la agencia no lo tiene, se escribe a mano.
+      const x = (state.extras || []).find((e) => e.active && /conductor|driver/i.test(e.name));
+      const price = x ? Math.round(x.price * (x.charge_type === 'fijo' ? 1 : r.days) * 100) / 100 : '';
+      openModal(
+        `Conductor adicional · ${r.code}`,
+        formHtml(
+          [
+            { name: 'full_name', label: 'Nombre y apellido', required: true, full: true },
+            { name: 'doc_type', label: 'Tipo doc.', type: 'select', options: () => docTypes().map((t) => [t, t]) },
+            { name: 'doc_number', label: 'Documento' },
+            { name: 'license_number', label: 'Licencia N°' },
+            { name: 'license_expiry', label: 'Vencimiento de la licencia', type: 'date' },
+            { name: 'charge', label: 'Cobrar el conductor adicional', type: 'checkbox' },
+            { name: 'amount', label: 'Importe a cobrar (solo si está marcado)', type: 'number' },
+          ],
+          { charge: price ? 1 : 0, amount: price },
+        ),
+        async (d) => {
+          if (d.charge && !(Number(d.amount) > 0)) throw new Error('Escribí el importe a cobrar o desmarcá el cobro');
+          await POST(`/reservations/${r.id}/drivers`, { ...d, amount: d.charge ? d.amount : 0 });
+          toast(d.charge ? 'Conductor agregado y cargo sumado a la reserva' : 'Conductor agregado sin cargo');
+          reload();
+        },
+      );
+    },
     parties: () => {
       const h = r.holder || {};
       const docOpts = () => docTypes().map((x) => [x, x]);
@@ -3332,10 +3358,11 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
 
   const asList = planAsList();
   const plateOf = Object.fromEntries(p.vehicles.map((v) => [v.id, v]));
-  // Listado: las mismas reservas de esas dos semanas, una por renglón, en orden de salida.
+  // Listado: sólo las reservas confirmadas de esas dos semanas, una por renglón, en orden de salida.
+  const confirmed = p.reservations.filter((r) => r.status === 'confirmada');
   const listHtml = () =>
-    p.reservations.length
-      ? `<div class="table-wrap"><table><thead><tr><th>Salida</th><th>Devolución</th><th>Cliente</th><th>Auto</th><th>Estado</th><th>Referencia</th></tr></thead><tbody>${[...p.reservations]
+    confirmed.length
+      ? `<div class="table-wrap"><table><thead><tr><th>Salida</th><th>Devolución</th><th>Cliente</th><th>Auto</th><th>Estado</th><th>Referencia</th></tr></thead><tbody>${confirmed
           .sort((a, b) => a.pickup_at.localeCompare(b.pickup_at))
           .map((r) => {
             const v = plateOf[r.vehicle_id];
@@ -3345,7 +3372,7 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
               <td>${badge(r.status)}</td><td class="nowrap">${esc(r.code)}</td></tr>`;
           })
           .join('')}</tbody></table></div>`
-      : '<div class="card muted">No hay reservas en estas dos semanas.</div>';
+      : '<div class="card muted">No hay reservas confirmadas en estas dos semanas.</div>';
   view.innerHTML = `
     <div class="page-head"><h1>Calendario de autos</h1>
       <div class="actions"><button class="btn" data-plan-view>${asList ? 'Ver calendario' : 'Ver listado'}</button><button class="btn" data-nav="-7">◀ Semana</button><button class="btn" data-nav="0">Hoy</button><button class="btn" data-nav="7">Semana ▶</button></div></div>
@@ -4222,6 +4249,9 @@ on(/^\/tarifas$/, async (view) => {
         { name: 'phone', label: 'Teléfono' },
         { name: 'active', label: 'Activa', type: 'checkbox', default: 1 },
         { name: 'aliases', label: 'Alias (cómo lo nombra el sitio web, separados por coma)', full: true },
+        { name: 'pickup_from', label: 'Cotizador web: se retira desde las (vacío = sin límite)', type: 'time' },
+        { name: 'late_after', label: 'Cotizador web: reservas hechas después de las', type: 'time' },
+        { name: 'late_pickup_from', label: '…se retiran recién desde las', type: 'time' },
       ],
       columns: [
         { label: 'Código', render: (r) => `<b>${esc(r.code)}</b>` },
@@ -5731,9 +5761,10 @@ async function bookingPage() {
         <h2><span>3</span>${L('Sumá lo que necesites', 'Add what you need')} <small class="muted">${L('opcional', 'optional')}</small></h2>
         <div class="quoter-extras">${cfg.extras
           .map(
-            (x) => `<label class="quoter-extra"><input type="checkbox" value="${esc(x.code)}" data-extra data-kind="${esc(x.kind)}"><span>${esc(x.name)}</span><small>${extraPrice(x)}</small></label>`,
+            (x) => `<label class="quoter-extra"><input type="checkbox" value="${esc(x.code)}" data-extra data-kind="${esc(x.kind)}"${/conductor|driver/i.test(x.name) ? ' data-driver' : ''}><span>${esc(x.name)}</span><small>${extraPrice(x)}</small></label>`,
           )
           .join('')}</div>
+        <p id="bk-driver" class="muted" hidden style="margin-top:10px">${L('Cuando confirmemos tu reserva te pedimos por WhatsApp los datos del conductor adicional.', 'Once we confirm your booking we will ask you on WhatsApp for the additional driver details.')}</p>
       </section>`
           : ''
       }
@@ -5846,6 +5877,8 @@ async function bookingPage() {
       if (e.target.checked && e.target.dataset.kind === 'seguro') $$('[data-extra][data-kind=seguro]', form).forEach((x) => (x.checked = x === e.target));
       picked.clear();
       $$('[data-extra]:checked', form).forEach((x) => picked.add(x.value));
+      const drv = $('#bk-driver', form);
+      if (drv) drv.hidden = !$('[data-driver]:checked', form);
       return load();
     }
     if (e.target.name !== 'from' && e.target.name !== 'to') return;

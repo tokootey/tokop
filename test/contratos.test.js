@@ -96,3 +96,28 @@ test('cambiar a mano a un auto de otro valor mantiene el precio (solo agencias q
     app.close();
   }
 });
+
+test('conductor adicional suelto: se suma a los que hay, con o sin cargo', async () => {
+  const app = await start();
+  try {
+    const call = await app.as('operador');
+    const r = app.reserve();
+    const add = (body) => call('POST', `/api/reservations/${r.id}/drivers`, body);
+    const before = (await call('GET', `/api/reservations/${r.id}`)).data.balance.due;
+
+    const free = (await add({ full_name: 'Ana Gratis', license_number: 'L1' })).data;
+    assert.deepEqual(free.drivers.map((d) => d.full_name), ['Ana Gratis']);
+    assert.equal(free.balance.due, before, 'sin importe no cambia lo que debe');
+
+    const paid = (await add({ full_name: 'Beto Pago', amount: 30 })).data;
+    assert.deepEqual(paid.drivers.map((d) => d.full_name), ['Ana Gratis', 'Beto Pago']);
+    assert.equal(paid.balance.due, before + 30);
+    assert.match(paid.charges[0].description, /Conductor adicional: Beto Pago/);
+
+    assert.equal((await add({ full_name: ' ' })).status, 400);
+    assert.equal((await add({ full_name: 'Malo', amount: -5 })).status, 400);
+    assert.equal((await call('GET', `/api/reservations/${r.id}`)).data.drivers.length, 2, 'un importe inválido no agrega al conductor');
+  } finally {
+    app.close();
+  }
+});

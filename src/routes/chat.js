@@ -47,6 +47,34 @@ function inquiryOnly(db, pickup_at, return_at) {
   return new Set(categoryAvailability(db, { pickup_at, return_at }).filter((x) => x.available > 0 && x.available <= (marked.get(x.id) || 0)).map((x) => x.code));
 }
 
+// Hora de la agencia: el servidor corre en una sola zona y "después de las 20:00" tiene que ser la hora de ella.
+// shortcut: sólo países de una zona horaria; el resto usa la hora del servidor hasta que la zona sea un ajuste de cada empresa.
+const ZONES = { PA: 'America/Panama', UY: 'America/Montevideo', PY: 'America/Asuncion', BO: 'America/La_Paz', PE: 'America/Lima', CO: 'America/Bogota', CR: 'America/Costa_Rica', DO: 'America/Santo_Domingo', GT: 'America/Guatemala' };
+const agencyNow = (country, date = new Date()) => (ZONES[country] ? date.toLocaleString('sv-SE', { timeZone: ZONES[country] }).slice(0, 16).replace(' ', 'T') : nowLocal());
+const hhmm = (v) => (/^[0-9]{2}:[0-9]{2}$/.test(v || '') ? v : '');
+
+/**
+ * Horario de retiro de la sucursal en el cotizador público. Devuelve el motivo si ese retiro no se acepta.
+ * Una reserva hecha de noche (después de late_after, o de madrugada) no puede retirarse antes de late_pickup_from de la mañana siguiente.
+ */
+function pickupProblem(branch, pickup_at, now) {
+  if (!branch || !pickup_at) return null;
+  const from = hhmm(branch.pickup_from);
+  if (from && pickup_at.slice(11, 16) < from) return `En ${branch.name} los autos se retiran a partir de las ${from}. Elegí otro horario.`;
+  const after = hhmm(branch.late_after);
+  const lateFrom = hhmm(branch.late_pickup_from);
+  if (!after || !lateFrom) return null;
+  const time = now.slice(11, 16);
+  let day = now.slice(0, 10);
+  if (time >= after) {
+    const d = new Date(`${day}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 1);
+    day = d.toISOString().slice(0, 10);
+  } else if (time >= lateFrom) return null;
+  if (pickup_at < `${day}T${lateFrom}`) return `Las reservas hechas después de las ${after} en ${branch.name} se retiran a partir de las ${lateFrom} del día siguiente. Elegí otro horario.`;
+  return null;
+}
+
 const str = (v, max = MAX_TEXT) => (v === undefined || v === null ? '' : String(v).trim().slice(0, max));
 
 function chatRoutes(db, { publicQuery = '' } = {}) {
@@ -79,6 +107,17 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
     next();
   });
 
+  // Sucursal de retiro: la que eligió el cliente, o la única que hay.
+  const pickupBranch = (code) => {
+    if (code) return db.prepare('SELECT * FROM branches WHERE code = ? AND active = 1').get(str(code, 20));
+    const all = db.prepare('SELECT * FROM branches WHERE active = 1').all();
+    return all.length === 1 ? all[0] : null;
+  };
+  const checkPickup = (req, code, pickup_at) => {
+    const problem = pickupProblem(pickupBranch(code), pickup_at, agencyNow(req.settings.country));
+    if (problem) fail(400, problem);
+  };
+
   router.get('/config', (req, res) => {
     const s = req.settings;
     res.json({
@@ -102,6 +141,7 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
     if (!pickup_at || !return_at) fail(400, 'Indicá las fechas de retiro y devolución');
     if (return_at <= pickup_at) fail(400, 'La devolución tiene que ser después del retiro');
     if (pickup_at.slice(0, 10) < nowLocal().slice(0, 10)) fail(400, 'La fecha de retiro ya pasó');
+    checkPickup(req, b.pickup_branch, pickup_at);
     const branch = b.pickup_branch ? db.prepare('SELECT id FROM branches WHERE code = ? AND active = 1').get(str(b.pickup_branch, 20)) : null;
     const returnBranch = b.return_branch ? db.prepare('SELECT id FROM branches WHERE code = ? AND active = 1').get(str(b.return_branch, 20)) : null;
     const pickedExtras = (Array.isArray(b.extras) ? b.extras : []).slice(0, 10).map((code) => db.prepare("SELECT id FROM extras WHERE code = ? AND active = 1 AND code <> 'HOTEL'").get(str(code, 20))).filter(Boolean);
@@ -137,6 +177,7 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
     if (name.length < 3) fail(400, 'Decinos tu nombre y apellido');
     if (!email && !phone) fail(400, 'Dejanos un email o un teléfono para confirmarte');
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, 'El email no parece válido');
+    checkPickup(req, b.pickup_branch, normDateTime(str(b.pickup_at, 20)));
     if (inquiryOnly(db, normDateTime(str(b.pickup_at, 20)), normDateTime(str(b.return_at, 20))).has(str(b.category, 20))) fail(409, 'Ese auto se reserva hablando con la agencia por WhatsApp');
     const payload = {
       nombre: name,
@@ -177,4 +218,4 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
   return router;
 }
 
-module.exports = { chatRoutes, parseFaq, FAQ_DEFAULT };
+module.exports = { chatRoutes, parseFaq, FAQ_DEFAULT, pickupProblem, agencyNow };

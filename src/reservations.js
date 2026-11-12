@@ -375,6 +375,7 @@ function moveOptions(db, id) {
 
 const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
 const MAX_DRIVERS = 5;
+const driverOf = (d) => ({ full_name: text(d.full_name), doc_type: text(d.doc_type, 20), doc_number: text(d.doc_number, 40), license_number: text(d.license_number, 40), license_expiry: normDateTime(d.license_expiry) ? normDateTime(d.license_expiry).slice(0, 10) : '' });
 
 /** Titular del contrato (si no es quien maneja) y hasta 5 conductores adicionales. */
 function setParties(db, id, input, userId) {
@@ -387,13 +388,27 @@ function setParties(db, id, input, userId) {
     : null;
   const drivers = (Array.isArray(input.drivers) ? input.drivers : [])
     .filter((d) => d && text(d.full_name))
-    .map((d) => ({ full_name: text(d.full_name), doc_type: text(d.doc_type, 20), doc_number: text(d.doc_number, 40), license_number: text(d.license_number, 40), license_expiry: normDateTime(d.license_expiry) ? normDateTime(d.license_expiry).slice(0, 10) : '' }));
+    .map(driverOf);
   if (drivers.length > MAX_DRIVERS) fail(400, `Se pueden cargar hasta ${MAX_DRIVERS} conductores adicionales`);
   const expired = drivers.find((d) => d.license_expiry && d.license_expiry < r.return_at.slice(0, 10));
   if (expired) fail(400, `La licencia de ${expired.full_name} vence antes de la devolución`);
   db.prepare('UPDATE reservations SET holder = ?, drivers = ?, updated_at = ? WHERE id = ?').run(holder && JSON.stringify(holder), drivers.length ? JSON.stringify(drivers) : null, nowLocal(), r.id);
   log(db, r.id, userId, 'titular_conductores', `${holder ? `Titular: ${holder.full_name}. ` : ''}${drivers.length} conductor(es) adicional(es)`);
   return getReservation(db, r.id);
+}
+
+/** Suma un conductor adicional a la reserva, sin tocar los que ya están. Si se cobra, el cargo lo registra quien llama. */
+function addDriver(db, id, input, userId) {
+  const r = getReservation(db, id);
+  if (!r) fail(404, 'Reserva inexistente');
+  if (['finalizada', 'cancelada', 'no_show'].includes(r.status)) fail(409, 'La reserva ya terminó: no se le agregan conductores');
+  const d = driverOf(input || {});
+  if (!d.full_name) fail(400, 'Escribí el nombre y apellido del conductor');
+  if (r.drivers.length >= MAX_DRIVERS) fail(400, `Se pueden cargar hasta ${MAX_DRIVERS} conductores adicionales`);
+  if (d.license_expiry && d.license_expiry < r.return_at.slice(0, 10)) fail(400, `La licencia de ${d.full_name} vence antes de la devolución`);
+  db.prepare('UPDATE reservations SET drivers = ?, updated_at = ? WHERE id = ?').run(JSON.stringify([...r.drivers, d]), nowLocal(), r.id);
+  log(db, r.id, userId, 'conductor_adicional', d.full_name);
+  return d;
 }
 
 /**
@@ -613,6 +628,8 @@ function publicView(r) {
 }
 
 module.exports = {
+  driverOf,
+  addDriver,
   STATUSES,
   getReservation,
   createReservation,
