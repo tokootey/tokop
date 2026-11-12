@@ -7,7 +7,6 @@ const { categoryAvailability, OUT_OF_FLEET } = require('../availability');
 const { ingestQuote } = require('../integration');
 const { cardUrlFor } = require('../delivery');
 const { fail, normDateTime, nowLocal } = require('../util');
-const { driverOf } = require('../reservations');
 
 /**
  * Asistente de reservas: el chat que la agencia pone en su página web con una línea
@@ -212,9 +211,6 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
     for (const [f, v] of Object.entries(extra)) {
       if (v) db.prepare(`UPDATE customers SET ${f} = ? WHERE id = (SELECT customer_id FROM reservations WHERE code = ?) AND (${f} IS NULL OR ${f} = '')`).run(v, result.reservation.code);
     }
-    // Conductor adicional que el cliente cargó al pedir la reserva.
-    const driver = driverOf(b.driver && typeof b.driver === 'object' ? b.driver : {});
-    if (driver.full_name) db.prepare('UPDATE reservations SET drivers = ? WHERE code = ?').run(JSON.stringify([driver]), result.reservation.code);
     const card_url = cardUrlFor(db, result.reservation.code, req, publicQuery);
     res.status(201).json({ ok: true, code: result.reservation.code, ...(card_url ? { card_url } : {}) });
   });
