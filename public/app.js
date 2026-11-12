@@ -3332,10 +3332,11 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
 
   const asList = planAsList();
   const plateOf = Object.fromEntries(p.vehicles.map((v) => [v.id, v]));
-  // Listado: las mismas reservas de esas dos semanas, una por renglón, en orden de salida.
+  // Listado: sólo las reservas confirmadas de esas dos semanas, una por renglón, en orden de salida.
+  const confirmed = p.reservations.filter((r) => r.status === 'confirmada');
   const listHtml = () =>
-    p.reservations.length
-      ? `<div class="table-wrap"><table><thead><tr><th>Salida</th><th>Devolución</th><th>Cliente</th><th>Auto</th><th>Estado</th><th>Referencia</th></tr></thead><tbody>${[...p.reservations]
+    confirmed.length
+      ? `<div class="table-wrap"><table><thead><tr><th>Salida</th><th>Devolución</th><th>Cliente</th><th>Auto</th><th>Estado</th><th>Referencia</th></tr></thead><tbody>${confirmed
           .sort((a, b) => a.pickup_at.localeCompare(b.pickup_at))
           .map((r) => {
             const v = plateOf[r.vehicle_id];
@@ -3345,7 +3346,7 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
               <td>${badge(r.status)}</td><td class="nowrap">${esc(r.code)}</td></tr>`;
           })
           .join('')}</tbody></table></div>`
-      : '<div class="card muted">No hay reservas en estas dos semanas.</div>';
+      : '<div class="card muted">No hay reservas confirmadas en estas dos semanas.</div>';
   view.innerHTML = `
     <div class="page-head"><h1>Calendario de autos</h1>
       <div class="actions"><button class="btn" data-plan-view>${asList ? 'Ver calendario' : 'Ver listado'}</button><button class="btn" data-nav="-7">◀ Semana</button><button class="btn" data-nav="0">Hoy</button><button class="btn" data-nav="7">Semana ▶</button></div></div>
