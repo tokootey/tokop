@@ -31,7 +31,7 @@ function getReservation(db, id) {
               c.work_apps AS customer_work_apps, c.workplace AS customer_workplace, c.alt_contact AS customer_alt_contact, c.guarantor_name, c.guarantor_doc, c.guarantor_phone, c.guarantor_address,
               cat.code AS category_code, cat.name AS category_name, cat.km_per_day AS category_km_per_day, cat.extra_km_rate AS category_extra_km_rate, cat.km_per_period AS category_km_per_period,
               v.plate AS vehicle_plate, v.brand AS vehicle_brand, v.model AS vehicle_model, v.color AS vehicle_color, v.year AS vehicle_year,
-              v.km AS vehicle_km, v.fuel AS vehicle_fuel,
+              v.km AS vehicle_km, v.fuel AS vehicle_fuel, v.panapass AS vehicle_panapass,
               ${placeSql('deliver', 'pb')} AS pickup_branch_name, ${placeSql('return', 'rb')} AS return_branch_name
        FROM reservations r
        JOIN customers c ON c.id = r.customer_id
@@ -373,6 +373,13 @@ function moveOptions(db, id) {
   return { free, swaps, others };
 }
 
+// Saldo de Panapass: vacío = no se cargó.
+const balanceOf = (v) => {
+  if (v === undefined || v === null || v === '') return null;
+  if (!Number.isFinite(Number(v))) fail(400, 'El saldo de Panapass tiene que ser un número');
+  return round2(v);
+};
+
 const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
 const MAX_DRIVERS = 5;
 const driverOf = (d) => ({ full_name: text(d.full_name), doc_type: text(d.doc_type, 20), doc_number: text(d.doc_number, 40), license_number: text(d.license_number, 40), license_expiry: normDateTime(d.license_expiry) ? normDateTime(d.license_expiry).slice(0, 10) : '' });
@@ -479,17 +486,18 @@ function checkout(db, id, input, userId) {
   const r = getReservation(db, id);
   if (!r) fail(404, 'Reserva inexistente');
   const { vehicleId, outKm, outFuel } = checkoutCheck(db, r, input);
+  const outPanapass = balanceOf(input.out_panapass) ?? db.prepare('SELECT panapass FROM vehicles WHERE id = ?').get(vehicleId).panapass;
 
   tx(db, () => {
     if (vehicleId !== r.vehicle_id) assertAvailability(db, { ...r, vehicle_id: vehicleId }, r.id);
     const number = nextCode(db, 'C');
     db.prepare(
-      `INSERT INTO contracts (reservation_id, number, out_at, out_km, out_fuel, out_notes, out_user, damages)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(r.id, number, normDateTime(input.out_at) || nowLocal(), outKm, outFuel, input.out_notes || null, userId || null, JSON.stringify({ out: input.damages || [] }));
+      `INSERT INTO contracts (reservation_id, number, out_at, out_km, out_fuel, out_panapass, out_notes, out_user, damages)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(r.id, number, normDateTime(input.out_at) || nowLocal(), outKm, outFuel, outPanapass, input.out_notes || null, userId || null, JSON.stringify({ out: input.damages || [] }));
     db.prepare("UPDATE reservations SET status = 'en_curso', vehicle_id = ?, updated_at = ? WHERE id = ?").run(vehicleId, nowLocal(), r.id);
     if (choferes.isChoferes(getSettings(db))) choferes.openPeriods(db, r, normDateTime(input.out_at) || nowLocal());
-    db.prepare("UPDATE vehicles SET status = 'alquilado', km = ?, fuel = ? WHERE id = ?").run(outKm, outFuel, vehicleId);
+    db.prepare("UPDATE vehicles SET status = 'alquilado', km = ?, fuel = ?, panapass = ? WHERE id = ?").run(outKm, outFuel, outPanapass, vehicleId);
     log(db, r.id, userId, 'entregado', { contrato: number, km: outKm, combustible: outFuel });
   });
   const updated = getReservation(db, r.id);
@@ -531,16 +539,17 @@ function checkin(db, id, input, userId) {
   }
   const charges = computeReturnCharges(db, r, r.contract, { ...input, in_km: inKm, in_fuel: inFuel, in_at: inAt }, { byPeriods });
   const finalTotal = round2(r.total + charges.total);
+  const inPanapass = balanceOf(input.in_panapass);
   const returnBranch = input.return_branch_id || r.return_branch_id || r.pickup_branch_id;
 
   tx(db, () => {
     const damages = { ...(r.contract.damages || {}), in: input.damages || [] };
     db.prepare(
-      `UPDATE contracts SET in_at=?, in_km=?, in_fuel=?, in_notes=?, in_user=?, damages=?, charges=?, final_total=? WHERE id=?`,
-    ).run(inAt, inKm, inFuel, input.in_notes || null, userId || null, JSON.stringify(damages), JSON.stringify(charges), finalTotal, r.contract.id);
+      `UPDATE contracts SET in_at=?, in_km=?, in_fuel=?, in_panapass=?, in_notes=?, in_user=?, damages=?, charges=?, final_total=? WHERE id=?`,
+    ).run(inAt, inKm, inFuel, inPanapass, input.in_notes || null, userId || null, JSON.stringify(damages), JSON.stringify(charges), finalTotal, r.contract.id);
     db.prepare("UPDATE reservations SET status = 'finalizada', return_branch_id = ?, updated_at = ? WHERE id = ?").run(returnBranch, nowLocal(), r.id);
     const nextStatus = input.send_to_maintenance ? 'mantenimiento' : 'disponible';
-    db.prepare('UPDATE vehicles SET status = ?, km = ?, fuel = ?, branch_id = ? WHERE id = ?').run(nextStatus, inKm, inFuel, returnBranch, r.vehicle_id);
+    db.prepare('UPDATE vehicles SET status = ?, km = ?, fuel = ?, branch_id = ?, panapass = COALESCE(?, panapass) WHERE id = ?').run(nextStatus, inKm, inFuel, returnBranch, inPanapass, r.vehicle_id);
     if (input.send_to_maintenance) {
       db.prepare("INSERT INTO maintenance (vehicle_id, kind, description, start_date, km, status) VALUES (?, 'reparacion', ?, ?, ?, 'abierto')").run(
         r.vehicle_id,

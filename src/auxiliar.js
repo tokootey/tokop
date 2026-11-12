@@ -19,7 +19,7 @@ const ALLOWED = [
 ];
 const PHOTO_STAGES = ['entrega', 'devolucion'];
 // De un auto solo cambia dónde está y cómo está.
-const VEHICLE_FIELDS = ['branch_id', 'km', 'fuel'];
+const VEHICLE_FIELDS = ['branch_id', 'km', 'fuel', 'panapass'];
 // Todo lo que sea plata se saca de lo que recibe, esté donde esté.
 const MONEY = new Set([
   'total', 'paid', 'pricing', 'deposit', 'discount_pct', 'discount_amount', 'final_total', 'charges', 'balance', 'payments', 'amount', 'cost',

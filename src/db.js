@@ -667,6 +667,9 @@ function migrate(db) {
   for (const col of ['pickup_from', 'late_after', 'late_pickup_from']) {
     if (!has('branches', col)) db.exec(`ALTER TABLE branches ADD COLUMN ${col} TEXT`);
   }
+  // Saldo del Panapass (peajes de Panamá): el del auto, y con cuánto salió y volvió en cada contrato.
+  if (!has('vehicles', 'panapass')) db.exec('ALTER TABLE vehicles ADD COLUMN panapass REAL');
+  for (const col of ['out_panapass', 'in_panapass']) if (!has('contracts', col)) db.exec(`ALTER TABLE contracts ADD COLUMN ${col} REAL`);
   // Cédula de circulación (registro del vehículo): su vencimiento se avisa como el del seguro.
   if (!has('vehicles', 'registration_expiry')) db.exec('ALTER TABLE vehicles ADD COLUMN registration_expiry TEXT');
   // Fecha del próximo service: se avisa un mes antes, como el seguro.

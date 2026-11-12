@@ -806,8 +806,12 @@ const dueDocs = (v) =>
 const auxReadingFields = (v) => [
   { name: 'km', label: `Km (tiene ${num(v.km || 0)})`, type: 'number', required: true, attrs: `min="${Number(v.km) || 0}"` },
   { name: 'fuel', label: 'Combustible (octavos)', type: 'select', options: FUEL_OPTS, required: true },
+  ...panapassField('panapass', `Saldo de Panapass${v.panapass === null || v.panapass === undefined ? '' : ` (tiene ${num(v.panapass)})`}`),
 ];
-const auxSaveReading = (v, d) => (d.km !== v.km || Number(d.fuel) !== v.fuel ? PUT(`/vehicles/${v.id}`, { km: d.km, fuel: Number(d.fuel) }) : null);
+const auxSaveReading = (v, d) => {
+  const panapass = d.panapass === undefined || d.panapass === '' || d.panapass === null ? v.panapass : Number(d.panapass);
+  return d.km !== v.km || Number(d.fuel) !== v.fuel || panapass !== v.panapass ? PUT(`/vehicles/${v.id}`, { km: d.km, fuel: Number(d.fuel), ...(panapassOn() ? { panapass } : {}) }) : null;
+};
 
 /** Lo que hace el auxiliar con un alquiler: ver y sumar fotos de entrega y devolución, y cargar km y combustible. */
 async function auxTrip(r) {
@@ -928,7 +932,7 @@ on(/^\/reservas$/, async (view) => {
   view.innerHTML = `
     <div class="page-head"><h1>Reservas</h1></div>
     <form class="toolbar" id="res-filter">
-      <label>Buscar<input name="q" placeholder="Código, cliente, DNI, patente…"/></label>
+      <label>Buscar<input name="q" placeholder="Código, cliente, ${docWord().toLowerCase() === "dni" ? "DNI" : "documento"}, patente…"/></label>
       <input type="hidden" name="status" value=""/>
       <button class="btn">Buscar</button>
       <div class="chips status-chips" role="group" aria-label="Estado">${RES_FILTERS.map(([v, l], i) => `<button type="button" class="chip${i ? '' : ' on'}" data-st="${v}" aria-pressed="${!i}">${l}</button>`).join('')}</div>
@@ -1181,7 +1185,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       <div class="card">
         <h2>3 · Cliente</h2>
         <div class="toolbar">
-          <label style="flex:1">Buscar cliente existente<input id="cust-q" placeholder="Nombre, DNI, email o teléfono"/></label>
+          <label style="flex:1">Buscar cliente existente<input id="cust-q" placeholder="Nombre, ${docWord().toLowerCase() === "dni" ? "DNI" : "documento"}, email o teléfono"/></label>
           <button type="button" class="btn" id="cust-new">+ Cliente nuevo</button>
         </div>
         <div id="cust-results"></div>
@@ -1942,6 +1946,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           ${c.out_notes ? `<dt>Obs. salida</dt><dd>${esc(c.out_notes)}</dd>` : ''}
           <dt>Devolución</dt><dd>${c.in_at ? `${fmtDT(c.in_at)} · ${c.in_km} km · combustible ${fuel(c.in_fuel)}` : '<span class="muted">Pendiente</span>'}</dd>
           ${c.in_notes ? `<dt>Obs. devolución</dt><dd>${esc(c.in_notes)}</dd>` : ''}
+          ${panapassLine(c)}
           ${c.charges ? `<dt>Km recorridos</dt><dd>${num(c.charges.km_driven)}${c.charges.km_excess ? ` · <b class="warn-text">${num(c.charges.km_excess)} de más</b>` : ''}${c.charges.fuel_missing ? ` · <b class="warn-text">faltaron ${c.charges.fuel_missing}/8 de combustible</b>` : ''}</dd>` : ''}
         </dl>
         ${
@@ -2092,10 +2097,11 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'out_at', label: 'Fecha y hora de salida', type: 'datetime-local', required: true },
             { name: 'out_km', label: 'Km de salida', type: 'number', required: true },
             { name: 'out_fuel', label: 'Combustible (octavos)', type: 'select', options: FUEL_OPTS, required: true },
+            ...panapassField('out_panapass', 'Saldo de Panapass al salir'),
             { name: 'out_notes', label: 'Observaciones / estado del vehículo', type: 'textarea', full: true },
             { name: 'fotos', label: 'Fotos del auto al entregarlo (frente, laterales, cola, interior, tablero con km y combustible)', type: 'photos' },
           ],
-          { vehicle_id: first.id, ...licenseValues(r), out_at: localISO(new Date()), out_km: first.km, out_fuel: first.fuel ?? 8 },
+          { vehicle_id: first.id, ...licenseValues(r), out_at: localISO(new Date()), out_km: first.km, out_fuel: first.fuel ?? 8, out_panapass: first.panapass ?? '' },
           'Entregar y abrir contrato',
         ),
         async (data, form) => {
@@ -2169,6 +2175,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'return_branch_id', label: 'Sucursal de devolución', type: 'select', options: branchOptions, required: true },
             { name: 'in_km', label: `Km de llegada (salió con ${c.out_km})`, type: 'number', required: true, attrs: `min="${c.out_km}"` },
             { name: 'in_fuel', label: `Combustible (salió con ${c.out_fuel}/8)`, type: 'select', options: FUEL_OPTS, required: true },
+            ...panapassField('in_panapass', `Saldo de Panapass al volver${c.out_panapass === null || c.out_panapass === undefined ? '' : ` (salió con ${money(c.out_panapass)})`}`),
             { name: 'damage_charge', label: 'Cargo por daños', type: 'number', default: 0 },
             { name: 'in_notes', label: 'Observaciones / daños detectados', type: 'textarea', full: true },
             { name: 'fotos', label: 'Fotos del auto al recibirlo (daños, km y combustible)', type: 'photos' },
@@ -2176,7 +2183,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'pending_note', label: 'Dejar el contrato pendiente por (con saldo sin cobrar queda pendiente solo)', type: 'select', options: [['Daños por definir', 'Daños por definir'], ['Faltantes', 'Faltantes (accesorios, llaves, documentos)'], ['Saldo sin cobrar', 'Saldo sin cobrar']], full: true, when: () => proOn() && !choferesMode() },
           ],
           // Si el auxiliar de flota ya cargó el km y el combustible del auto al recibirlo, vienen puestos.
-          { in_at: localISO(new Date()), return_branch_id: r.return_branch_id, ...(r.vehicle_km > c.out_km ? { in_km: r.vehicle_km, in_fuel: r.vehicle_fuel } : { in_fuel: c.out_fuel }) },
+          { in_at: localISO(new Date()), return_branch_id: r.return_branch_id, in_panapass: r.vehicle_panapass !== c.out_panapass ? (r.vehicle_panapass ?? '') : '', ...(r.vehicle_km > c.out_km ? { in_km: r.vehicle_km, in_fuel: r.vehicle_fuel } : { in_fuel: c.out_fuel }) },
           'Cerrar contrato',
         ),
         async (d, form) => {
@@ -2298,7 +2305,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
               name: 'method',
               label: 'Medio',
               type: 'select',
-              options: [...['efectivo', 'tarjeta', 'transferencia', 'mercadopago', 'otro'].map((m) => [m, m]), ...(choferesMode() ? [['repuesto', 'repuesto o arreglo que pagó el chofer']] : [])],
+              options: [...payMethods(), ...(choferesMode() ? [['repuesto', 'repuesto o arreglo que pagó el chofer']] : [])],
               required: true,
             },
             { name: 'amount', label: 'Importe', type: 'number', required: true },
@@ -2850,8 +2857,8 @@ function wireFiles(view, r, reload) {
 const DOC_KINDS = [
   ['carnet_frente', 'Licencia de conducir · frente'],
   ['carnet_dorso', 'Licencia de conducir · dorso'],
-  ['dni_frente', 'DNI o cédula · frente'],
-  ['dni_dorso', 'DNI o cédula · dorso'],
+  ['dni_frente', 'Documento o cédula · frente'],
+  ['dni_dorso', 'Documento o cédula · dorso'],
   ['pasaporte', 'Pasaporte (hoja con la foto)'],
 ];
 const docLabel = (d) => (d.kind === 'conductor' ? `${L('Conductor', 'Driver')}: ${d.name}` : (DOC_KINDS.find(([k]) => k === d.kind) || [])[1] || d.kind);
@@ -2861,7 +2868,7 @@ function docsButton(cust) {
   if (!form) return;
   form.insertAdjacentHTML(
     'afterbegin',
-    `<div class="full notice" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1">${L('Fotos de la licencia, DNI o cédula, pasaporte y de otros conductores.', 'Photos of the licence, ID card, passport and other drivers.')}</span>
+    `<div class="full notice" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1">${L('Fotos de la licencia, documento o cédula, pasaporte y de otros conductores.', 'Photos of the licence, ID card, passport and other drivers.')}</span>
       <button type="button" class="btn small" data-open-docs>${L('Fotos y documentos', 'Photos and documents')}</button></div>`,
   );
   $('[data-open-docs]', form).addEventListener('click', async () => {
@@ -3176,9 +3183,9 @@ async function printContract(r) {
     ${line('Documento', r.customer_doc ? `${esc(r.customer_doc_type || docTypes()[0])} ${esc(r.customer_doc)}` : '')}
     ${line('Domicilio', esc(r.customer_address || ''))}${r.customer_workplace ? line('Lugar de trabajo', esc(r.customer_workplace)) : ''}${r.customer_alt_contact ? line('Contacto alternativo', esc(r.customer_alt_contact)) : ''}
     ${line('Teléfono', esc(r.customer_phone || ''))}
-    ${line('Email', esc(r.customer_email || ''))}
+    ${partiesOn() ? '' : line('Email', esc(r.customer_email || ''))}
     ${line('Fecha de nacimiento', fmtD(r.customer_birth_date))}
-    ${line('Licencia N°', esc(r.customer_license || ''))}
+    ${partiesOn() ? '' : line('Licencia N°', esc(r.customer_license || ''))}
     ${line('Vencimiento licencia', fmtD(r.customer_license_expiry))}
   </table>
   ${choferesMode()
@@ -3651,6 +3658,21 @@ async function saveLicense(r, d, form) {
   return rest;
 }
 
+// Medios de pago según el país: Mercado Pago es de Argentina; Yappy, de Panamá.
+const payMethods = () =>
+  ({
+    AR: ['efectivo', 'tarjeta', 'transferencia', 'mercadopago', 'otro'].map((m) => [m, m]),
+    PA: [['efectivo', 'efectivo'], ['tarjeta', 'tarjeta (Visa o Mastercard)'], ['transferencia', 'transferencia'], ['yappy', 'Yappy'], ['paypal', 'PayPal'], ['link de pago', 'link de pago (Visa o Mastercard)'], ['otro', 'otro']],
+  })[state.settings.country] || ['efectivo', 'tarjeta', 'transferencia', 'paypal', 'otro'].map((m) => [m, m]);
+const has = (v) => v !== null && v !== undefined;
+/** Saldo de Panapass del contrato: con cuánto salió, con cuánto volvió y la diferencia (lo que gastó el cliente en peajes). */
+const panapassLine = (c) =>
+  has(c.out_panapass) || has(c.in_panapass)
+    ? `<dt>Panapass</dt><dd>${has(c.out_panapass) ? `salió con ${money(c.out_panapass)}` : 'sin saldo de salida'}${has(c.in_panapass) ? ` · volvió con ${money(c.in_panapass)}` : ''}${has(c.out_panapass) && has(c.in_panapass) ? ` · <b>diferencia ${money(c.out_panapass - c.in_panapass)}</b>` : ''}</dd>`
+    : '';
+// Panapass: el saldo de peajes del auto, sólo en Panamá.
+const panapassOn = () => state.settings.country === 'PA';
+const panapassField = (name, label) => (panapassOn() ? [{ name, label, type: 'number' }] : []);
 // Tipos de documento según el país: en Argentina DNI; en el resto, cédula, pasaporte o R.U.C. (el primero es el que viene elegido).
 const docTypes = () => (state.settings.country === 'AR' ? ['DNI', 'Pasaporte', 'CI', 'CUIT', 'RUT', 'Otro'] : ['Cédula', 'Pasaporte', 'R.U.C.', 'Otro']);
 const docWord = () => (state.settings.country === 'AR' ? 'DNI' : 'Documento');
@@ -3707,6 +3729,7 @@ const VEHICLE_FIELDS = [
   { name: 'period_rate', get label() { return `Precio por ${periodWord()} de este auto (0 = el de la categoría)`; }, type: 'number', default: 0, when: () => choferesMode() && !payModes() },
   { name: 'rest_day_rate', label: 'Precio de domingos y feriados de este auto (0 = el mismo)', type: 'number', default: 0, when: () => choferesMode() && state.settings.rent_period === 'dia' },
   { name: 'rest_day_free', label: 'Domingos y feriados libres (no se cobran)', type: 'checkbox', full: true, when: () => choferesMode() && state.settings.rent_period === 'dia' },
+  { name: 'panapass', label: 'Saldo de Panapass', type: 'number', when: () => panapassOn() },
   { name: 'web_inquiry', label: 'En la web, solo consulta por WhatsApp (no se puede reservar ni pagar online)', type: 'checkbox', full: true },
   { name: 'notes', label: 'Notas', type: 'textarea', full: true },
 ];

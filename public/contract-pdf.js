@@ -90,8 +90,13 @@ function buildContractPdf(r, photos = []) {
   kv(y, [
     ['Nombre y apellido', txt(r.customer_name), 'Documento', r.customer_doc ? `${txt(r.customer_doc_type || docTypes()[0])} ${r.customer_doc}` : ''],
     ['Domicilio', txt(r.customer_address), 'Teléfono', txt(r.customer_phone)],
-    ['Email', txt(r.customer_email), 'Fecha de nac.', d(r.customer_birth_date)],
-    ['Licencia N°', txt(r.customer_license), 'Vence', d(r.customer_license_expiry)],
+    // Agencias con el contrato nuevo: sin email ni número de licencia.
+    ...(partiesOn()
+      ? [['Fecha de nac.', d(r.customer_birth_date), 'Licencia vence', d(r.customer_license_expiry)]]
+      : [
+          ['Email', txt(r.customer_email), 'Fecha de nac.', d(r.customer_birth_date)],
+          ['Licencia N°', txt(r.customer_license), 'Vence', d(r.customer_license_expiry)],
+        ]),
     ...(r.customer_workplace || r.customer_alt_contact ? [['Lugar de trabajo', txt(r.customer_workplace), 'Contacto alt.', txt(r.customer_alt_contact)]] : []),
   ]);
   if (r.holder) {

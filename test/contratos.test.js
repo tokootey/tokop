@@ -121,3 +121,25 @@ test('conductor adicional suelto: se suma a los que hay, con o sin cargo', async
     app.close();
   }
 });
+
+test('Panapass: saldo de salida y de entrada en el contrato, y queda en el auto', async () => {
+  const app = await start();
+  try {
+    const call = await app.as('operador');
+    const r = app.reserve();
+    const out = (await call('POST', `/api/reservations/${r.id}/checkout`, { out_panapass: 20 })).data;
+    assert.equal(out.contract.out_panapass, 20);
+    assert.equal((await call('POST', `/api/reservations/${r.id}/checkin`, { in_km: out.contract.out_km + 10, in_fuel: 8, in_panapass: 'mucho' })).status, 400);
+    const back = (await call('POST', `/api/reservations/${r.id}/checkin`, { in_km: out.contract.out_km + 10, in_fuel: 8, in_panapass: 12.5 })).data;
+    assert.deepEqual([back.contract.out_panapass, back.contract.in_panapass, back.vehicle_panapass], [20, 12.5, 12.5]);
+
+    // La entrega siguiente, sin cargar nada, sale con el saldo que tiene el auto; sin saldo de vuelta, el del auto no se pisa.
+    const next = app.reserve({ pickup_at: at(10, 8), return_at: at(12, 8) });
+    const out2 = (await call('POST', `/api/reservations/${next.id}/checkout`, {})).data;
+    assert.equal(out2.contract.out_panapass, 12.5);
+    const back2 = (await call('POST', `/api/reservations/${next.id}/checkin`, { in_km: out2.contract.out_km + 5, in_fuel: 8 })).data;
+    assert.deepEqual([back2.contract.in_panapass, back2.vehicle_panapass], [null, 12.5]);
+  } finally {
+    app.close();
+  }
+});
