@@ -190,6 +190,15 @@ function operationsRoutes(db) {
   router.post('/reservations/:id/left-place', (req, res) => res.json(delivery.setLeftPlace(db, req.params.id, (req.body || {}).place, req.user.id)));
   router.post('/reservations/:id/return-link', (req, res) => res.json(delivery.returnLink(db, req.params.id)));
   router.post('/reservations/:id/card-link', (req, res) => res.json(delivery.cardLink(db, req.params.id)));
+  // Conductor adicional; con importe, queda además como cargo de la reserva.
+  router.post('/reservations/:id/drivers', (req, res) => {
+    const b = req.body || {};
+    const amount = b.amount === undefined || b.amount === null || b.amount === '' ? 0 : Number(b.amount);
+    if (!(amount >= 0)) fail(400, 'El importe tiene que ser un número mayor o igual a 0');
+    const d = R.addDriver(db, req.params.id, b, req.user.id);
+    if (amount > 0) choferes.addCharge(db, R.getReservation(db, req.params.id), { kind: 'otro', amount, description: `Conductor adicional: ${d.full_name}` }, req.user.id);
+    res.json(R.getReservation(db, req.params.id));
+  });
   router.post('/reservations/:id/parties', (req, res) => res.json(R.setParties(db, req.params.id, req.body || {}, req.user.id)));
   router.post('/reservations/:id/extend', (req, res) => res.json(R.extendReservation(db, req.params.id, req.body || {}, req.user.id)));
   router.get('/reservations/:id/move-options', (req, res) => res.json(R.moveOptions(db, req.params.id)));

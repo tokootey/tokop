@@ -1890,7 +1890,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         <h2>Datos de la reserva</h2>
         <dl class="info">
           <dt>Cliente</dt><dd><b>${esc(r.customer_name)}</b>${r.customer_id ? ' <button class="btn small no-print" type="button" data-edit-customer style="margin-left:6px">Editar datos</button>' : ''}<br><small>${esc(r.customer_doc || '')} · ${esc(r.customer_phone || '')} · ${esc(r.customer_email || '')}</small>
-            <br><button class="btn small no-print" type="button" data-docs style="margin-top:6px">Documentación</button></dd>
+            <br><button class="btn small no-print" type="button" data-docs style="margin-top:6px">Documentación</button>${!choferesMode() && ['pendiente', 'confirmada', 'en_curso'].includes(r.status) ? ' <button class="btn small no-print" type="button" data-act="addDriver" style="margin-top:6px">+ Conductor adicional</button>' : ''}</dd>
           <dt>Retiro</dt><dd>${fmtDT(r.pickup_at)} · ${esc(r.pickup_branch_name || '')}</dd>
           <dt>Devolución</dt><dd>${fmtDT(r.return_at)} · ${esc(r.return_branch_name || '')}</dd>
           <dt>Categoría</dt><dd>${esc(r.category_code)} · ${esc(r.category_name)}</dd>
@@ -2230,6 +2230,32 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           reload();
         },
       ),
+    addDriver: () => {
+      // shortcut: el precio sugerido sale del adicional que se llame "conductor"; si la agencia no lo tiene, se escribe a mano.
+      const x = (state.extras || []).find((e) => e.active && /conductor|driver/i.test(e.name));
+      const price = x ? Math.round(x.price * (x.charge_type === 'fijo' ? 1 : r.days) * 100) / 100 : '';
+      openModal(
+        `Conductor adicional · ${r.code}`,
+        formHtml(
+          [
+            { name: 'full_name', label: 'Nombre y apellido', required: true, full: true },
+            { name: 'doc_type', label: 'Tipo doc.', type: 'select', options: () => docTypes().map((t) => [t, t]) },
+            { name: 'doc_number', label: 'Documento' },
+            { name: 'license_number', label: 'Licencia N°' },
+            { name: 'license_expiry', label: 'Vencimiento de la licencia', type: 'date' },
+            { name: 'charge', label: 'Cobrar el conductor adicional', type: 'checkbox' },
+            { name: 'amount', label: 'Importe a cobrar (solo si está marcado)', type: 'number' },
+          ],
+          { charge: price ? 1 : 0, amount: price },
+        ),
+        async (d) => {
+          if (d.charge && !(Number(d.amount) > 0)) throw new Error('Escribí el importe a cobrar o desmarcá el cobro');
+          await POST(`/reservations/${r.id}/drivers`, { ...d, amount: d.charge ? d.amount : 0 });
+          toast(d.charge ? 'Conductor agregado y cargo sumado a la reserva' : 'Conductor agregado sin cargo');
+          reload();
+        },
+      );
+    },
     parties: () => {
       const h = r.holder || {};
       const docOpts = () => docTypes().map((x) => [x, x]);
@@ -5735,9 +5761,15 @@ async function bookingPage() {
         <h2><span>3</span>${L('Sumá lo que necesites', 'Add what you need')} <small class="muted">${L('opcional', 'optional')}</small></h2>
         <div class="quoter-extras">${cfg.extras
           .map(
-            (x) => `<label class="quoter-extra"><input type="checkbox" value="${esc(x.code)}" data-extra data-kind="${esc(x.kind)}"><span>${esc(x.name)}</span><small>${extraPrice(x)}</small></label>`,
+            (x) => `<label class="quoter-extra"><input type="checkbox" value="${esc(x.code)}" data-extra data-kind="${esc(x.kind)}"${/conductor|driver/i.test(x.name) ? ' data-driver' : ''}><span>${esc(x.name)}</span><small>${extraPrice(x)}</small></label>`,
           )
           .join('')}</div>
+        <div id="bk-driver" hidden>
+          <label class="qr-field">${L('Conductor adicional: nombre y apellido', 'Additional driver: full name')}<input name="drv_name" maxlength="120"></label>
+          <label class="qr-field">${L('Documento o pasaporte N° del conductor adicional', 'Additional driver ID or passport number')}<input name="drv_doc" maxlength="40"></label>
+          <label class="qr-field">${L('Licencia N° del conductor adicional', 'Additional driver license number')}<input name="drv_license" maxlength="40"></label>
+          <label class="qr-field">${L('Vencimiento de esa licencia', 'That license expiry date')}<input name="drv_expiry" type="date"></label>
+        </div>
       </section>`
           : ''
       }
@@ -5850,6 +5882,8 @@ async function bookingPage() {
       if (e.target.checked && e.target.dataset.kind === 'seguro') $$('[data-extra][data-kind=seguro]', form).forEach((x) => (x.checked = x === e.target));
       picked.clear();
       $$('[data-extra]:checked', form).forEach((x) => picked.add(x.value));
+      const drv = $('#bk-driver', form);
+      if (drv) drv.hidden = !$('[data-driver]:checked', form);
       return load();
     }
     if (e.target.name !== 'from' && e.target.name !== 'to') return;
@@ -5871,6 +5905,8 @@ async function bookingPage() {
     if (!o) return toast(L('Elegí un auto', 'Choose a car'), true);
     if (name.length < 3) return toast(L('Escribí tu nombre y apellido', 'Write your full name'), true);
     if (phone.replace(/\D/g, '').length < 6) return toast(L('Escribí tu WhatsApp con el código de país', 'Write your WhatsApp number with the country code'), true);
+    const withDriver = Boolean($('[data-driver]:checked', form));
+    if (withDriver && (form.drv_name.value.trim().length < 3 || !form.drv_license.value.trim())) return toast(L('Completá el nombre y la licencia del conductor adicional', 'Fill in the additional driver name and license'), true);
     const btn = form.querySelector('[type=submit]');
     btn.disabled = true;
     try {
@@ -5889,6 +5925,7 @@ async function bookingPage() {
         address: form.address.value.trim(),
         license_number: form.license_number.value.trim(),
         license_expiry: form.license_expiry.value,
+        driver: withDriver ? { full_name: form.drv_name.value.trim(), doc_number: form.drv_doc.value.trim(), license_number: form.drv_license.value.trim(), license_expiry: form.drv_expiry.value } : undefined,
         _gotcha: form._gotcha.value,
         notes: L('', 'El cliente eligió inglés'),
       });
