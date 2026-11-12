@@ -4222,6 +4222,9 @@ on(/^\/tarifas$/, async (view) => {
         { name: 'phone', label: 'Teléfono' },
         { name: 'active', label: 'Activa', type: 'checkbox', default: 1 },
         { name: 'aliases', label: 'Alias (cómo lo nombra el sitio web, separados por coma)', full: true },
+        { name: 'pickup_from', label: 'Cotizador web: se retira desde las (vacío = sin límite)', type: 'time' },
+        { name: 'late_after', label: 'Cotizador web: reservas hechas después de las', type: 'time' },
+        { name: 'late_pickup_from', label: '…se retiran recién desde las', type: 'time' },
       ],
       columns: [
         { label: 'Código', render: (r) => `<b>${esc(r.code)}</b>` },

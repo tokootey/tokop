@@ -145,7 +145,7 @@ function catalogRoutes(db, { uploadsDir } = {}) {
 
   router.use(
     '/branches',
-    crud(db, { table: 'branches', fields: ['code', 'name', 'address', 'phone', 'aliases', 'active'], required: ['code', 'name'], order: 'name', adminWrite: true }),
+    crud(db, { table: 'branches', fields: ['code', 'name', 'address', 'phone', 'aliases', 'active', 'pickup_from', 'late_after', 'late_pickup_from'], required: ['code', 'name'], order: 'name', adminWrite: true }),
   );
   router.use(
     '/categories',

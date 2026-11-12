@@ -129,3 +129,26 @@ test('limita la cantidad de pedidos por persona', async () => {
   for (let i = 0; i < 6; i++) statuses.push((await call('POST', '/api/public/chat/book', ok)).status);
   assert.ok(statuses.includes(429), statuses.join(','));
 });
+
+test('horario de retiro de la sucursal en el cotizador', async () => {
+  const { pickupProblem, agencyNow } = require('../src/routes/chat');
+  const b = { name: 'Aeropuerto', pickup_from: '08:00', late_after: '20:00', late_pickup_from: '09:00' };
+  assert.match(pickupProblem(b, '2030-05-10T07:30', '2030-05-01T12:00'), /a partir de las 08:00/);
+  assert.equal(pickupProblem(b, '2030-05-10T08:00', '2030-05-01T12:00'), null);
+  // Reserva hecha a las 20:30: mañana recién desde las 9, y tampoco esta misma noche.
+  assert.match(pickupProblem(b, '2030-05-02T08:30', '2030-05-01T20:30'), /a partir de las 09:00/);
+  assert.match(pickupProblem(b, '2030-05-01T22:00', '2030-05-01T20:30'), /a partir de las 09:00/);
+  assert.equal(pickupProblem(b, '2030-05-02T09:00', '2030-05-01T20:30'), null);
+  assert.equal(pickupProblem(b, '2030-05-03T08:30', '2030-05-01T20:30'), null, 'pasado mañana vale el horario normal');
+  assert.equal(pickupProblem(b, '2030-05-02T08:30', '2030-05-01T19:59'), null, 'antes de las 20 no hay tope');
+  assert.match(pickupProblem(b, '2030-05-01T08:30', '2030-05-01T02:00'), /09:00/, 'de madrugada, hoy desde las 9');
+  assert.equal(pickupProblem({ name: 'Sin horario' }, '2030-05-10T03:00', '2030-05-01T23:00'), null);
+  assert.equal(agencyNow('PA', new Date('2030-05-02T01:30:00Z')), '2030-05-01T20:30', 'hora de Panamá, no la del servidor');
+
+  db.prepare("UPDATE branches SET pickup_from = '08:00' WHERE code = 'USH'").run();
+  const early = await call('POST', '/api/public/chat/quote', { pickup_at: day(30, 7), return_at: day(33), pickup_branch: 'USH' });
+  assert.equal(early.status, 400);
+  assert.match(early.data.error, /08:00/);
+  assert.equal((await call('POST', '/api/public/chat/quote', { pickup_at: day(30, 8), return_at: day(33), pickup_branch: 'USH' })).status, 200);
+  db.prepare("UPDATE branches SET pickup_from = NULL WHERE code = 'USH'").run();
+});
