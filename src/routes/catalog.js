@@ -145,7 +145,7 @@ function catalogRoutes(db, { uploadsDir } = {}) {
 
   router.use(
     '/branches',
-    crud(db, { table: 'branches', fields: ['code', 'name', 'address', 'phone', 'aliases', 'active', 'pickup_from', 'late_after', 'late_pickup_from'], required: ['code', 'name'], order: 'name', adminWrite: true }),
+    crud(db, { table: 'branches', fields: ['code', 'name', 'address', 'phone', 'aliases', 'active', 'pickup_from', 'late_after', 'late_pickup_from', 'express_24h'], required: ['code', 'name'], order: 'name', adminWrite: true }),
   );
   router.use(
     '/categories',
@@ -222,7 +222,7 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     crud(db, {
       table: 'vehicles',
       fields: ['plate', 'brand', 'model', 'year', 'color', 'category_id', 'branch_id', 'status', 'km', 'fuel', 'insurance_expiry', 'vtv_expiry', 'service_every_km', 'notes', 'web_inquiry', 'period_rate', 'rest_day_rate', 'rest_day_free', 'pay_every',
-        'insurance_company', 'insurance_policy', 'insurance_cost', 'permit_number', 'permit_expiry', 'registration_expiry', 'service_due'],
+        'insurance_company', 'insurance_policy', 'insurance_cost', 'permit_number', 'permit_expiry', 'registration_expiry', 'service_due', 'panapass'],
       required: ['plate', 'category_id'],
       order: 'plate',
       search: ['plate', 'brand', 'model'],

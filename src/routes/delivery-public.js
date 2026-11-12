@@ -5,7 +5,7 @@ const express = require('express');
 const { getSetting } = require('../db');
 const { fail } = require('../util');
 const D = require('../delivery');
-const { sendStored, uploadedType, saveReservationFile, MAX_PDF } = require('./files');
+const { sendStored, uploadedType, saveReservationFile, saveCustomerDocument, MAX_PDF } = require('./files');
 
 /** Páginas del cliente sin usuario: firmar el contrato, ver las fotos de la entrega, subir las de la devolución y dejar la tarjeta. El código del link es la llave. */
 function deliveryPublicRoutes(db, uploadsDir) {
@@ -18,6 +18,25 @@ function deliveryPublicRoutes(db, uploadsDir) {
     const { code, files, left_place, condition } = D.deliveryPhotos(db, req.params.token);
     res.json({ company: getSetting(db, 'company_name') || '', code, left_place, condition, photos: files.map((f) => ({ id: f.id, name: f.name })) });
   });
+  // Datos y fotos de documentos que el cliente carga antes de retirar (reserva express).
+  router.get('/datos/:token', (req, res) => res.json(D.viewDocs(db, req.params.token)));
+  router.post('/datos/:token', (req, res) => res.json(D.saveDocs(db, req.params.token, req.body || {})));
+  router.post(
+    '/datos/:token/foto',
+    (req, _res, next) => {
+      D.docsUploadTarget(db, req.params.token, req.query.kind); // antes de leer el archivo
+      next();
+    },
+    express.raw({ type: () => true, limit: MAX_PDF }),
+    (req, res) => {
+      const r = D.docsUploadTarget(db, req.params.token, req.query.kind);
+      const mime = uploadedType(req);
+      if (!mime.startsWith('image/')) fail(415, 'Subí una foto (JPG, PNG o HEIC)');
+      // Va a la ficha del cliente (sirve para sus próximas reservas); subir otra foto del mismo lado reemplaza la anterior.
+      const file = saveCustomerDocument(db, uploadsDir, r.customer_id, { kind: req.query.kind, mime, body: req.body });
+      res.status(201).json({ id: file.id });
+    },
+  );
   router.get('/devolucion/:token', (req, res) => res.json(D.viewReturn(db, req.params.token)));
   router.post(
     '/devolucion/:token',

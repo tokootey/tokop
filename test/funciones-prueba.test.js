@@ -286,6 +286,7 @@ test('pre-entrega: el alquiler arranca recién cuando el cliente firma', () => {
   assert.throws(() => D.preDeliver(db, r.id, { ...pre, left_place: '' }, { company_name: 'X' }, null), /dónde queda/);
   assert.throws(() => D.preDeliver(db, r.id, { ...pre, out_km: 1 }, { company_name: 'X' }, null), /km de salida/, 'valida lo mismo que la entrega');
 
+  assert.throws(() => D.preDeliver(db, r.id, pre, { company_name: 'X', express_requires_payment: '1' }, null), /reserva paga/, 'express sólo con todo pago');
   const s = D.preDeliver(db, r.id, pre, { company_name: 'X' }, null);
   let now = R.getReservation(db, r.id);
   assert.equal(now.status, 'confirmada');

@@ -23,7 +23,7 @@ function cashDay(db, date, branch) {
        FROM payments p JOIN reservations r ON r.id = p.reservation_id JOIN customers c ON c.id = r.customer_id
        LEFT JOIN branches b ON b.id = COALESCE(p.branch_id, r.pickup_branch_id)
        WHERE p.created_at >= ? AND p.created_at < ? AND COALESCE(p.method, 'efectivo') NOT IN ('repuesto', 'importado')
-         AND (p.kind IN ('pago', 'devolucion') OR COALESCE(p.method, 'efectivo') = 'efectivo')
+         AND (p.kind IN ('pago', 'devolucion', 'recargo') OR COALESCE(p.method, 'efectivo') = 'efectivo')
          ${branch ? `AND COALESCE(p.branch_id, r.pickup_branch_id) = ${Number(branch)}` : ''}
        ORDER BY p.created_at, p.id`,
     )

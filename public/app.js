@@ -225,6 +225,7 @@ function field(f, value) {
   const v = value === undefined || value === null ? (f.default ?? '') : value;
   const cls = f.full ? ' class="full"' : '';
   const req = f.required ? ' required' : '';
+  if (f.type === 'html') return f.html;
   if (f.type === 'photos') {
     return `<label class="full">${esc(f.label)}<input name="${f.name}" type="file" accept="image/*,application/pdf" multiple/>
       <small class="muted">Desde el celular podés sacar las fotos de a una o elegirlas de la galería: se van sumando. Tocá una miniatura para sacarla.</small>
@@ -806,8 +807,12 @@ const dueDocs = (v) =>
 const auxReadingFields = (v) => [
   { name: 'km', label: `Km (tiene ${num(v.km || 0)})`, type: 'number', required: true, attrs: `min="${Number(v.km) || 0}"` },
   { name: 'fuel', label: 'Combustible (octavos)', type: 'select', options: FUEL_OPTS, required: true },
+  ...panapassField('panapass', `Saldo de Panapass${v.panapass === null || v.panapass === undefined ? '' : ` (tiene ${num(v.panapass)})`}`),
 ];
-const auxSaveReading = (v, d) => (d.km !== v.km || Number(d.fuel) !== v.fuel ? PUT(`/vehicles/${v.id}`, { km: d.km, fuel: Number(d.fuel) }) : null);
+const auxSaveReading = (v, d) => {
+  const panapass = d.panapass === undefined || d.panapass === '' || d.panapass === null ? v.panapass : Number(d.panapass);
+  return d.km !== v.km || Number(d.fuel) !== v.fuel || panapass !== v.panapass ? PUT(`/vehicles/${v.id}`, { km: d.km, fuel: Number(d.fuel), ...(panapassOn() ? { panapass } : {}) }) : null;
+};
 
 /** Lo que hace el auxiliar con un alquiler: ver y sumar fotos de entrega y devolución, y cargar km y combustible. */
 async function auxTrip(r) {
@@ -928,7 +933,7 @@ on(/^\/reservas$/, async (view) => {
   view.innerHTML = `
     <div class="page-head"><h1>Reservas</h1></div>
     <form class="toolbar" id="res-filter">
-      <label>Buscar<input name="q" placeholder="Código, cliente, DNI, patente…"/></label>
+      <label>Buscar<input name="q" placeholder="Código, cliente, ${docWord().toLowerCase() === "dni" ? "DNI" : "documento"}, patente…"/></label>
       <input type="hidden" name="status" value=""/>
       <button class="btn">Buscar</button>
       <div class="chips status-chips" role="group" aria-label="Estado">${RES_FILTERS.map(([v, l], i) => `<button type="button" class="chip${i ? '' : ' on'}" data-st="${v}" aria-pressed="${!i}">${l}</button>`).join('')}</div>
@@ -1159,14 +1164,21 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
           ${branchOptions().length > 1 ? `<label class="hidden" data-from>El auto sale de<select name="branch_from">${branchOptions().map(([id, n]) => `<option value="${id}">${esc(n)}</option>`).join('')}</select></label>` : ''}
         </div>
         <details class="more-opts">
-        <summary>${choferesMode() ? 'Más opciones: descuento y notas' : 'Más opciones: adicionales, descuento y vuelo'}</summary>
+        <summary>${choferesMode() ? 'Más opciones: descuento y notas' : 'Más opciones: adicionales, recargos, descuento y vuelo'}</summary>
         <div class="actions" style="margin-top:12px">${state.extras
-          .filter((x) => !choferesMode() && x.active && x.kind !== 'seguro' && String(x.code).toUpperCase() !== 'HOTEL') // el hotel se suma solo; el seguro se elige arriba
+          .filter((x) => !choferesMode() && x.active && !['seguro', 'recargo'].includes(x.kind) && String(x.code).toUpperCase() !== 'HOTEL') // el hotel se suma solo; el seguro se elige arriba
           .map(
             (x) =>
               `<label class="check"><input type="checkbox" name="extra_${x.id}"/> ${esc(x.name)} <small class="muted">(${money(x.price)}${x.charge_type === 'dia' ? '/día' : ''})</small></label>`,
           )
           .join('')}</div>
+        ${state.extras.some((x) => x.active && x.kind === 'recargo') ? `<h4 style="margin:14px 0 0">Recargos</h4><div class="actions" style="margin-top:8px">${state.extras
+          .filter((x) => x.active && x.kind === 'recargo') // los que carga la agencia en Tarifas > Recargos
+          .map(
+            (x) =>
+              `<label class="check"><input type="checkbox" name="extra_${x.id}"/> ${esc(x.name)} <small class="muted">(${money(x.price)}${x.charge_type === 'dia' ? '/día' : ''})</small></label>`,
+          )
+          .join('')}</div>` : ''}
         <div class="form-grid" style="margin-top:12px">
           <label>Descuento %<input type="number" name="discount_pct" min="0" max="100" step="any" value="0"/></label>
           <label>Descuento en $ <small class="muted">(para redondear, ej. 10.000)</small><input type="number" name="discount_amount" min="0" step="any" value="0"/></label>
@@ -1181,7 +1193,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       <div class="card">
         <h2>3 · Cliente</h2>
         <div class="toolbar">
-          <label style="flex:1">Buscar cliente existente<input id="cust-q" placeholder="Nombre, DNI, email o teléfono"/></label>
+          <label style="flex:1">Buscar cliente existente<input id="cust-q" placeholder="Nombre, ${docWord().toLowerCase() === "dni" ? "DNI" : "documento"}, email o teléfono"/></label>
           <button type="button" class="btn" id="cust-new">+ Cliente nuevo</button>
         </div>
         <div id="cust-results"></div>
@@ -1260,6 +1272,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       discount_pct: f.discount_pct || 0,
       discount_amount: f.discount_amount || 0,
       extras: f.extras.join(','),
+      customer_id: sel.customer_id || '', // recargo por conductor menor
     });
     try {
       quotes = await GET(`/availability?${qs}`);
@@ -1327,8 +1340,14 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
     $('#cust-results').innerHTML = '';
     $('#cust-q').value = '';
     $('#cust-selected').classList.remove('muted');
+    // Conductor menor: lleva el seguro de menor franquicia (el servidor lo exige igual al guardar).
+    if (form.insurance && isYoungDriver(c.birth_date, form.pickup_at.value, youngCfg(state.settings))) {
+      form.insurance.value = bestInsurance(insurances()).id;
+      toast('Conductor menor: se suma el recargo y lleva el seguro de menor franquicia');
+    }
+    refresh(); // el precio puede sumar el recargo por conductor menor
     $('#cust-selected').innerHTML = `✔ <b>${esc(c.full_name)}</b> · ${esc(c.doc_type || '')} ${esc(c.doc_number || '')} · ${esc(c.phone || '')} · ${esc(c.email || '')}
-      ${c.doc_number && c.phone && c.email && c.address && c.birth_date && c.license_number && c.license_expiry ? '' : '<br><span class="error">Le faltan datos al cliente (se piden al entregar).</span>'}`;
+      ${c.doc_number && c.phone && c.address && c.birth_date && c.license_expiry ? '' : '<br><span class="error">Le faltan datos al cliente (se piden al entregar).</span>'}`;
   };
   let t;
   $('#cust-q').addEventListener('input', (e) => {
@@ -1422,6 +1441,10 @@ const insurancePrice = (x, days) => {
 const insuranceNote = (x) =>
   x ? `${x.deductible ? `Franquicia: ${money(x.deductible)} (lo que paga el cliente si hay un daño)` : 'Sin franquicia: si hay un daño, el cliente no paga nada'}${x.price ? ` · ${money(x.price)}${x.charge_type === 'dia' ? ' por día' : ' por alquiler'}` : ' · incluido en la tarifa'}` : '';
 // Viene elegido el más barato (normalmente el incluido en la tarifa). Abajo, la franquicia del elegido.
+// Conductor menor: edad al día del retiro, igual que src/pricing.js. Vale sólo si la agencia cargó el recargo.
+const youngCfg = (s) => (Number(s.young_driver_fee) > 0 ? { age: Number(s.young_driver_age) || 21, fee: Number(s.young_driver_fee) } : null);
+const isYoungDriver = (birth, day, y) => Boolean(y && birth && day && day.slice(0, 4) - birth.slice(0, 4) - (day.slice(5, 10) < birth.slice(5, 10) ? 1 : 0) < y.age);
+const bestInsurance = (list) => [...list].sort((a, b) => (a.deductible || 0) - (b.deductible || 0) || b.price - a.price)[0];
 const insuranceSelect = (cls = '') => {
   const list = insurances();
   if (!list.length) return '';
@@ -1435,6 +1458,30 @@ document.addEventListener('change', (e) => {
   if (note) note.textContent = insuranceNote(insurances().find((x) => x.id === Number(e.target.value)));
 });
 /** Seguro de una reserva ya hecha (o null) y los adicionales sin el seguro. */
+// Recargos propios de la agencia (Tarifas > Recargos): casillas para tildar en la reserva rápida y en la entrega.
+const surcharges = () => (state.extras || []).filter((x) => x.kind === 'recargo' && x.active);
+const surchargeChecks = (current = []) =>
+  surcharges().length
+    ? `<div class="full"><h4 style="margin:10px 0 6px">Recargos</h4>${surcharges()
+        .map((x) => `<label class="check"><input type="checkbox" data-rec="${x.id}" ${current.some((e) => e.extra_id === x.id) ? 'checked' : ''}/> ${esc(x.name)} <small class="muted">(${money(x.price)}${x.charge_type === 'dia' ? '/día' : ''})</small></label>`)
+        .join('')}</div>`
+    : '';
+const pickedSurcharges = (form) => $$('[data-rec]:checked', form).map((x) => ({ extra_id: Number(x.dataset.rec), quantity: 1 }));
+// Entrega: si cambiaron los recargos tildados, se actualiza la reserva (y su precio) antes de entregar.
+async function saveSurcharges(r, form) {
+  const before = (r.extras || []).filter((e) => e.kind === 'recargo');
+  const after = pickedSurcharges(form);
+  const ids = (l) => l.map((e) => e.extra_id).sort().join();
+  if (!surcharges().length || ids(before) === ids(after)) return;
+  const body = { extras: [...(r.extras || []).filter((e) => e.kind !== 'recargo'), ...after] };
+  // Con precio acordado el sistema no recalcula el total: se le suma (o resta) la diferencia de recargos.
+  if (r.pricing && r.pricing.calculated_total !== undefined) {
+    const sum = (l) => l.reduce((a, e) => a + insurancePrice(state.extras.find((x) => x.id === e.extra_id) || { price: 0 }, r.days), 0);
+    const tax = r.pricing.tax_included || !r.pricing.tax_rate ? 1 : 1 + r.pricing.tax_rate / 100;
+    body.price_override = Math.max(0, r.total + (sum(after) - sum(before)) * tax);
+  }
+  await PUT(`/reservations/${r.id}`, body);
+}
 const resInsurance = (r) => (r.extras || []).find((x) => x.kind === 'seguro') || null;
 const resAddons = (r) => (r.extras || []).filter((x) => x.kind !== 'seguro');
 
@@ -1457,6 +1504,12 @@ const clientLink = (path, token) => {
 const waText = (r, text) => `https://wa.me/${String(r.customer_phone || '').replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
 const contractMessage = (r, link) =>
   `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Este es el contrato de tu alquiler con ${state.settings.company_name}. Leelo y firmalo desde el celular`, `This is your rental agreement with ${state.settings.company_name}. Read and sign it from your phone`)}: ${link}`;
+// Links de pago de la agencia: primero la reserva; cuando se registra ese pago, la garantía.
+const payLinkMessage = (r) =>
+  `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Para confirmar tu reserva ${r.code} en ${state.settings.company_name} pagá ${money(r.balance.pending)} desde este link`, `To confirm your booking ${r.code} at ${state.settings.company_name}, pay ${money(r.balance.pending)} with this link`)}: ${state.settings.payment_link_url}`;
+const depositLinkMessage = (r) =>
+  `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Recibimos el pago de tu reserva ${r.code}. Para dejar la garantía${r.deposit > 0 ? ` de ${money(r.deposit)}` : ''} usá este link`, `We received the payment for your booking ${r.code}. To leave the deposit${r.deposit > 0 ? ` of ${money(r.deposit)}` : ''} use this link`)}: ${state.settings.deposit_link_url}`;
+const depositLinkDue = (r) => Boolean(state.settings.deposit_link_url) && ['pendiente', 'confirmada'].includes(r.status) && !(r.balance.deposit_held > 0);
 const expressMessage = (r, link) =>
   `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Tu auto de ${state.settings.company_name} ya está listo. Mirá las fotos y el estado del auto y firmá el contrato desde el celular. Al firmar vas a ver dónde está`, `Your car from ${state.settings.company_name} is ready. Check the photos and condition of the car and sign the agreement from your phone. Once you sign, you will see where it is`)}: ${link}`;
 const signedMessage = (r, contract, photos, place) =>
@@ -1585,6 +1638,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         <p class="field-error hidden" data-err="car"></p>
         ${insurances().length && !choferesMode() ? `<div style="margin-top:10px">${insuranceSelect('qr-field')}</div>` : ''}
         <label class="qr-field" style="margin-top:10px">Descuento en $ <small class="muted">(opcional, para redondear: 10.000, 20.000…)</small><input name="discount" type="number" inputmode="numeric" min="0" step="any" placeholder="0"></label>
+        ${choferesMode() ? '' : surchargeChecks()}
       </section>
       <section>
         <h2>¿Quién lo alquila?</h2>
@@ -1632,7 +1686,8 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
     const c = cars.find((x) => x.id === sel.vehicle);
     $('#qr-what', form).textContent = c ? `${days()} ${days() === 1 ? L('día', 'day') : L('días', 'days')} · ${[c.brand, c.model].filter(Boolean).join(' ') || c.plate}` : 'Elegí un auto';
     const ins = form.insurance && insurances().find((x) => x.id === Number(form.insurance.value));
-    const gross = c ? c.quote.total + (sel.hotel ? hotelFee() : 0) + (ins ? insurancePrice(ins, days()) : 0) : 0;
+    const recs = pickedSurcharges(form).reduce((a, e) => a + insurancePrice(state.extras.find((x) => x.id === e.extra_id), days()), 0);
+    const gross = c ? c.quote.total + (sel.hotel ? hotelFee() : 0) + (ins ? insurancePrice(ins, days()) : 0) + recs : 0;
     // El descuento se resta antes del impuesto (como lo calcula el sistema): si el precio no lo incluye, el total baja un poco más.
     const off = c ? Math.min(gross, discount() * (c.quote.tax_included || !c.quote.tax_rate ? 1 : 1 + c.quote.tax_rate / 100)) : 0;
     $('#qr-sum', form).textContent = c ? money(gross - off) : '';
@@ -1687,7 +1742,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   });
   form.addEventListener('input', (e) => e.target.name === 'discount' && summary());
   form.addEventListener('change', (e) => {
-    if (e.target.name === 'insurance') return summary();
+    if (e.target.name === 'insurance' || e.target.dataset.rec) return summary();
     // El WhatsApp se revisa al salir del campo: así el voucher no se manda a un número mal cargado.
     if (e.target.name === 'phone') return showErr('phone', validPhone(e.target.value.trim()) ? '' : PHONE_ERROR);
     if (e.target.name === 'name') return showErr('name', e.target.value.trim() ? '' : 'Escribí el nombre y apellido del cliente.');
@@ -1745,7 +1800,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         return_at: localISO(to),
         status: 'confirmada',
         hotel: sel.hotel ? { ...hotelFrom(form), deliver: true, return: form.h_return.checked } : undefined,
-        extras: form.insurance ? [{ extra_id: Number(form.insurance.value), quantity: 1 }] : undefined,
+        extras: [...(form.insurance ? [{ extra_id: Number(form.insurance.value), quantity: 1 }] : []), ...pickedSurcharges(form)],
         discount_amount: discount(),
       });
     }, 'Reserva guardada');
@@ -1826,6 +1881,8 @@ function breakdownHtml(q) {
     ${q.dynamic_extra ? row(`Recargo por alta demanda ${q.dynamic_pct}%`, money(q.dynamic_extra)) : ''}
     ${(q.extras || []).map((x) => row(`${esc(x.name)}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount))).join('')}
     ${q.one_way_fee ? row('Devolución en otra sucursal', money(q.one_way_fee)) : ''}
+    ${q.young_driver_fee ? row(`Conductor menor de ${esc(q.young_driver_age)} años`, money(q.young_driver_fee)) : ''}
+    ${q.after_hours_fee ? row('Fuera de hora', money(q.after_hours_fee)) : ''}
     ${q.discount ? row(`Descuento${q.discount_pct ? ` ${q.discount_pct}%` : ''}`, '−' + money(q.discount)) : ''}
     ${q.tax_rate ? row(`${esc(taxName())} ${q.tax_rate}% ${q.tax_included ? '(incluido)' : ''}`, money(q.tax)) : ''}
     ${q.calculated_total !== undefined ? row('<span class="muted">Precio según tarifas del sistema</span>', `<span class="muted">${money(q.calculated_total)}</span>`) : ''}
@@ -1851,6 +1908,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
     more.push('<button data-act="edit">Modificar fechas o datos</button>');
   }
   if (r.status === 'en_curso' && !r.periods.length) more.push('<button data-act="extend">Extender el alquiler</button>');
+  if (r.status === 'en_curso' && !choferesMode()) more.push('<button data-act="fine">Sumar un cargo o recargo</button>');
   if (partiesOn() && ['pendiente', 'confirmada', 'en_curso'].includes(r.status)) more.push('<button data-act="parties">Titular y conductores adicionales</button>');
   const hotelOpen = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
   if (hotelOpen && !r.hotel && !choferesMode()) more.push('<button data-act="hotel">Entregar o retirar en un hotel</button>');
@@ -1863,6 +1921,9 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   // Saldo a cobrar a la vista, con el importe: un toque abre el cobro ya completado.
   if (['confirmada', 'en_curso', 'finalizada'].includes(r.status) && r.balance.pending > 0)
     actions.push(`<button class="btn ${r.status === 'finalizada' ? 'primary' : ''}" data-act="pay">${ICON.money}Cobrar ${money(r.balance.pending)}</button>`);
+  if (state.settings.payment_link_url && ['pendiente', 'confirmada'].includes(r.status) && r.balance.pending > 0) actions.push(`<button class="btn" data-act="payLink">${ICON.send}Mandar link de pago</button>`);
+  if (['pendiente', 'confirmada'].includes(r.status) && !choferesMode()) more.push('<button data-act="docsLink">Pedirle datos y fotos del carnet</button>');
+  if (depositLinkDue(r)) r.balance.pending > 0 ? more.push('<button data-act="depositLink">Mandar link de garantía</button>') : actions.push(`<button class="btn primary" data-act="depositLink">${ICON.send}Mandar link de garantía</button>`);
   if (['cancelada', 'no_show'].includes(r.status)) actions.push('<button class="btn" data-act="reopen">Reabrir</button>');
   if (!['cancelada', 'no_show'].includes(r.status)) {
     if (r.status !== 'finalizada' && !choferesMode()) actions.push(`<button class="btn" data-act="voucher">${ICON.send}Enviar voucher</button>`);
@@ -1891,7 +1952,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         <dl class="info">
           <dt>Cliente</dt><dd><b>${esc(r.customer_name)}</b>${r.customer_id ? ' <button class="btn small no-print" type="button" data-edit-customer style="margin-left:6px">Editar datos</button>' : ''}<br><small>${esc(r.customer_doc || '')} · ${esc(r.customer_phone || '')} · ${esc(r.customer_email || '')}</small>
             <br><button class="btn small no-print" type="button" data-docs style="margin-top:6px">Documentación</button>${!choferesMode() && ['pendiente', 'confirmada', 'en_curso'].includes(r.status) ? ' <button class="btn small no-print" type="button" data-act="addDriver" style="margin-top:6px">+ Conductor adicional</button>' : ''}</dd>
-          <dt>Retiro</dt><dd>${fmtDT(r.pickup_at)} · ${esc(r.pickup_branch_name || '')}</dd>
+          <dt>Retiro</dt><dd>${fmtDT(r.pickup_at)} · ${esc(r.pickup_branch_name || '')}${r.express ? ' <span class="badge b-pendiente">Express</span>' : ''}</dd>
           <dt>Devolución</dt><dd>${fmtDT(r.return_at)} · ${esc(r.return_branch_name || '')}</dd>
           <dt>Categoría</dt><dd>${esc(r.category_code)} · ${esc(r.category_name)}</dd>
           <dt>Vehículo</dt><dd>${r.vehicle_plate ? `<b>${esc(r.vehicle_plate)}</b> ${esc(r.vehicle_brand)} ${esc(r.vehicle_model)}` : '<span class="badge b-pendiente">Sin asignar</span>'}</dd>
@@ -1942,6 +2003,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           ${c.out_notes ? `<dt>Obs. salida</dt><dd>${esc(c.out_notes)}</dd>` : ''}
           <dt>Devolución</dt><dd>${c.in_at ? `${fmtDT(c.in_at)} · ${c.in_km} km · combustible ${fuel(c.in_fuel)}` : '<span class="muted">Pendiente</span>'}</dd>
           ${c.in_notes ? `<dt>Obs. devolución</dt><dd>${esc(c.in_notes)}</dd>` : ''}
+          ${panapassLine(c)}
           ${c.charges ? `<dt>Km recorridos</dt><dd>${num(c.charges.km_driven)}${c.charges.km_excess ? ` · <b class="warn-text">${num(c.charges.km_excess)} de más</b>` : ''}${c.charges.fuel_missing ? ` · <b class="warn-text">faltaron ${c.charges.fuel_missing}/8 de combustible</b>` : ''}</dd>` : ''}
         </dl>
         ${
@@ -2092,15 +2154,18 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'out_at', label: 'Fecha y hora de salida', type: 'datetime-local', required: true },
             { name: 'out_km', label: 'Km de salida', type: 'number', required: true },
             { name: 'out_fuel', label: 'Combustible (octavos)', type: 'select', options: FUEL_OPTS, required: true },
+            ...panapassField('out_panapass', 'Saldo de Panapass al salir'),
+            { type: 'html', html: surchargeChecks(r.extras) },
             { name: 'out_notes', label: 'Observaciones / estado del vehículo', type: 'textarea', full: true },
             { name: 'fotos', label: 'Fotos del auto al entregarlo (frente, laterales, cola, interior, tablero con km y combustible)', type: 'photos' },
           ],
-          { vehicle_id: first.id, ...licenseValues(r), out_at: localISO(new Date()), out_km: first.km, out_fuel: first.fuel ?? 8 },
+          { vehicle_id: first.id, ...licenseValues(r), out_at: localISO(new Date()), out_km: first.km, out_fuel: first.fuel ?? 8, out_panapass: first.panapass ?? '' },
           'Entregar y abrir contrato',
         ),
         async (data, form) => {
           const d = await saveLicense(r, data, form);
           if (!d) return false;
+          await saveSurcharges(r, form);
           await POST(`/reservations/${r.id}/checkout`, { ...d, vehicle_id: Number(d.vehicle_id), out_fuel: Number(d.out_fuel) });
           toast('Vehículo entregado. Contrato abierto.');
           try {
@@ -2120,6 +2185,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
     },
     // Pre-entrega: el auto queda listo sin que arranque el alquiler. La entrega se completa cuando el cliente firma.
     preDelivery: async () => {
+      if (state.settings.express_requires_payment === '1' && r.balance.pending > 0) return toast(`La entrega express se hace con la reserva paga: falta cobrar ${money(r.balance.pending)}`, true);
       const list = (await GET(`/reservations/${r.id}/available-vehicles`)).filter((v) => v.status !== 'alquilado' || v.id === r.vehicle_id);
       if (r.vehicle_id && !list.some((v) => v.id === r.vehicle_id)) list.unshift({ id: r.vehicle_id, plate: r.vehicle_plate, brand: r.vehicle_brand, model: r.vehicle_model, km: '' });
       if (!list.length) return toast('No hay vehículos libres de esta categoría', true);
@@ -2134,15 +2200,18 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             ...licenseFields(r),
             { name: 'out_km', label: 'Km de salida', type: 'number', required: true },
             { name: 'out_fuel', label: 'Combustible (octavos)', type: 'select', options: FUEL_OPTS, required: true },
+            ...panapassField('out_panapass', 'Saldo de Panapass al salir'),
+            { type: 'html', html: surchargeChecks(r.extras) },
             { name: 'out_notes', label: 'Observaciones / estado del vehículo', type: 'textarea', full: true },
             { name: 'fotos', label: 'Fotos del auto (frente, laterales, cola, interior, tablero con km y combustible)', type: 'photos' },
           ],
-          { vehicle_id: first.id, ...licenseValues(r), left_place: (r.signature && r.signature.left_place) || '', out_km: pre ? pre.out_km : first.km, out_fuel: pre ? pre.out_fuel : first.fuel ?? 8, out_notes: (pre && pre.out_notes) || '' },
+          { vehicle_id: first.id, ...licenseValues(r), left_place: (r.signature && r.signature.left_place) || '', out_km: pre ? pre.out_km : first.km, out_fuel: pre ? pre.out_fuel : first.fuel ?? 8, out_panapass: (pre ? pre.out_panapass : first.panapass) ?? '', out_notes: (pre && pre.out_notes) || '' },
           'Guardar pre-entrega',
         ),
         async (data, form) => {
           const d = await saveLicense(r, data, form);
           if (!d) return false;
+          await saveSurcharges(r, form);
           await POST(`/reservations/${r.id}/pre-delivery`, { ...d, vehicle_id: Number(d.vehicle_id), out_fuel: Number(d.out_fuel), terms: contractTermsList(r) });
           toast('Pre-entrega guardada. El alquiler arranca cuando el cliente firme.');
           try {
@@ -2169,6 +2238,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'return_branch_id', label: 'Sucursal de devolución', type: 'select', options: branchOptions, required: true },
             { name: 'in_km', label: `Km de llegada (salió con ${c.out_km})`, type: 'number', required: true, attrs: `min="${c.out_km}"` },
             { name: 'in_fuel', label: `Combustible (salió con ${c.out_fuel}/8)`, type: 'select', options: FUEL_OPTS, required: true },
+            ...panapassField('in_panapass', `Saldo de Panapass al volver${c.out_panapass === null || c.out_panapass === undefined ? '' : ` (salió con ${money(c.out_panapass)})`}`),
             { name: 'damage_charge', label: 'Cargo por daños', type: 'number', default: 0 },
             { name: 'in_notes', label: 'Observaciones / daños detectados', type: 'textarea', full: true },
             { name: 'fotos', label: 'Fotos del auto al recibirlo (daños, km y combustible)', type: 'photos' },
@@ -2176,7 +2246,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'pending_note', label: 'Dejar el contrato pendiente por (con saldo sin cobrar queda pendiente solo)', type: 'select', options: [['Daños por definir', 'Daños por definir'], ['Faltantes', 'Faltantes (accesorios, llaves, documentos)'], ['Saldo sin cobrar', 'Saldo sin cobrar']], full: true, when: () => proOn() && !choferesMode() },
           ],
           // Si el auxiliar de flota ya cargó el km y el combustible del auto al recibirlo, vienen puestos.
-          { in_at: localISO(new Date()), return_branch_id: r.return_branch_id, ...(r.vehicle_km > c.out_km ? { in_km: r.vehicle_km, in_fuel: r.vehicle_fuel } : { in_fuel: c.out_fuel }) },
+          { in_at: localISO(new Date()), return_branch_id: r.return_branch_id, in_panapass: r.vehicle_panapass !== c.out_panapass ? (r.vehicle_panapass ?? '') : '', ...(r.vehicle_km > c.out_km ? { in_km: r.vehicle_km, in_fuel: r.vehicle_fuel } : { in_fuel: c.out_fuel }) },
           'Cerrar contrato',
         ),
         async (d, form) => {
@@ -2288,17 +2358,17 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       await run(() => POST(`/reservations/${r.id}/close-contract`), 'Contrato cerrado');
       reload();
     },
-    pay: () =>
+    pay: () => {
       openModal(
         'Registrar movimiento',
         formHtml(
           [
-            { name: 'kind', label: 'Tipo', type: 'select', options: Object.entries(PAYMENT_KINDS), required: true },
+            { name: 'kind', label: 'Tipo', type: 'select', options: Object.entries(PAYMENT_KINDS).filter(([k]) => k !== 'recargo'), required: true }, // el recargo lo anota el sistema
             {
               name: 'method',
               label: 'Medio',
               type: 'select',
-              options: [...['efectivo', 'tarjeta', 'transferencia', 'mercadopago', 'otro'].map((m) => [m, m]), ...(choferesMode() ? [['repuesto', 'repuesto o arreglo que pagó el chofer']] : [])],
+              options: [...payMethods(), ...(choferesMode() ? [['repuesto', 'repuesto o arreglo que pagó el chofer']] : [])],
               required: true,
             },
             { name: 'amount', label: 'Importe', type: 'number', required: true },
@@ -2310,9 +2380,27 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         async (d) => {
           await POST(`/reservations/${r.id}/payments`, { ...d, branch_id: state.branch || undefined }); // la caja es la de la sucursal elegida
           toast('Movimiento registrado');
-          reload();
+          // shortcut: el pago se registra a mano; cuando la agencia tenga pasarela, su aviso de pago tiene que caer en este mismo paso.
+          if (d.kind === 'pago' && depositLinkDue(r)) location.hash = `#/reservas/${r.id}?accion=depositLink`;
+          else reload();
         },
-      ),
+      );
+      const body = $('#modal-body');
+      const form = $('form', body);
+      // Con PayPal, cuánto hay que cobrarle con el recargo de la agencia.
+      const pct = Number(state.settings.paypal_surcharge_pct) || 0;
+      const note = document.createElement('p');
+      note.className = 'full muted';
+      note.style.margin = '0';
+      form.method.closest('label').after(note);
+      const show = () => {
+        const on = pct > 0 && form.method.value === 'paypal' && form.kind.value === 'pago';
+        note.hidden = !on;
+        note.textContent = on ? `Con PayPal se suma ${pct}%: cobrale ${money(Number(form.amount.value) * (1 + pct / 100))}` : '';
+      };
+      form.addEventListener('input', show);
+      show();
+    },
     edit: () =>
       openModal(
         `Modificar ${r.code}`,
@@ -2342,14 +2430,15 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           reload();
         },
       ),
-    fine: () =>
+    fine: () => {
       openModal(
-        'Cargar multa o cargo',
+        choferesMode() ? 'Cargar multa o cargo' : 'Sumar un cargo o recargo',
         formHtml(
           [
+            { name: 'rec', label: 'Recargo de la agencia (completa el importe y el detalle)', type: 'select', options: surcharges().map((x) => [x.id, `${x.name} · ${money(insurancePrice(x, r.days))}`]), full: true, when: () => !choferesMode() && surcharges().length > 0 },
             { name: 'kind', label: 'Tipo', type: 'select', required: true, options: [['multa', 'Multa de tránsito'], ['otro', 'Otro cargo (acarreo, lavado, daño…)']] },
             { name: 'amount', label: 'Importe', type: 'number', required: true },
-            { name: 'date', label: 'Fecha de la infracción', type: 'date' },
+            { name: 'date', label: choferesMode() ? 'Fecha de la infracción' : 'Fecha', type: 'date' },
             { name: 'reference', label: 'N° de acta o comprobante' },
             { name: 'description', label: 'Detalle', full: true },
           ],
@@ -2357,10 +2446,22 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         ),
         async (d) => {
           await POST(`/reservations/${r.id}/charges`, d);
-          toast('Cargo registrado: se suma a lo que debe el chofer');
+          toast(`Cargo registrado: se suma a lo que debe el ${choferesMode() ? 'chofer' : 'cliente'}`);
           reload();
         },
-      ),
+      );
+      // Elegir un recargo de Tarifas > Recargos deja el cargo listo para guardar.
+      const rec = $('#modal-body [name=rec]');
+      if (rec)
+        rec.addEventListener('change', () => {
+          const x = surcharges().find((s) => s.id === Number(rec.value));
+          if (!x) return;
+          const f = rec.form;
+          f.kind.value = 'otro';
+          f.amount.value = insurancePrice(x, r.days);
+          f.description.value = x.name;
+        });
+    },
     km: () =>
       openModal(
         'Registrar kilometraje',
@@ -2427,6 +2528,16 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       if (!c) return;
       const link = clientLink('devolucion', c.return_token);
       openModal(`Fotos de la devolución · ${r.code}`, sendStep('Link para el cliente', 'Saca las fotos desde el celular y aparecen solas en esta reserva, en Devolución. El link se cierra al registrar la devolución.', r, returnMessage(r, link), link));
+    },
+    payLink: () =>
+      openModal(`Link de pago · ${r.code}`, sendStep('Pago de la reserva', 'Cuando el cliente pague, registrá el cobro: ahí mismo se abre el envío del link de garantía.', r, payLinkMessage(r), state.settings.payment_link_url)),
+    depositLink: () => openModal(`Link de garantía · ${r.code}`, sendStep('Garantía', 'El cliente ya pagó la reserva: mandale el link para dejar la garantía.', r, depositLinkMessage(r), state.settings.deposit_link_url)),
+    docsLink: async () => {
+      const c = await run(() => POST(`/reservations/${r.id}/docs-link`));
+      if (!c) return;
+      const link = clientLink('datos', c.docs_token);
+      const text = `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Para tu reserva ${r.code} en ${state.settings.company_name} necesitamos tus datos y una foto de tu licencia de conducir y de tu documento. Cargalos acá`, `For your booking ${r.code} at ${state.settings.company_name} we need your details and a photo of your driver license and ID. Please upload them here`)}: ${link}`;
+      openModal(`Datos del cliente · ${r.code}`, sendStep('Datos y fotos del carnet', 'El cliente completa lo que falta y saca las fotos desde el celular. Quedan en su ficha, en Fotos y documentos.', r, text, link));
     },
     card: async () => {
       const c = await run(() => POST(`/reservations/${r.id}/card-link`));
@@ -2541,6 +2652,8 @@ function voucherLines(r) {
     q.dynamic_extra ? [`Recargo por alta demanda ${q.dynamic_pct}%`, money(q.dynamic_extra)] : null,
     ...(q.extras || []).map((x) => [`${x.name}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
+    q.young_driver_fee ? [`Conductor menor de ${q.young_driver_age} años`, money(q.young_driver_fee)] : null,
+    q.after_hours_fee ? ['Fuera de hora', money(q.after_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct} %` : ''}`, `−${money(q.discount)}`] : null,
     q.tax_rate ? [`${taxName()} ${q.tax_rate} %${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
     ['Total', money(r.balance.due)],
@@ -2850,8 +2963,8 @@ function wireFiles(view, r, reload) {
 const DOC_KINDS = [
   ['carnet_frente', 'Licencia de conducir · frente'],
   ['carnet_dorso', 'Licencia de conducir · dorso'],
-  ['dni_frente', 'DNI o cédula · frente'],
-  ['dni_dorso', 'DNI o cédula · dorso'],
+  ['dni_frente', 'Documento o cédula · frente'],
+  ['dni_dorso', 'Documento o cédula · dorso'],
   ['pasaporte', 'Pasaporte (hoja con la foto)'],
 ];
 const docLabel = (d) => (d.kind === 'conductor' ? `${L('Conductor', 'Driver')}: ${d.name}` : (DOC_KINDS.find(([k]) => k === d.kind) || [])[1] || d.kind);
@@ -2861,7 +2974,7 @@ function docsButton(cust) {
   if (!form) return;
   form.insertAdjacentHTML(
     'afterbegin',
-    `<div class="full notice" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1">${L('Fotos de la licencia, DNI o cédula, pasaporte y de otros conductores.', 'Photos of the licence, ID card, passport and other drivers.')}</span>
+    `<div class="full notice" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1">${L('Fotos de la licencia, documento o cédula, pasaporte y de otros conductores.', 'Photos of the licence, ID card, passport and other drivers.')}</span>
       <button type="button" class="btn small" data-open-docs>${L('Fotos y documentos', 'Photos and documents')}</button></div>`,
   );
   $('[data-open-docs]', form).addEventListener('click', async () => {
@@ -2959,7 +3072,7 @@ async function openDocuments(customerId, name) {
 }
 
 const FUEL_OPTS = [0, 1, 2, 3, 4, 5, 6, 7, 8].map((n) => [n, n === 8 ? '8/8 (lleno)' : n === 0 ? '0/8 (vacío)' : `${n}/8`]);
-const PAYMENT_KINDS = { pago: 'Pago', devolucion: 'Devolución de dinero', garantia: 'Garantía (depósito)', devolucion_garantia: 'Devolución de garantía' };
+const PAYMENT_KINDS = { pago: 'Pago', devolucion: 'Devolución de dinero', garantia: 'Garantía (depósito)', devolucion_garantia: 'Devolución de garantía', recargo: 'Recargo PayPal' };
 
 /**
  * Condiciones del contrato con las {palabras} completadas, como lista de cláusulas { title, body } en texto plano.
@@ -3128,6 +3241,8 @@ async function printContract(r) {
     q.promo_discount ? [`Promoción: ${q.promo.name}`, '−' + money(q.promo_discount)] : null,
     ...(q.extras || []).map((x) => [esc(x.name) + (x.quantity > 1 ? ` ×${esc(x.quantity)}` : ''), money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
+    q.young_driver_fee ? [`Conductor menor de ${esc(q.young_driver_age)} años`, money(q.young_driver_fee)] : null,
+    q.after_hours_fee ? ['Fuera de hora', money(q.after_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${esc(q.discount_pct)}%` : ''}`, '−' + money(q.discount)] : null,
     q.tax_rate ? [`${esc(taxName())} ${esc(q.tax_rate)}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
   ].filter(Boolean);
@@ -3176,9 +3291,9 @@ async function printContract(r) {
     ${line('Documento', r.customer_doc ? `${esc(r.customer_doc_type || docTypes()[0])} ${esc(r.customer_doc)}` : '')}
     ${line('Domicilio', esc(r.customer_address || ''))}${r.customer_workplace ? line('Lugar de trabajo', esc(r.customer_workplace)) : ''}${r.customer_alt_contact ? line('Contacto alternativo', esc(r.customer_alt_contact)) : ''}
     ${line('Teléfono', esc(r.customer_phone || ''))}
-    ${line('Email', esc(r.customer_email || ''))}
+    ${partiesOn() ? '' : line('Email', esc(r.customer_email || ''))}
     ${line('Fecha de nacimiento', fmtD(r.customer_birth_date))}
-    ${line('Licencia N°', esc(r.customer_license || ''))}
+    ${partiesOn() ? '' : line('Licencia N°', esc(r.customer_license || ''))}
     ${line('Vencimiento licencia', fmtD(r.customer_license_expiry))}
   </table>
   ${choferesMode()
@@ -3623,8 +3738,8 @@ const DELIVERY_CUSTOMER = [
 ];
 function licenseFields(r) {
   return [
-    ...DELIVERY_CUSTOMER.filter(([, key]) => !r[key]).map(([name, , f]) => ({ name, required: true, ...f })),
-    { name: 'license_number', label: 'Licencia del cliente N°', required: true },
+    ...DELIVERY_CUSTOMER.filter(([, key]) => !r[key]).map(([name, , f]) => ({ name, required: name !== 'email', ...f })), // el email es opcional
+    { name: 'license_number', label: 'Licencia del cliente N°' },
     { name: 'license_expiry', label: 'Vencimiento de la licencia', type: 'date', required: true },
   ];
 }
@@ -3651,8 +3766,23 @@ async function saveLicense(r, d, form) {
   return rest;
 }
 
+// Medios de pago según el país: Mercado Pago es de Argentina; Yappy, de Panamá.
+const payMethods = () =>
+  ({
+    AR: ['efectivo', 'tarjeta', 'transferencia', 'mercadopago', 'otro'].map((m) => [m, m]),
+    PA: [['efectivo', 'efectivo'], ['tarjeta', 'tarjeta (Visa o Mastercard)'], ['transferencia', 'transferencia'], ['yappy', 'Yappy'], ['paypal', 'PayPal'], ['link de pago', 'link de pago (Visa o Mastercard)'], ['otro', 'otro']],
+  })[state.settings.country] || ['efectivo', 'tarjeta', 'transferencia', 'paypal', 'otro'].map((m) => [m, m]);
+const has = (v) => v !== null && v !== undefined;
+/** Saldo de Panapass del contrato: con cuánto salió, con cuánto volvió y la diferencia (lo que gastó el cliente en peajes). */
+const panapassLine = (c) =>
+  has(c.out_panapass) || has(c.in_panapass)
+    ? `<dt>Panapass</dt><dd>${has(c.out_panapass) ? `salió con ${money(c.out_panapass)}` : 'sin saldo de salida'}${has(c.in_panapass) ? ` · volvió con ${money(c.in_panapass)}` : ''}${has(c.out_panapass) && has(c.in_panapass) ? ` · <b>diferencia ${money(c.out_panapass - c.in_panapass)}</b>` : ''}</dd>`
+    : '';
+// Panapass: el saldo de peajes del auto, sólo en Panamá.
+const panapassOn = () => state.settings.country === 'PA';
+const panapassField = (name, label) => (panapassOn() ? [{ name, label, type: 'number' }] : []);
 // Tipos de documento según el país: en Argentina DNI; en el resto, cédula, pasaporte o R.U.C. (el primero es el que viene elegido).
-const docTypes = () => (state.settings.country === 'AR' ? ['DNI', 'Pasaporte', 'CI', 'CUIT', 'RUT', 'Otro'] : ['Cédula', 'Pasaporte', 'R.U.C.', 'DNI', 'Otro']);
+const docTypes = () => (state.settings.country === 'AR' ? ['DNI', 'Pasaporte', 'CI', 'CUIT', 'RUT', 'Otro'] : ['Cédula', 'Pasaporte', 'R.U.C.', 'Otro']);
 const docWord = () => (state.settings.country === 'AR' ? 'DNI' : 'Documento');
 // Titular y conductores adicionales, lugar de trabajo y contacto alternativo: agencias con funciones en prueba, alquiler por días.
 const partiesOn = () => proOn() && !choferesMode();
@@ -3707,6 +3837,7 @@ const VEHICLE_FIELDS = [
   { name: 'period_rate', get label() { return `Precio por ${periodWord()} de este auto (0 = el de la categoría)`; }, type: 'number', default: 0, when: () => choferesMode() && !payModes() },
   { name: 'rest_day_rate', label: 'Precio de domingos y feriados de este auto (0 = el mismo)', type: 'number', default: 0, when: () => choferesMode() && state.settings.rent_period === 'dia' },
   { name: 'rest_day_free', label: 'Domingos y feriados libres (no se cobran)', type: 'checkbox', full: true, when: () => choferesMode() && state.settings.rent_period === 'dia' },
+  { name: 'panapass', label: 'Saldo de Panapass', type: 'number', when: () => panapassOn() },
   { name: 'web_inquiry', label: 'En la web, solo consulta por WhatsApp (no se puede reservar ni pagar online)', type: 'checkbox', full: true },
   { name: 'notes', label: 'Notas', type: 'textarea', full: true },
 ];
@@ -4126,6 +4257,54 @@ on(
   },
   'flota',
 );
+// Recargos de la agencia: son ajustes (PUT /settings), no una lista como las otras pestañas.
+async function surchargesTab(box) {
+  const s = await GET('/settings');
+  box.innerHTML = `<div class="page-head"><h1>Recargos</h1></div><div class="card">${formHtml(
+    [
+      { name: 'paypal_surcharge_pct', label: 'Recargo al cobrar con PayPal (%)', type: 'number', attrs: 'min="0" max="100"', when: () => s.country !== 'AR' }, // en Argentina no se cobra con PayPal
+      { name: 'young_driver_fee', label: 'Recargo por conductor menor (una vez por alquiler)', type: 'number', attrs: 'min="0"', when: () => !choferesMode() },
+      { name: 'young_driver_age', label: 'Paga ese recargo quien tiene menos de (años)', type: 'number', attrs: 'min="0"', when: () => !choferesMode() },
+      { name: 'after_hours_fee', label: 'Recargo por retirar o devolver fuera de hora (una vez por alquiler)', type: 'number', attrs: 'min="0"', when: () => !choferesMode() },
+      { name: 'after_hours_from', label: 'Fuera de hora: desde las', type: 'time', when: () => !choferesMode() },
+      { name: 'after_hours_to', label: 'Fuera de hora: hasta las (después no se entregan autos)', type: 'time', when: () => !choferesMode() },
+      { name: 'one_way_fee', label: 'Recargo por devolver en otro lugar', type: 'number', when: () => !choferesMode() },
+      { name: 'fuel_charge_per_eighth', label: 'Cargo por cada 1/8 de combustible faltante', type: 'number' },
+      { name: 'grace_hours', label: 'Tolerancia (horas) antes de cobrar un día más', type: 'number' },
+    ],
+    s,
+  )}</div>`;
+  const form = $('form', box);
+  $('[data-close]', form).remove();
+  if (!isAdmin()) $('button[type=submit]', form).remove();
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await run(() => PUT('/settings', formData(form)), 'Recargos guardados');
+    await loadCatalogs();
+  });
+  // Recargos propios de la agencia: son adicionales de tipo "recargo"; se tildan al armar la reserva y el cliente no los ve en el cotizador.
+  box.insertAdjacentHTML('beforeend', '<div id="rec-list" style="margin-top:24px"></div>');
+  await crudPage({
+    title: 'Otros recargos',
+    endpoint: 'extras',
+    fields: [
+      { name: 'name', label: 'Nombre del recargo', required: true, full: true, attrs: 'placeholder="Ej.: Entrega fuera de horario"' },
+      { name: 'price', label: 'Monto', type: 'number', required: true, default: 0 },
+      { name: 'charge_type', label: 'Se cobra', type: 'select', options: [['fijo', 'Por alquiler'], ['dia', 'Por día']], required: true, default: 'fijo' },
+      { name: 'active', label: 'Activo', type: 'checkbox', default: 1 },
+    ],
+    columns: [
+      { label: 'Recargo', render: (r) => `<b>${esc(r.name)}</b>` },
+      { label: 'Monto', render: (r) => `${money(r.price)} ${r.charge_type === 'dia' ? '/día' : '/alquiler'}` },
+      { label: 'Activo', render: (r) => (r.active ? '✔' : '—') },
+    ],
+    canWrite: isAdmin,
+    after: loadCatalogs,
+    rowFilter: (r) => r.kind === 'recargo',
+    defaults: { kind: 'recargo' },
+  })($('#rec-list', box));
+  $('#rec-list .page-head', box).insertAdjacentHTML('afterend', '<p class="muted tab-intro">Cargá los recargos que cobra tu agencia. Aparecen con una casilla al armar la reserva: se tildan y se suman al precio.</p>');
+}
 /* ---------- Tarifas y sucursales (pestañas) ---------- */
 on(/^\/tarifas$/, async (view) => {
   const tabs = [
@@ -4177,7 +4356,7 @@ on(/^\/tarifas$/, async (view) => {
         { label: 'Tope', render: (r) => (r.max_price ? money(r.max_price) : '—') },
         { label: 'Activo', render: (r) => (r.active ? '✔' : '—') },
       ],
-      rowFilter: (r) => r.kind !== 'seguro',
+      rowFilter: (r) => !['seguro', 'recargo'].includes(r.kind), // los recargos propios van en su pestaña
     },
     {
       // Los seguros son adicionales de tipo "seguro": en cada reserva se elige uno (y figura su franquicia).
@@ -4239,6 +4418,7 @@ on(/^\/tarifas$/, async (view) => {
         { label: 'Días', render: (r) => `${fmtD(r.start_date)} → ${fmtD(r.end_date)}` },
       ],
     },
+    { key: 'recargos', label: 'Recargos' },
     {
       key: 'branches',
       label: 'Sucursales / lugares de entrega',
@@ -4252,6 +4432,7 @@ on(/^\/tarifas$/, async (view) => {
         { name: 'pickup_from', label: 'Cotizador web: se retira desde las (vacío = sin límite)', type: 'time' },
         { name: 'late_after', label: 'Cotizador web: reservas hechas después de las', type: 'time' },
         { name: 'late_pickup_from', label: '…se retiran recién desde las', type: 'time' },
+        { name: 'express_24h', label: 'Sin personal fijo (por ejemplo el aeropuerto): las reservas del link con menos de 24 hs son express', type: 'checkbox', full: true },
       ],
       columns: [
         { label: 'Código', render: (r) => `<b>${esc(r.code)}</b>` },
@@ -4272,6 +4453,7 @@ on(/^\/tarifas$/, async (view) => {
       route();
     }),
   );
+  if (current === 'recargos') return surchargesTab($('#tab-body', view));
   const tab = tabs.find((t) => t.key === current);
   await crudPage({ title: tab.label, endpoint: tab.endpoint || tab.key, fields: tab.fields, columns: tab.columns, canWrite: isAdmin, after: loadCatalogs, rowFilter: tab.rowFilter, defaults: tab.defaults })($('#tab-body'));
   if (tab.intro) $('#tab-body .page-head').insertAdjacentHTML('afterend', `<p class="muted tab-intro">${esc(tab.intro)}</p>`);
@@ -4579,9 +4761,6 @@ on(/^\/config$/, async (view) => {
       { name: 'prices_include_tax', label: 'Las tarifas incluyen el impuesto', type: 'checkbox' },
       { name: 'tax_id_label', label: 'Nombre de la identificación fiscal (CUIT, RUT, RFC, NIF…)' },
       { name: 'locale', label: 'Formato de números y fechas', type: 'select', options: LOCALES },
-      { name: 'grace_hours', label: 'Tolerancia (horas) antes de cobrar un día más', type: 'number' },
-      { name: 'one_way_fee', label: 'Recargo por devolver en otro lugar', type: 'number', when: () => !choferesMode() },
-      { name: 'fuel_charge_per_eighth', label: 'Cargo por cada 1/8 de combustible faltante', type: 'number' },
       { name: 'turnaround_minutes', label: 'Minutos libres entre la devolución de un auto y su próximo alquiler', type: 'number', attrs: 'min="0"', when: () => proOn() },
       { name: 'dynamic_pricing_rules', label: 'Subir precios según ocupación (ocupación:recargo, por ejemplo 70:10, 90:20)', when: () => proOn() && !choferesMode() },
       { name: 'min_driver_age', label: 'Edad mínima del conductor', type: 'number' },
@@ -5638,6 +5817,10 @@ on(/^\/asistente$/, async (view) => {
           <label class="check full"><input type="checkbox" name="chat_enabled" ${s.chat_enabled === '1' ? 'checked' : ''}/> Link de reservas activado</label>
           <label class="full">Mensaje de bienvenida<input name="chat_welcome" maxlength="300" placeholder="¡Hola! Elegí las fechas y te mostramos los autos libres." value="${esc(s.chat_welcome || '')}"/></label>
           <label class="full">WhatsApp de la agencia (con código de país, ej. 5492901123456)<input name="chat_whatsapp" maxlength="30" value="${esc(s.chat_whatsapp || '')}"/></label>
+          <label class="full">Link de pago de la reserva (el de tu banco o pasarela; vacío = todavía no tenés)<input name="payment_link_url" type="url" maxlength="300" placeholder="https://" value="${esc(s.payment_link_url || '')}"/></label>
+          <label class="full">Link de pago de la garantía<input name="deposit_link_url" type="url" maxlength="300" placeholder="https://" value="${esc(s.deposit_link_url || '')}"/></label>
+          <label class="check full"><input type="checkbox" name="express_requires_payment" ${s.express_requires_payment === '1' ? 'checked' : ''}/> Entrega express sólo con la reserva paga</label>
+          <label class="check full"><input type="checkbox" name="chat_hotel" ${s.chat_hotel === '1' ? 'checked' : ''}/> Ofrecer la entrega en hotel (con menos de 24 hs es express)</label>
           <label class="full">Preguntas frecuentes (una por línea: Pregunta | Respuesta)<textarea name="chat_faq" rows="7">${esc(s.chat_faq || s.chat_faq_default || '')}</textarea></label>
           <div class="actions full"><button class="btn primary" type="submit">Guardar</button></div>
         </form>
@@ -5678,6 +5861,8 @@ on(/^\/asistente$/, async (view) => {
     e.preventDefault();
     const f = formData(e.target);
     f.chat_enabled = f.chat_enabled ? '1' : '0';
+    f.express_requires_payment = f.express_requires_payment ? '1' : '0';
+    f.chat_hotel = f.chat_hotel ? '1' : '0';
     await run(() => PUT('/settings', f), 'Link de reservas guardado');
     route(); // vuelve a dibujar la pantalla (el aviso de apagado y la vista previa)
   });
@@ -5737,7 +5922,7 @@ async function bookingPage() {
     [7, '1 semana'],
   ];
   const placeSelect = (name, label) =>
-    `<label class="qr-field">${label}<select name="${name}">${cfg.branches.map((b) => `<option value="${esc(b.code)}">${esc(b.name)}</option>`).join('')}</select></label>`;
+    `<label class="qr-field">${label}<select name="${name}">${cfg.branches.map((b) => `<option value="${esc(b.code)}">${esc(b.name)}</option>`).join('')}${name === 'branch' && cfg.hotel ? `<option value="__hotel">${L('Hotel (te lo llevamos)', 'Hotel (we bring it to you)')}</option>` : ''}</select></label>`;
   const extraPrice = (x) => `${money(x.price)}${x.charge_type === 'fijo' ? '' : ` ${L('por día', 'per day')}`}`;
   const page = publicPage(`
     <header class="pub-head quoter-head"><h1>${esc(cfg.company)}</h1><p>${esc(cfg.welcome)}</p></header>
@@ -5748,8 +5933,16 @@ async function bookingPage() {
           <label class="qr-field">${L('Retiro', 'Pick-up')}<input type="datetime-local" name="from" required></label>
           <label class="qr-field">${L('Devolución', 'Return')}<input type="datetime-local" name="to" required></label>
         </div>
+        ${cfg.after_hours ? `<p class="field-warn hidden" id="bk-late">${ICON.alert}${L(`Retirar o devolver el auto de ${cfg.after_hours.from} a ${cfg.after_hours.to} tiene un recargo de ${money(cfg.after_hours.fee)} por fuera de hora (se cobra una sola vez). Ya está sumado al precio.`, `Picking up or returning between ${cfg.after_hours.from} and ${cfg.after_hours.to} has a ${money(cfg.after_hours.fee)} after-hours surcharge (charged once). It is already included in the price.`)}</p>` : ''}
         <div class="chips">${QUICK.map(([n, label]) => `<button type="button" class="chip" data-days="${n}">${label}</button>`).join('')}</div>
-        ${cfg.branches.length > 1 ? `<div class="qr-dates" style="margin-top:8px">${placeSelect('branch', L('Lugar de retiro', 'Pick-up place'))}${placeSelect('return_branch', L('Lugar de devolución', 'Return place'))}</div>` : ''}
+        ${cfg.branches.length > 1 || cfg.hotel ? `<div class="qr-dates" style="margin-top:8px">${placeSelect('branch', L('Lugar de retiro', 'Pick-up place'))}${placeSelect('return_branch', L('Lugar de devolución', 'Return place'))}</div>` : ''}
+        ${cfg.hotel ? `<div class="qr-hotel hidden" id="bk-hotel">
+          ${cfg.hotel.fee ? `<p class="hotel-fee">${ICON.money}<span>${L(`La entrega en hotel tiene un costo extra de <b>${money(cfg.hotel.fee)}</b>. Ya está sumado al precio.`, `Hotel delivery has an extra cost of <b>${money(cfg.hotel.fee)}</b>. It is already included in the price.`)}</span></p>` : ''}
+          <p class="muted">${L('Contanos en qué hotel estás para llevarte el auto.', 'Tell us which hotel you are staying at so we can bring the car.')}</p>
+          <div class="qr-hotel-grid">${hotelInputs()}</div>
+          <label class="check"><input type="checkbox" name="h_return" checked/> ${L('Devuelvo el auto en el mismo hotel', 'I will return the car at the same hotel')}</label>
+        </div>` : ''}
+        <p class="field-warn hidden" id="bk-express">${ICON.alert}${L('Reserva express: falta menos de 24 hs y no retirás en la oficina. Para confirmarla hay que pagar el total y subir tus datos y la foto de tu licencia.', 'Express booking: pick-up is in less than 24 hours and not at the office. To confirm it you must pay the total and upload your details and a photo of your license.')}</p>
       </section>
       <section class="quoter-step">
         <h2><span>2</span>${L('Elegí el auto', 'Choose your car')}</h2>
@@ -5773,11 +5966,16 @@ async function bookingPage() {
         <div style="display:flex;flex-direction:column;gap:8px">
           <label class="qr-field">${L('Nombre y apellido', 'Full name')}<input name="name" autocomplete="name" maxlength="120" required></label>
           <label class="qr-field">${L('WhatsApp (con código de país)', 'WhatsApp (with country code)')}<input name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" placeholder="${esc(cfg.phone_hint)}" required></label>
-          <label class="qr-field">${L('Email', 'Email')}<input name="email" type="email" autocomplete="email" maxlength="160" required></label>
+          <label class="qr-field">${L('Email', 'Email')}<input name="email" type="email" autocomplete="email" maxlength="160"></label>
           <label class="qr-field">${L('Documento o pasaporte N°', 'ID or passport number')}<input name="doc_number" maxlength="40" required></label>
           <label class="qr-field">${L('Fecha de nacimiento', 'Date of birth')}<input name="birth_date" type="date" autocomplete="bday" required></label>
+          ${cfg.young_driver ? `<p class="muted" style="margin:0;font-size:13px">${(() => {
+            const ins = bestInsurance(cfg.extras.filter((x) => x.kind === 'seguro'));
+            const y = cfg.young_driver;
+            return L(`Si tenés menos de ${y.age} años se suma un recargo de ${money(y.fee)}${ins ? ` y es obligatorio llevar el seguro ${esc(ins.name)}` : ''}. El alquiler mínimo es de 2 días.`, `If you are under ${y.age}, a ${money(y.fee)} surcharge applies${ins ? ` and the ${esc(ins.name)} insurance is mandatory` : ''}. Minimum rental is 2 days.`);
+          })()}</p>` : ''}
           <label class="qr-field">${L('Domicilio', 'Home address')}<input name="address" autocomplete="street-address" maxlength="200" required></label>
-          <label class="qr-field">${L('Licencia de conducir N°', 'Driver license number')}<input name="license_number" maxlength="40" required></label>
+          <label class="qr-field">${L('Licencia de conducir N°', 'Driver license number')}<input name="license_number" maxlength="40"></label>
           <label class="qr-field">${L('Vencimiento de la licencia', 'License expiry date')}<input name="license_expiry" type="date" required></label>
           <label class="trap" aria-hidden="true">No completar<input name="_gotcha" tabindex="-1" autocomplete="off"></label>
         </div>
@@ -5786,6 +5984,7 @@ async function bookingPage() {
         <div class="sum"><span class="muted" id="bk-what">${L('Elegí un auto', 'Choose a car')}</span><b id="bk-sum"></b></div>
         <button class="btn primary big" type="submit">${L('Pedir la reserva', 'Request booking')}</button>
         ${cfg.whatsapp ? `<a class="btn wa big" href="https://wa.me/${esc(cfg.whatsapp)}?text=${encodeURIComponent(L('Hola, tengo una consulta sobre una reserva.', 'Hi, I have a question about a booking.'))}" target="_blank" rel="noopener">${WA_ICON}${L('Consultar o pagar por transferencia', 'Ask or pay by bank transfer')}</a>` : ''}
+        ${cfg.whatsapp && cfg.amex_by_whatsapp ? `<a class="btn wa big" href="https://wa.me/${esc(cfg.whatsapp)}?text=${encodeURIComponent(L('Hola, quiero pagar una reserva con American Express.', 'Hi, I would like to pay for a booking with American Express.'))}" target="_blank" rel="noopener">${WA_ICON}${L('Pagar con American Express', 'Pay with American Express')}</a>` : ''}
         <small class="muted">${L('No pagás nada ahora. La agencia te confirma por WhatsApp.', 'You pay nothing now. The agency confirms by WhatsApp.')}</small>
       </div>
     </form>
@@ -5796,18 +5995,70 @@ async function bookingPage() {
     }`);
   const form = $('#bk', page);
   const days = () => Math.max(1, Math.round((to - from) / 86400000));
+  const inHotel = () => Boolean(form.branch && form.branch.value === '__hotel');
+  // Con hotel el auto sale de la oficina (lo decide el servidor); si lo devuelve en el hotel, vuelve a la misma.
+  const places = () => ({
+    pickup_branch: inHotel() ? undefined : form.branch ? form.branch.value : cfg.branches[0] && cfg.branches[0].code,
+    return_branch: (inHotel() && form.h_return.checked) || !form.return_branch ? undefined : form.return_branch.value,
+  });
   const set = () => {
+    if (cfg.hotel) $('#bk-hotel', form).classList.toggle('hidden', !inHotel());
+    $('#bk-express', form).classList.toggle('hidden', !((inHotel() || cfg.express_places.includes(places().pickup_branch)) && localISO(from) < cfg.express_before));
     form.from.value = localISO(from);
     form.to.value = localISO(to);
     form.from.min = localISO(new Date(t.getFullYear(), t.getMonth(), t.getDate()));
+    const lateAt = (d) => localISO(d).slice(11, 16) >= cfg.after_hours.from && localISO(d).slice(11, 16) <= cfg.after_hours.to;
+    if (cfg.after_hours) $('#bk-late', form).classList.toggle('hidden', !(lateAt(from) || lateAt(to)));
     $$('.chip', form).forEach((c) => c.classList.toggle('on', Number(c.dataset.days) === Math.round((to - from) / 86400000)));
   };
   const dayWord = (n) => (n === 1 ? L('día', 'day') : L('días', 'days'));
+  // Recargo por conductor menor según la fecha de nacimiento, igual que lo calcula el servidor al reservar.
+  // shortcut: si las tarifas no incluyen el impuesto, acá falta el impuesto del recargo; el total final lo calcula el servidor. Mejorar si una agencia así cobra este recargo.
+  const youngFee = (o) => {
+    return o && isYoungDriver(form.birth_date.value, localISO(from), cfg.young_driver) ? cfg.young_driver.fee : 0;
+  };
+  // Conductor menor: el mejor seguro (menor franquicia) queda tildado y no se puede sacar.
+  const youngInsurance = () => {
+    const young = isYoungDriver(form.birth_date.value, localISO(from), cfg.young_driver);
+    const best = bestInsurance(cfg.extras.filter((x) => x.kind === 'seguro'));
+    $$('[data-extra][data-kind=seguro]', form).forEach((x) => {
+      if (young && best) x.checked = x.value === best.code;
+      x.disabled = Boolean(young && best);
+    });
+  };
   const summary = () => {
     const o = options.find((x) => x.code === pick);
-    $('#bk-what', form).textContent = o ? `${o.name} · ${o.days} ${dayWord(o.days)}` : L('Elegí un auto', 'Choose a car');
-    $('#bk-sum', form).textContent = o ? money(o.total) : '';
+    const fee = youngFee(o);
+    const late = o && o.after_hours_fee ? ` · ${L(`incluye ${money(o.after_hours_fee)} por fuera de hora`, `includes ${money(o.after_hours_fee)} after-hours surcharge`)}` : '';
+    $('#bk-what', form).textContent = o ? `${o.name} · ${o.days} ${dayWord(o.days)}${fee ? ` · ${L(`incluye ${money(fee)} por conductor menor de ${cfg.young_driver.age} años`, `includes ${money(fee)} for a driver under ${cfg.young_driver.age}`)}` : ''}${late}` : L('Elegí un auto', 'Choose a car');
+    $('#bk-sum', form).textContent = o ? money(o.total + fee) : '';
   };
+  const licenseOk = () => {
+    form.querySelector('[data-for=license_expiry]')?.remove();
+    const v = form.license_expiry.value;
+    if (!v || v >= localISO(to).slice(0, 10)) return true;
+    const msg = v < localISO(new Date()).slice(0, 10) ? L('Tu licencia está vencida. Para reservar necesitás una licencia vigente.', 'Your license has expired. You need a valid license to book.') : L('Tu licencia vence antes de la devolución. Tiene que estar vigente todo el alquiler.', 'Your license expires before the return date. It must be valid for the whole rental.');
+    form.license_expiry.closest('label').insertAdjacentHTML('afterend', `<p class="field-error box" data-for="license_expiry" role="alert">${msg}</p>`);
+    return false;
+  };
+  form.license_expiry.addEventListener('change', licenseOk);
+  form.birth_date.addEventListener('change', () => {
+    youngInsurance();
+    if (isYoungDriver(form.birth_date.value, localISO(from), cfg.young_driver)) {
+      const ins = bestInsurance(cfg.extras.filter((x) => x.kind === 'seguro'));
+      const y = cfg.young_driver;
+      openModal(
+        L(`Conductor menor de ${y.age} años`, `Driver under ${y.age}`),
+        `<p>${L(`Como tenés menos de ${y.age} años:`, `Because you are under ${y.age}:`)}</p>
+         <ul><li>${L(`Se suma un recargo de ${money(y.fee)}.`, `A ${money(y.fee)} surcharge applies.`)}</li>${ins ? `<li>${L(`Es obligatorio llevar el seguro ${esc(ins.name)}.`, `The ${esc(ins.name)} insurance is mandatory.`)}</li>` : ''}<li>${L('El alquiler mínimo es de 2 días.', 'Minimum rental is 2 days.')}</li></ul>
+         <div class="actions"><button class="btn primary" type="button" id="young-ok">${L('Entendido', 'Got it')}</button></div>`,
+      );
+      $('#young-ok').addEventListener('click', closeModal);
+    }
+    picked.clear();
+    $$('[data-extra]:checked', form).forEach((x) => picked.add(x.value));
+    load(); // el precio cambia con el seguro; el resumen suma el recargo
+  });
   const paint = () => {
     if (!options.some((o) => o.code === pick)) pick = null;
     $('#bk-cars', form).innerHTML = options.length
@@ -5843,7 +6094,7 @@ async function bookingPage() {
     const mine = ++lastLoad;
     $('#bk-cars', form).classList.add('loading');
     try {
-      const found = (await call('POST', '/quote', { pickup_at: localISO(from), return_at: localISO(to), pickup_branch: form.branch ? form.branch.value : undefined, return_branch: form.return_branch ? form.return_branch.value : undefined, extras: [...picked] })).options;
+      const found = (await call('POST', '/quote', { pickup_at: localISO(from), return_at: localISO(to), ...places(), hotel: inHotel(), extras: [...picked] })).options;
       if (mine !== lastLoad) return;
       options = found;
       $('#bk-cars', form).classList.remove('loading');
@@ -5853,7 +6104,10 @@ async function bookingPage() {
       $('#bk-cars', form).classList.remove('loading');
       options = [];
       summary();
-      $('#bk-cars', form).innerHTML = `<p class="error">${esc(e.message)}</p>`;
+      // El mensaje del tope nocturno ("…del día siguiente") viene del servidor: ahí se ofrece la reserva express por WhatsApp.
+      const express = cfg.whatsapp && /del día siguiente/.test(e.message);
+      const ask = L(`Hola, quiero hacer una reserva express: retiro el ${fmtDT(localISO(from))} y devuelvo el ${fmtDT(localISO(to))}.`, `Hi, I'd like an express booking: pick-up ${fmtDT(localISO(from))}, return ${fmtDT(localISO(to))}.`);
+      $('#bk-cars', form).innerHTML = `<p class="error">${esc(e.message)}</p>${express ? `<a class="btn wa big" style="margin-top:10px" href="https://wa.me/${esc(cfg.whatsapp)}?text=${encodeURIComponent(ask)}" target="_blank" rel="noopener">${WA_ICON}${L('Reserva express por WhatsApp', 'Express booking on WhatsApp')}</a>` : ''}`;
     }
   };
   form.addEventListener('click', (e) => {
@@ -5870,8 +6124,12 @@ async function bookingPage() {
     }
   });
   form.addEventListener('change', (e) => {
-    if (e.target.name === 'branch' && form.return_branch) form.return_branch.value = form.branch.value; // lo normal: devuelve donde retira
-    if (e.target.name === 'branch' || e.target.name === 'return_branch') return load();
+    if (e.target.name === 'branch' && form.return_branch && !inHotel()) form.return_branch.value = form.branch.value; // lo normal: devuelve donde retira
+    if (e.target.name === 'branch' || e.target.name === 'return_branch') {
+      set();
+      if (e.target.name === 'branch' && inHotel()) form.h_name.focus();
+      return load();
+    }
     if (e.target.matches('[data-extra]')) {
       // Un solo seguro por reserva.
       if (e.target.checked && e.target.dataset.kind === 'seguro') $$('[data-extra][data-kind=seguro]', form).forEach((x) => (x.checked = x === e.target));
@@ -5900,14 +6158,20 @@ async function bookingPage() {
     if (!o) return toast(L('Elegí un auto', 'Choose a car'), true);
     if (name.length < 3) return toast(L('Escribí tu nombre y apellido', 'Write your full name'), true);
     if (phone.replace(/\D/g, '').length < 6) return toast(L('Escribí tu WhatsApp con el código de país', 'Write your WhatsApp number with the country code'), true);
+    if (inHotel() && !(form.h_name.value.trim() && form.h_address.value.trim())) {
+      form.h_name.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return toast(L('Completá el nombre y la dirección del hotel', 'Fill in the hotel name and address'), true);
+    }
+    if (!licenseOk()) return form.license_expiry.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (youngFee(o) && o.days < 2) return toast(L(`Si tenés menos de ${cfg.young_driver.age} años el alquiler mínimo es de 2 días`, `Drivers under ${cfg.young_driver.age} must rent for at least 2 days`), true);
     const btn = form.querySelector('[type=submit]');
     btn.disabled = true;
     try {
       const r = await call('POST', '/book', {
         pickup_at: localISO(from),
         return_at: localISO(to),
-        pickup_branch: form.branch ? form.branch.value : cfg.branches[0] && cfg.branches[0].code,
-        return_branch: form.return_branch ? form.return_branch.value : undefined,
+        ...places(),
+        hotel: inHotel() ? { ...hotelFrom(form), return: form.h_return.checked } : undefined,
         extras: [...picked],
         category: o.code,
         name,
@@ -5932,9 +6196,12 @@ async function bookingPage() {
         'afterend',
         `<div class="card pub-done">
           <div class="pub-ok" aria-hidden="true">✓</div>
-          <h1>¡Listo! Te confirmamos por WhatsApp</h1>
+          <h1>${r.express ? L('Reserva express: te faltan dos pasos', 'Express booking: two steps left') : '¡Listo! Te confirmamos por WhatsApp'}</h1>
           <p>${esc(o.name)} · ${when} · <b>${money(o.total)}</b></p>
           <p class="muted">${L(`${esc(cfg.company)} te va a escribir para confirmar la reserva.`, `${esc(cfg.company)} will message you to confirm the booking.`)}</p>
+          ${r.express ? `<p class="field-warn">${ICON.alert}${L('Como retirás en menos de 24 hs y no es en la oficina, para confirmarla tenés que pagar el total y subir tus datos y la foto de tu licencia.', 'Because pick-up is in less than 24 hours and not at the office, to confirm it you must pay the total and upload your details and a photo of your license.')}</p>` : ''}
+          ${r.docs_url ? `<a class="btn primary big" href="${esc(r.docs_url)}" rel="noopener">${L('Subir mis datos y fotos', 'Upload my details and photos')}</a>` : ''}
+          ${cfg.payment_link && r.code ? `<a class="btn primary big" href="${esc(cfg.payment_link)}" target="_blank" rel="noopener">${ICON.money}${L('Pagar la reserva', 'Pay for the booking')}</a>` : ''}
           ${r.card_url ? `<a class="btn primary big" href="${esc(r.card_url)}" rel="noopener">${ICON.money}${L('Dejar mi tarjeta', 'Leave my card')}</a>` : ''}
           ${cfg.whatsapp ? `<a class="btn ok big" href="https://wa.me/${esc(cfg.whatsapp)}?text=${encodeURIComponent(text)}" target="_blank" rel="noopener">${WA_ICON}Escribirle a la agencia</a>` : ''}
         </div>`,
@@ -6205,6 +6472,82 @@ function carConditionHtml(d, token) {
     ${d.photos.length ? `<div class="pub-photos">${d.photos.map((p) => `<a href="${src(p)}" target="_blank" rel="noopener"><img loading="lazy" alt="${esc(p.name || '')}" src="${src(p)}"/></a>`).join('')}</div>` : `<p>${L('Todavía no hay fotos. La agencia las va a subir enseguida.', 'There are no photos yet. The agency will upload them soon.')}</p>`}`;
 }
 
+/** /datos/<código>: antes de retirar, el cliente completa lo que falta de su ficha y sube las fotos de su licencia y documento. */
+async function docsPage() {
+  const url = `/api/public/entrega/datos/${encodeURIComponent(location.pathname.split('/')[2] || '')}`;
+  const title = L('Tus datos para retirar el auto', 'Your details to pick up the car');
+  let d;
+  try {
+    const res = await fetch(url + empresaQuery());
+    d = await res.json();
+    if (!res.ok) throw new Error(d.error);
+  } catch {
+    linkGone(title);
+    return;
+  }
+  document.title = `${d.company} · ${title}`;
+  const FIELDS = {
+    doc_number: [L('Documento o pasaporte N°', 'ID or passport number'), 'text'],
+    birth_date: [L('Fecha de nacimiento', 'Date of birth'), 'date'],
+    address: [L('Domicilio', 'Home address'), 'text'],
+    license_number: [L('Licencia de conducir N°', 'Driver license number'), 'text'],
+    license_expiry: [L('Vencimiento de la licencia', 'License expiry date'), 'date'],
+  };
+  const PHOTOS = { carnet_frente: L('Licencia de conducir: frente', 'Driver license: front'), carnet_dorso: L('Licencia de conducir: dorso', 'Driver license: back'), dni_frente: L('Cédula o documento', 'ID card'), pasaporte: L('Pasaporte', 'Passport') };
+  const done = new Set(d.photos);
+  const page = publicPage(`<div class="pub-head"><h1>${title}</h1><p>${esc(d.company)} · ${esc(d.code)}</p></div>
+    <form class="card stack" id="docs" novalidate>
+      <p>${L(`Hola ${esc(d.name)}. Para entregarte el auto necesitamos estos datos y las fotos de tu licencia y tu documento.`, `Hi ${esc(d.name)}. To hand over the car we need these details and photos of your license and ID.`)}</p>
+      ${d.missing.map((f) => `<label class="qr-field">${FIELDS[f][0]}<input name="${f}" type="${FIELDS[f][1]}" maxlength="200" ${f === 'license_number' ? '' : 'required'}></label>`).join('')}
+      <h2 style="margin:8px 0 0">${L('Fotos', 'Photos')}</h2>
+      ${Object.entries(PHOTOS)
+        .map(([k, label]) => `<div class="stack"><input type="file" accept="image/*" data-photo="${k}" hidden/><button class="btn${done.has(k) ? ' ok' : ''}" type="button" data-pick="${k}">${done.has(k) ? '✓ ' : ''}${label}${k === 'carnet_frente' ? ' *' : ''}</button></div>`)
+        .join('')}
+      <p id="docs-status" class="muted" role="status"></p>
+      <button class="btn primary big" type="submit">${L('Enviar mis datos', 'Send my details')}</button>
+    </form>`);
+  const form = $('#docs', page);
+  const status = $('#docs-status', form);
+  form.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pick]');
+    if (b) $(`[data-photo="${b.dataset.pick}"]`, form).click();
+  });
+  form.addEventListener('change', async (e) => {
+    const kind = e.target.dataset.photo;
+    const f = kind && e.target.files[0];
+    if (!f) return;
+    const b = $(`[data-pick="${kind}"]`, form);
+    b.disabled = true;
+    status.textContent = L('Subiendo la foto…', 'Uploading the photo…');
+    try {
+      const blob = await shrinkImage(f);
+      const q = `${empresaQuery() ? `${empresaQuery()}&` : '?'}kind=${kind}`;
+      const res = await fetch(`${url}/foto${q}`, { method: 'POST', headers: { 'Content-Type': blob.type || f.type || 'application/octet-stream' }, body: blob });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || L('No se pudo subir la foto. Probá de nuevo.', 'The photo could not be uploaded. Please try again.'));
+      done.add(kind);
+      b.classList.add('ok');
+      b.textContent = `✓ ${PHOTOS[kind]}`;
+      status.textContent = L('Foto recibida.', 'Photo received.');
+    } catch (err) {
+      status.textContent = err.message;
+    }
+    b.disabled = false;
+  });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const empty = d.missing.find((f) => f !== 'license_number' && !form[f].value.trim());
+    if (empty) {
+      status.textContent = L('Completá todos los datos.', 'Please fill in all the details.');
+      return form[empty].focus();
+    }
+    if (!done.has('carnet_frente')) return void (status.textContent = L('Falta la foto del frente de tu licencia de conducir.', 'The photo of the front of your driver license is missing.'));
+    const body = Object.fromEntries(d.missing.map((f) => [f, form[f].value.trim()]));
+    const res = await fetch(url + empresaQuery(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!res.ok) return void (status.textContent = (await res.json().catch(() => ({}))).error || L('No se pudo guardar. Probá de nuevo.', 'Could not save. Please try again.'));
+    form.outerHTML = `<div class="card pub-done"><div class="pub-ok" aria-hidden="true">✓</div><h1>${L('¡Listo! Recibimos tus datos', 'Done! We received your details')}</h1><p class="muted">${L(`${esc(d.company)} ya tiene todo para entregarte el auto.`, `${esc(d.company)} has everything needed to hand over the car.`)}</p></div>`;
+  });
+}
+
 /** /devolucion/<código>: el cliente saca las fotos del auto al dejarlo y le llegan a la agencia. */
 async function returnPage() {
   const url = `/api/public/entrega/devolucion/${encodeURIComponent(location.pathname.split('/')[2] || '')}`;
@@ -6336,6 +6679,6 @@ async function cardPage() {
 }
 
 const PUBLIC_PAGES = { '/reservar': bookingPage, '/como-funciona': howItWorksPage };
-const TOKEN_PAGES = [[/^\/hotel\/[\w-]+$/, hotelPage], [/^\/firmar\/[\w-]+$/, signPage], [/^\/fotos\/[\w-]+$/, photosPage], [/^\/devolucion\/[\w-]+$/, returnPage], [/^\/tarjeta\/[\w-]+$/, cardPage]];
+const TOKEN_PAGES = [[/^\/hotel\/[\w-]+$/, hotelPage], [/^\/firmar\/[\w-]+$/, signPage], [/^\/fotos\/[\w-]+$/, photosPage], [/^\/devolucion\/[\w-]+$/, returnPage], [/^\/datos\/[\w-]+$/, docsPage],[/^\/tarjeta\/[\w-]+$/, cardPage]];
 const publicPath = location.pathname.replace(/\/+$/, '');
 (PUBLIC_PAGES[publicPath] || (TOKEN_PAGES.find(([re]) => re.test(publicPath)) || [])[1] || startSession)();

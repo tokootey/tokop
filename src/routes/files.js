@@ -74,6 +74,25 @@ function sendStored(res, abs, f) {
   res.sendFile(path.resolve(abs)); // la carpeta puede venir relativa (DB_FILE relativo)
 }
 
+/** Guarda un documento ya validado en la ficha del cliente; uno por lugar: subir otro reemplaza al anterior (salvo los de otros conductores). userId vacío: lo subió el cliente con su link. */
+function saveCustomerDocument(db, uploadsDir, customerId, { kind, name, mime, body, userId }) {
+  const rel = path.join('clientes', String(customerId), `${kind}-${crypto.randomBytes(6).toString('hex')}.${TYPES[mime]}`);
+  const abs = path.join(uploadsDir, rel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, body);
+  const old = kind !== 'conductor' && db.prepare('SELECT * FROM customer_files WHERE customer_id = ? AND kind = ?').get(customerId, kind);
+  if (old) {
+    db.prepare('DELETE FROM customer_files WHERE id = ?').run(old.id);
+    fs.rmSync(path.join(uploadsDir, old.path), { force: true });
+  }
+  const id = Number(
+    db
+      .prepare('INSERT INTO customer_files (customer_id, kind, name, mime, size, path, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(customerId, kind, name || `${kind}.${TYPES[mime]}`, mime, body.length, rel, userId || null, nowLocal().replace('T', ' ')).lastInsertRowid,
+  );
+  return db.prepare('SELECT id, kind, name, mime, size, created_at FROM customer_files WHERE id = ?').get(id);
+}
+
 /** Guarda un archivo ya validado en la reserva y lo deja en su historial. userId vacío: lo subió el cliente con su link. */
 function saveReservationFile(db, uploadsDir, reservationId, { stage, name, mime, body, userId }) {
   const rel = path.join(String(reservationId), `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${TYPES[mime]}`);
@@ -144,23 +163,10 @@ function fileRoutes(db, uploadsDir) {
       fail(409, `Ya hay ${MAX_DRIVERS} conductores cargados`);
     }
     const mime = uploadedType(req);
-    const rel = path.join('clientes', String(c.id), `${kind}-${crypto.randomBytes(6).toString('hex')}.${TYPES[mime]}`);
-    const abs = path.join(uploadsDir, rel);
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, req.body);
-    const old = !driver && db.prepare('SELECT * FROM customer_files WHERE customer_id = ? AND kind = ?').get(c.id, kind);
-    if (old) {
-      db.prepare('DELETE FROM customer_files WHERE id = ?').run(old.id);
-      fs.rmSync(path.join(uploadsDir, old.path), { force: true });
-    }
     const name = String(req.query.name || `${kind}.${TYPES[mime]}`).replace(/[\\/\r\n]/g, '_').slice(0, 120);
-    const id = Number(
-      db
-        .prepare('INSERT INTO customer_files (customer_id, kind, name, mime, size, path, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(c.id, kind, name, mime, req.body.length, rel, req.user.id, nowLocal().replace('T', ' ')).lastInsertRowid,
-    );
+    const file = saveCustomerDocument(db, uploadsDir, c.id, { kind, name, mime, body: req.body, userId: req.user.id });
     audit(db, req, 'documento_subido', `cliente #${c.id}: ${kind}`);
-    res.status(201).json(db.prepare('SELECT id, kind, name, mime, size, created_at FROM customer_files WHERE id = ?').get(id));
+    res.status(201).json(file);
   });
 
   router.get('/customers/:id/documents', (req, res) => {
@@ -185,4 +191,4 @@ function fileRoutes(db, uploadsDir) {
   return router;
 }
 
-module.exports = { fileRoutes, sendStored, uploadedType, saveReservationFile, MAX_PDF, looksLike, TYPES, STAGES, DOC_KINDS, removeCustomerDocuments };
+module.exports = { fileRoutes, sendStored, uploadedType, saveReservationFile, saveCustomerDocument, MAX_PDF, looksLike, TYPES, STAGES, DOC_KINDS, removeCustomerDocuments };

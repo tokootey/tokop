@@ -90,8 +90,13 @@ function buildContractPdf(r, photos = []) {
   kv(y, [
     ['Nombre y apellido', txt(r.customer_name), 'Documento', r.customer_doc ? `${txt(r.customer_doc_type || docTypes()[0])} ${r.customer_doc}` : ''],
     ['Domicilio', txt(r.customer_address), 'Teléfono', txt(r.customer_phone)],
-    ['Email', txt(r.customer_email), 'Fecha de nac.', d(r.customer_birth_date)],
-    ['Licencia N°', txt(r.customer_license), 'Vence', d(r.customer_license_expiry)],
+    // Agencias con el contrato nuevo: sin email ni número de licencia.
+    ...(partiesOn()
+      ? [['Fecha de nac.', d(r.customer_birth_date), 'Licencia vence', d(r.customer_license_expiry)]]
+      : [
+          ['Email', txt(r.customer_email), 'Fecha de nac.', d(r.customer_birth_date)],
+          ['Licencia N°', txt(r.customer_license), 'Vence', d(r.customer_license_expiry)],
+        ]),
     ...(r.customer_workplace || r.customer_alt_contact ? [['Lugar de trabajo', txt(r.customer_workplace), 'Contacto alt.', txt(r.customer_alt_contact)]] : []),
   ]);
   if (r.holder) {
@@ -182,6 +187,8 @@ function buildContractPdf(r, photos = []) {
     q.dynamic_extra ? [`Recargo por alta demanda ${q.dynamic_pct}%`, money(q.dynamic_extra)] : null,
     ...(q.extras || []).map((x) => [`${x.name}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`, money(x.amount)]),
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
+    q.young_driver_fee ? [`Conductor menor de ${q.young_driver_age} años`, money(q.young_driver_fee)] : null,
+    q.after_hours_fee ? ['Fuera de hora', money(q.after_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct}%` : ''}`, `- ${money(q.discount)}`] : null,
     q.tax_rate ? [`${taxName()} ${q.tax_rate}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
     [{ content: 'Total del alquiler', styles: { fontStyle: 'bold' } }, { content: money(r.total), styles: { fontStyle: 'bold' } }],

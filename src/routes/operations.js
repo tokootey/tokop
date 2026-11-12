@@ -65,6 +65,7 @@ function operationsRoutes(db) {
         extras,
         discount_pct: req.query.discount_pct,
         discount_amount: req.query.discount_amount,
+        customer_id: Number(req.query.customer_id) || undefined, // recargo por conductor menor
       }),
     }));
     res.json(result);
@@ -188,6 +189,7 @@ function operationsRoutes(db) {
   });
   router.post('/reservations/:id/pre-delivery', (req, res) => res.json(delivery.preDeliver(db, req.params.id, req.body || {}, getSettings(db), req.user.id)));
   router.post('/reservations/:id/left-place', (req, res) => res.json(delivery.setLeftPlace(db, req.params.id, (req.body || {}).place, req.user.id)));
+  router.post('/reservations/:id/docs-link', (req, res) => res.json(delivery.docsLink(db, req.params.id)));
   router.post('/reservations/:id/return-link', (req, res) => res.json(delivery.returnLink(db, req.params.id)));
   router.post('/reservations/:id/card-link', (req, res) => res.json(delivery.cardLink(db, req.params.id)));
   // Conductor adicional; con importe, queda además como cargo de la reserva.

@@ -322,7 +322,7 @@ function createApp(db, options = {}) {
   app.use(express.static(path.join(__dirname, '..', 'public')));
   // Links que recibe el cliente: la vista previa de WhatsApp lee el título sin ejecutar la página, así que va el nombre de la agencia y no el de Floty.
   const indexFile = path.join(__dirname, '..', 'public', 'index.html');
-  app.get(/^\/(firmar|fotos|devolucion|tarjeta|hotel|reservar)(\/|$)/, (req, res) => {
+  app.get(/^\/(firmar|fotos|devolucion|tarjeta|datos|hotel|reservar)(\/|$)/, (req, res) => {
     let name = '';
     try {
       const c = platform ? platform.byHost(req.hostname) || (req.query.empresa && platform.bySlug(String(req.query.empresa))) || platform.principal() : null;
