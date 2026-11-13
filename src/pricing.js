@@ -260,7 +260,8 @@ function computeReturnCharges(db, reservation, contract, input, { byPeriods = fa
   const blank = (v) => v === undefined || v === null || v === '';
   const inPanapass = blank(input.in_panapass) ? NaN : Number(input.in_panapass);
   const panapassUsed = !blank(contract.out_panapass) && Number.isFinite(inPanapass) ? round2(Math.max(0, contract.out_panapass - inPanapass)) : 0;
-  if (panapassUsed > 0) lines.push({ concept: 'Panapass consumido', amount: panapassUsed });
+  // La recarga mínima de Panapass es de 5: si usó menos, se cobra 5 igual.
+  if (panapassUsed > 0) lines.push({ concept: 'Panapass consumido', amount: Math.max(panapassUsed, 5) });
 
   // Demora: horas pasadas de la devolución pactada, con la misma tolerancia que el cálculo de días.
   const lateHours = (parseLocal(input.in_at) - parseLocal(reservation.return_at)) / 3600000;
