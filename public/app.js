@@ -4220,6 +4220,9 @@ const EXPENSE_KINDS = [
   ['seguro', 'Seguro'],
   ['patente', 'Patente e impuestos'],
   ['lavado', 'Lavado'],
+  ['peajes', 'Peajes / Panapass'],
+  ['estacionamiento', 'Estacionamiento'],
+  ['legales', 'Gastos legales'],
   ['otro', 'Otro'],
 ];
 let expenseVehicles = [];
