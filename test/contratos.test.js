@@ -156,6 +156,8 @@ test('Panapass: si vuelve con menos saldo, la diferencia se cobra en la devoluci
     assert.equal(preview.panapass_used, 7.5);
     assert.deepEqual(preview.lines, [{ concept: 'Panapass consumido', amount: 7.5 }]);
     // Sin saldo de vuelta cargado, o si vuelve con más (lo recargó), no se cobra nada.
+    // Usó 2: se cobra la recarga mínima de 5.
+    assert.equal((await call('POST', `/api/reservations/${r.id}/checkin-preview`, { ...body, in_panapass: 18 })).data.total, 5);
     assert.equal((await call('POST', `/api/reservations/${r.id}/checkin-preview`, { ...body, in_panapass: '' })).data.total, 0);
     assert.equal((await call('POST', `/api/reservations/${r.id}/checkin-preview`, { ...body, in_panapass: 30 })).data.total, 0);
     const back = (await call('POST', `/api/reservations/${r.id}/checkin`, body)).data;
