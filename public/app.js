@@ -1888,6 +1888,8 @@ function breakdownHtml(q) {
     ${q.one_way_fee ? row('Devolución en otra sucursal', money(q.one_way_fee)) : ''}
     ${q.young_driver_fee ? row(`Conductor menor de ${esc(q.young_driver_age)} años`, money(q.young_driver_fee)) : ''}
     ${q.after_hours_fee ? row('Fuera de hora', money(q.after_hours_fee)) : ''}
+    ${(q.branch_fees || []).map((b) => row(`Recargo ${esc(b.name)}`, money(b.amount))).join('')}
+    ${q.extra_hours_fee ? row(`Horas adicionales (${esc(q.extra_hours)})`, money(q.extra_hours_fee)) : ''}
     ${q.discount ? row(`Descuento${q.discount_pct ? ` ${q.discount_pct}%` : ''}`, '−' + money(q.discount)) : ''}
     ${q.tax_rate ? row(`${esc(taxName())} ${q.tax_rate}% ${q.tax_included ? '(incluido)' : ''}`, money(q.tax)) : ''}
     ${q.calculated_total !== undefined ? row('<span class="muted">Precio según tarifas del sistema</span>', `<span class="muted">${money(q.calculated_total)}</span>`) : ''}
@@ -2277,7 +2279,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         const p = await POST(`/reservations/${r.id}/checkin-preview`, d).catch((e) => ({ error: e.message }));
         if (!$('#ret-preview')) return; // la ventana se cerró mientras tanto
         if (p.error) return (box.innerHTML = `<p class="notice warn">${esc(p.error)}</p>`);
-        const alerts = [p.km_excess > 0 && `${num(p.km_excess)} km de más`, p.fuel_missing > 0 && `faltan ${p.fuel_missing}/8 de combustible`].filter(Boolean);
+        const alerts = [p.late_days > 0 && `${p.late_days} día${p.late_days === 1 ? '' : 's'} de más`, p.late_hours > 0 && `${p.late_hours} h de más`, p.km_excess > 0 && `${num(p.km_excess)} km de más`, p.fuel_missing > 0 && `faltan ${p.fuel_missing}/8 de combustible`].filter(Boolean);
         box.innerHTML = `<p><b>Recorrió ${num(p.km_driven)} km</b>${p.km_allowed === null ? '' : ` · incluidos ${num(p.km_allowed)}`}</p>
           ${alerts.length ? `<p class="notice warn">Atención: ${alerts.join(' y ')}.</p>` : ''}
           ${p.lines.length ? `<table class="breakdown"><tbody>${p.lines.map((l) => `<tr><td>${esc(l.concept)}</td><td class="right">${money(l.amount)}</td></tr>`).join('')}<tr class="total"><td>Cargos adicionales</td><td class="right">${money(p.total)}</td></tr></tbody></table>` : ''}`;
@@ -2659,6 +2661,8 @@ function voucherLines(r) {
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
     q.young_driver_fee ? [`Conductor menor de ${q.young_driver_age} años`, money(q.young_driver_fee)] : null,
     q.after_hours_fee ? ['Fuera de hora', money(q.after_hours_fee)] : null,
+    ...(q.branch_fees || []).map((b) => [`Recargo ${b.name}`, money(b.amount)]),
+    q.extra_hours_fee ? [`Horas adicionales (${q.extra_hours})`, money(q.extra_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct} %` : ''}`, `−${money(q.discount)}`] : null,
     q.tax_rate ? [`${taxName()} ${q.tax_rate} %${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
     ['Total', money(r.balance.due)],
@@ -3249,6 +3253,8 @@ async function printContract(r) {
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
     q.young_driver_fee ? [`Conductor menor de ${esc(q.young_driver_age)} años`, money(q.young_driver_fee)] : null,
     q.after_hours_fee ? ['Fuera de hora', money(q.after_hours_fee)] : null,
+    ...(q.branch_fees || []).map((b) => [`Recargo ${b.name}`, money(b.amount)]),
+    q.extra_hours_fee ? [`Horas adicionales (${q.extra_hours})`, money(q.extra_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${esc(q.discount_pct)}%` : ''}`, '−' + money(q.discount)] : null,
     q.tax_rate ? [`${esc(taxName())} ${esc(q.tax_rate)}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
   ].filter(Boolean);
@@ -4351,6 +4357,12 @@ async function surchargesTab(box) {
       { name: 'one_way_fee', label: 'Recargo por devolver en otro lugar', type: 'number', when: () => !choferesMode() },
       { name: 'fuel_charge_per_eighth', label: 'Cargo por cada 1/8 de combustible faltante', type: 'number' },
       { name: 'grace_hours', label: 'Tolerancia (horas) antes de cobrar un día más', type: 'number' },
+      { name: 'late_hour_fee', label: 'Precio de cada hora de más, pasada la tolerancia (0 = se cobra un día)', type: 'number', attrs: 'min="0"', when: () => !choferesMode() },
+      { name: 'late_hour_max', label: 'Horas de más que se cobran por hora (con más, es un día entero)', type: 'number', attrs: 'min="0"', when: () => !choferesMode() },
+      { name: 'km_limit_max_days', label: 'El límite de km rige en alquileres de hasta (días, 0 = siempre)', type: 'number', attrs: 'min="0"', when: () => !choferesMode() },
+      { name: 'weekend_rates_on', label: 'Usar la tarifa de fin de semana (retirando viernes, sábado o domingo, hasta 5 días)', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'holiday_rates_on', label: 'Usar la tarifa de feriados (sólo los días feriados)', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'holidays', label: 'Feriados (DD/MM/AAAA, separados por coma)', full: true, when: () => !choferesMode() },
     ],
     s,
   )}</div>`;
@@ -4396,6 +4408,10 @@ on(/^\/tarifas$/, async (view) => {
         { name: 'name', label: 'Nombre', required: true },
         { name: 'daily_rate', label: 'Tarifa diaria', type: 'number', default: 0 },
         { name: 'weekly_rate', label: 'Tarifa semanal (7+ días, opcional)', type: 'number', default: 0 },
+        { name: 'rate_6', label: 'Tarifa por día de 6 a 9 días (0 = no usar)', type: 'number', default: 0, when: () => !choferesMode() },
+        { name: 'rate_10', label: 'Tarifa por día desde 10 días (0 = no usar)', type: 'number', default: 0, when: () => !choferesMode() },
+        { name: 'weekend_rate', label: 'Tarifa por día de fin de semana (0 = no usar)', type: 'number', default: 0, when: () => !choferesMode() },
+        { name: 'holiday_rate', label: 'Tarifa por día feriado (0 = no usar)', type: 'number', default: 0, when: () => !choferesMode() },
         { name: 'monthly_rate', label: 'Tarifa mensual (choferes)', type: 'number', default: 0, when: () => choferesMode() },
         { name: 'deposit', label: 'Garantía', type: 'number', default: 0 },
         { name: 'km_per_day', label: 'Km incluidos por día (0 = libres)', type: 'number', default: 0 },
@@ -4512,6 +4528,8 @@ on(/^\/tarifas$/, async (view) => {
         { name: 'pickup_from', label: 'Cotizador web: se retira desde las (vacío = sin límite)', type: 'time' },
         { name: 'late_after', label: 'Cotizador web: reservas hechas después de las', type: 'time' },
         { name: 'late_pickup_from', label: '…se retiran recién desde las', type: 'time' },
+        { name: 'fee', label: 'Recargo por entregar o devolver acá (una vez por alquiler)', type: 'number', default: 0 },
+        { name: 'fee_free_days', label: 'Ese recargo no se cobra desde (días de alquiler, 0 = se cobra siempre)', type: 'number', default: 0 },
         { name: 'express_24h', label: 'Sin personal fijo (por ejemplo el aeropuerto): las reservas del link con menos de 24 hs son express', type: 'checkbox', full: true },
       ],
       columns: [
@@ -6110,7 +6128,10 @@ async function bookingPage() {
   const summary = () => {
     const o = options.find((x) => x.code === pick);
     const fee = youngFee(o);
-    const late = o && o.after_hours_fee ? ` · ${L(`incluye ${money(o.after_hours_fee)} por fuera de hora`, `includes ${money(o.after_hours_fee)} after-hours surcharge`)}` : '';
+    const late =
+      (o && o.after_hours_fee ? ` · ${L(`incluye ${money(o.after_hours_fee)} por fuera de hora`, `includes ${money(o.after_hours_fee)} after-hours surcharge`)}` : '') +
+      (o && o.branch_fee ? ` · ${L(`incluye ${money(o.branch_fee)} por el lugar de entrega`, `includes ${money(o.branch_fee)} location surcharge`)}` : '') +
+      (o && o.extra_hours_fee ? ` · ${L(`incluye ${money(o.extra_hours_fee)} por horas adicionales`, `includes ${money(o.extra_hours_fee)} for extra hours`)}` : '');
     $('#bk-what', form).textContent = o ? `${o.name} · ${o.days} ${dayWord(o.days)}${fee ? ` · ${L(`incluye ${money(fee)} por conductor menor de ${cfg.young_driver.age} años`, `includes ${money(fee)} for a driver under ${cfg.young_driver.age}`)}` : ''}${late}` : L('Elegí un auto', 'Choose a car');
     $('#bk-sum', form).textContent = o ? money(o.total + fee) : '';
   };

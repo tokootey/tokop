@@ -28,13 +28,28 @@ function dynamicPct(db, settings, input) {
  * Días a cobrar: bloques de 24 h. Las horas que excedan el último bloque
  * sólo suman un día si superan la tolerancia (grace_hours).
  */
-function rentalDays(pickupAt, returnAt, graceHours = 2) {
+function rentalDays(pickupAt, returnAt, graceHours = 2, hourlyHours = 0) {
   const ms = parseLocal(returnAt) - parseLocal(pickupAt);
   if (!(ms > 0)) fail(400, 'La fecha de devolución debe ser posterior a la de retiro');
   const hours = ms / 3600000;
   const full = Math.floor(hours / 24);
   const rest = hours - full * 24;
-  return Math.max(1, full + (rest > graceHours ? 1 : 0));
+  // Con precio por hora, las horas de más se cobran aparte hasta el tope; recién con más es otro día.
+  return Math.max(1, full + (rest > graceHours + (full >= 1 ? hourlyHours : 0) ? 1 : 0));
+}
+
+/** Horas de más con precio por hora: hasta cuántas se cobran así (0 = no hay precio por hora). */
+const hourlyMax = (settings) => (Number(settings.late_hour_fee) > 0 ? Number(settings.late_hour_max) || 4 : 0);
+/** El límite de km de la categoría rige en alquileres de hasta km_limit_max_days días (0 = siempre). */
+const kmLimited = (settings, days) => !(Number(settings.km_limit_max_days) > 0) || days <= Number(settings.km_limit_max_days);
+/** "25/12/2026, 1/1/2027" → fechas AAAA-MM-DD. */
+function holidaySet(text) {
+  const out = new Set();
+  for (const h of String(text || '').split(',')) {
+    const m = h.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) out.add(`${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`);
+  }
+  return out;
 }
 
 function seasonMultiplier(seasons, dateStr) {
@@ -76,17 +91,31 @@ function computeQuote(db, input) {
   if (!category) fail(400, 'Categoría inexistente');
 
   const graceHours = Number(settings.grace_hours) || 0;
-  const days = rentalDays(input.pickup_at, input.return_at, graceHours);
+  const choferes = isChoferes(settings);
+  const hourly = choferes ? 0 : hourlyMax(settings);
+  const days = rentalDays(input.pickup_at, input.return_at, graceHours, hourly);
+  // Horas pasadas del último día completo y de la tolerancia: se cobran por hora si la agencia les puso precio.
+  const totalHours = (parseLocal(input.return_at) - parseLocal(input.pickup_at)) / 3600000;
+  const overHours = Math.ceil(totalHours - Math.floor(totalHours / 24) * 24 - graceHours - 1e-9);
+  const extraHours = hourly && totalHours >= 24 && overHours > 0 && overHours <= hourly ? overHours : 0;
 
   // Tarifa diaria: si es 7 días o más y la categoría tiene tarifa semanal, se prorratea.
   let perDay = days >= 7 && category.weekly_rate > 0 ? category.weekly_rate / 7 : category.daily_rate;
+  if (!choferes) {
+    // Tramos de días: desde 10 y desde 6 días la categoría puede tener su tarifa, sin importar qué día se retira.
+    if (days >= 10 && category.rate_10 > 0) perDay = category.rate_10;
+    else if (days >= 6 && category.rate_6 > 0) perDay = category.rate_6;
+    // Fin de semana (lo prende la agencia): retirando viernes, sábado o domingo por hasta 5 días, todos los días van con esa tarifa.
+    else if (settings.weekend_rates_on === '1' && category.weekend_rate > 0 && days <= 5 && [5, 6, 0].includes(parseLocal(input.pickup_at).getDay())) perDay = category.weekend_rate;
+  }
+  // Feriados (lo prende la agencia): sólo esos días van con la tarifa de feriado.
+  const holidays = !choferes && settings.holiday_rates_on === '1' && category.holiday_rate > 0 ? holidaySet(settings.holidays) : new Set();
 
   const seasons = db.prepare('SELECT * FROM seasons').all();
   let base = 0;
   let seasonExtra = 0;
   const start = parseLocal(input.pickup_at);
   // Choferes: se cobra por período entero (día, semana o mes), sin temporadas.
-  const choferes = isChoferes(settings);
   const period = choferes ? carPeriod(db, input.vehicle_id, settings) : null;
   const periods = choferes ? periodsBetween(input.pickup_at, input.return_at, period) : null;
   if (choferes) {
@@ -103,19 +132,22 @@ function computeQuote(db, input) {
   const promos = choferes ? [] : db.prepare('SELECT * FROM promotions WHERE active = 1 AND category_id = ? ORDER BY promo_rate').all(category.id);
   let promo = null;
   let promoDays = 0;
+  let promoBase = 0;
   let promoDiscount = 0;
   for (let i = 0; i < (choferes ? 0 : days); i++) {
     const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
     const day = fmtLocal(d).slice(0, 10);
-    base += perDay;
+    const dayRate = holidays.has(day) ? category.holiday_rate : perDay;
+    base += dayRate;
     // El precio de promo es final: esos días no suman temporada ni demanda. Si la tarifa semanal ya es más barata, queda esa.
-    const p = promos.find((x) => day >= x.start_date && day <= x.end_date && x.promo_rate < perDay);
+    const p = promos.find((x) => day >= x.start_date && day <= x.end_date && x.promo_rate < dayRate);
     if (p) {
       promo ??= p;
       promoDays++;
-      promoDiscount += perDay - p.promo_rate;
+      promoBase += dayRate;
+      promoDiscount += dayRate - p.promo_rate;
     } else {
-      seasonExtra += perDay * (seasonMultiplier(seasons, day) - 1);
+      seasonExtra += dayRate * (seasonMultiplier(seasons, day) - 1);
     }
   }
 
@@ -138,11 +170,20 @@ function computeQuote(db, input) {
 
   // Una reserva ya hecha conserva su recargo mientras no cambie de fechas o categoría (dynamic_pct viene de updateReservation).
   const demandPct = input.dynamic_pct !== undefined ? Number(input.dynamic_pct) || 0 : dynamicPct(db, settings, input);
-  const demandExtra = ((base - promoDays * perDay + seasonExtra) * demandPct) / 100;
+  const demandExtra = ((base - promoBase + seasonExtra) * demandPct) / 100;
 
   const young = youngDriverFee(db, settings, input);
   const afterHours = choferes ? 0 : afterHoursFee(settings, input);
-  const subtotal = base + seasonExtra + demandExtra - promoDiscount + extrasTotal + oneWay + young + afterHours;
+  // Recargo por entregar o devolver en una sucursal (por ejemplo el aeropuerto): una vez por lugar; gratis desde los días que cargó la agencia.
+  const branchFees = choferes
+    ? []
+    : [...new Set([input.pickup_branch_id, input.return_branch_id].filter(Boolean).map(Number))]
+        .map((id) => db.prepare('SELECT name, fee, fee_free_days FROM branches WHERE id = ?').get(id))
+        .filter((b) => b && b.fee > 0 && !(b.fee_free_days > 0 && days >= b.fee_free_days))
+        .map((b) => ({ name: b.name, amount: round2(b.fee) }));
+  const branchFee = branchFees.reduce((a, b) => a + b.amount, 0);
+  const extraHoursFee = extraHours * (Number(settings.late_hour_fee) || 0);
+  const subtotal = base + seasonExtra + demandExtra - promoDiscount + extrasTotal + oneWay + young + afterHours + branchFee + extraHoursFee;
   const discountPct = Math.min(100, Math.max(0, Number(input.discount_pct) || 0));
   // El porcentaje y el monto fijo (por ejemplo 10.000 para redondear) se suman; nunca más que el subtotal.
   const discountAmount = Math.max(0, Number(input.discount_amount) || 0);
@@ -169,6 +210,10 @@ function computeQuote(db, input) {
     one_way_fee: round2(oneWay),
     young_driver_fee: round2(young),
     after_hours_fee: round2(afterHours),
+    branch_fees: branchFees,
+    branch_fee: round2(branchFee),
+    extra_hours: extraHours,
+    extra_hours_fee: round2(extraHoursFee),
     young_driver_age: young ? Number(settings.young_driver_age) || 21 : undefined,
     subtotal: round2(subtotal),
     discount_pct: discountPct,
@@ -179,7 +224,7 @@ function computeQuote(db, input) {
     tax: round2(tax),
     total: round2(total),
     deposit: round2(category.deposit),
-    km_included: choferes ? (category.km_per_period > 0 ? category.km_per_period * periods : null) : category.km_per_day > 0 ? category.km_per_day * days : null,
+    km_included: choferes ? (category.km_per_period > 0 ? category.km_per_period * periods : null) : category.km_per_day > 0 && kmLimited(settings, days) ? category.km_per_day * days : null,
     ...(choferes ? { period, periods } : {}),
     currency: settings.currency,
   };
@@ -195,16 +240,10 @@ function computeReturnCharges(db, reservation, contract, input, { byPeriods = fa
 
   const kmDriven = Math.max(0, Number(input.in_km) - Number(contract.out_km));
   // Km de más y combustible faltante: se avisan siempre, tengan o no un cargo configurado.
-  const kmAllowed = category.km_per_day > 0 && !byPeriods ? category.km_per_day * reservation.days : null;
+  const kmAllowed = category.km_per_day > 0 && !byPeriods && kmLimited(settings, reservation.days) ? category.km_per_day * reservation.days : null;
   const kmExcess = kmAllowed === null ? 0 : Math.max(0, kmDriven - kmAllowed);
   // Por períodos (choferes) los km y la demora ya se cobraron con la renovación y la lectura de km.
-  if (category.km_per_day > 0 && !byPeriods) {
-    const allowed = category.km_per_day * reservation.days;
-    const excess = kmDriven - allowed;
-    if (excess > 0 && category.extra_km_rate > 0) {
-      lines.push({ concept: `Km excedentes (${excess} km)`, amount: round2(excess * category.extra_km_rate) });
-    }
-  }
+  if (kmExcess > 0 && category.extra_km_rate > 0) lines.push({ concept: `Km excedentes (${kmExcess} km)`, amount: round2(kmExcess * category.extra_km_rate) });
 
   const missingEighths = Math.max(0, Number(contract.out_fuel) - Number(input.in_fuel));
   const perEighth = Number(settings.fuel_charge_per_eighth) || 0;
@@ -215,7 +254,19 @@ function computeReturnCharges(db, reservation, contract, input, { byPeriods = fa
   // Demora: horas pasadas de la devolución pactada, con la misma tolerancia que el cálculo de días.
   const lateHours = (parseLocal(input.in_at) - parseLocal(reservation.return_at)) / 3600000;
   const grace = Number(settings.grace_hours) || 0;
-  const lateDays = lateHours > grace ? Math.ceil((lateHours - grace) / 24) : 0;
+  let lateDays = lateHours > grace ? Math.ceil((lateHours - grace) / 24) : 0;
+  // Con precio por hora: las horas de más del último día se cobran por hora hasta el tope; con más, es un día entero.
+  const hourly = byPeriods ? 0 : hourlyMax(settings);
+  let lateExtraHours = 0;
+  if (hourly && lateHours > grace) {
+    const fullDays = Math.floor((lateHours - grace) / 24);
+    const h = Math.ceil(lateHours - grace - fullDays * 24 - 1e-9);
+    if (h <= hourly) {
+      lateDays = fullDays;
+      lateExtraHours = h;
+    }
+  }
+  if (lateExtraHours > 0) lines.push({ concept: `Horas adicionales (${lateExtraHours})`, amount: round2(lateExtraHours * Number(settings.late_hour_fee)) });
   if (lateDays > 0 && !byPeriods) {
     const perDay = reservation.days > 0 ? reservation.total / reservation.days : category.daily_rate;
     lines.push({ concept: `Días adicionales por demora (${lateDays})`, amount: round2(lateDays * perDay) });
@@ -228,7 +279,7 @@ function computeReturnCharges(db, reservation, contract, input, { byPeriods = fa
     if (Number(c.amount)) lines.push({ concept: String(c.concept || 'Otro cargo'), amount: round2(c.amount) });
   }
 
-  return { km_driven: kmDriven, km_allowed: kmAllowed, km_excess: kmExcess, late_days: byPeriods ? 0 : lateDays, fuel_missing: missingEighths, lines, total: round2(lines.reduce((a, l) => a + l.amount, 0)) };
+  return { km_driven: kmDriven, km_allowed: kmAllowed, km_excess: kmExcess, late_days: byPeriods ? 0 : lateDays, late_hours: lateExtraHours, fuel_missing: missingEighths, lines, total: round2(lines.reduce((a, l) => a + l.amount, 0)) };
 }
 
 module.exports = { youngDriverFee, rentalDays, computeQuote, computeReturnCharges, parseDynamicRules };

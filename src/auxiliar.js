@@ -25,7 +25,7 @@ const VEHICLE_FIELDS = ['branch_id', 'km', 'fuel', 'panapass'];
 const MONEY = new Set([
   'total', 'paid', 'pricing', 'deposit', 'discount_pct', 'discount_amount', 'final_total', 'charges', 'balance', 'payments', 'amount', 'cost',
   'month_revenue', 'owing', 'daily_rate', 'weekly_rate', 'monthly_rate', 'rest_day_rate', 'period_rate', 'extra_km_rate', 'price', 'max_price',
-  'deductible', 'insurance_cost',
+  'deductible', 'insurance_cost', 'rate_6', 'rate_10', 'weekend_rate', 'holiday_rate', 'fee',
 ]);
 const strip = (v) =>
   Array.isArray(v) ? v.map(strip) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([k]) => !MONEY.has(k)).map(([k, x]) => [k, strip(x)])) : v;
