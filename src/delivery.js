@@ -179,7 +179,11 @@ function saveDocs(db, token, input) {
   for (const f of DOC_FIELDS) data[f] = String(input[f] || '').trim().slice(0, 200);
   for (const f of ['birth_date', 'license_expiry']) if (data[f] && !isDate(data[f])) fail(400, 'Revisá las fechas');
   if (data.license_expiry && data.license_expiry < r.return_at.slice(0, 10)) fail(400, 'Tu licencia vence antes de la devolución. Tiene que estar vigente todo el alquiler.');
-  if (!docPhotos(db, r.customer_id).includes('carnet_frente')) fail(400, 'Subí la foto del frente de tu licencia de conducir');
+  // Tres fotos obligatorias: la licencia de los dos lados y la cédula o el pasaporte.
+  const photos = docPhotos(db, r.customer_id);
+  if (!photos.includes('carnet_frente')) fail(400, 'Subí la foto del frente de tu licencia de conducir');
+  if (!photos.includes('carnet_dorso')) fail(400, 'Subí la foto del dorso de tu licencia de conducir');
+  if (!photos.includes('dni_frente') && !photos.includes('pasaporte')) fail(400, 'Subí la foto de tu cédula o de tu pasaporte');
   for (const f of DOC_FIELDS) if (data[f]) db.prepare(`UPDATE customers SET ${f} = ? WHERE id = ? AND (${f} IS NULL OR ${f} = '')`).run(data[f], r.customer_id);
   R.log(db, r.id, null, 'datos_cliente', 'El cliente completó sus datos y subió sus fotos desde el link');
   return { ok: true };

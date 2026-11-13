@@ -6186,10 +6186,19 @@ async function bookingPage() {
         notes: L('', 'El cliente eligió inglés'),
       });
       const when = `${dayName(localISO(from))} ${fmtDT(localISO(from)).slice(11)} → ${dayName(localISO(to))} ${fmtDT(localISO(to)).slice(11)}`;
-      const text = L(
-        `Hola, soy ${name}. Acabo de pedir una reserva${r.code ? ` (${r.code})` : ''}: ${o.name}, ${when}.`,
-        `Hi, I'm ${name}. I just requested a booking${r.code ? ` (${r.code})` : ''}: ${o.name}, ${when}.`,
-      );
+      // Lo que la agencia necesita de un vistazo: quién, qué reserva, qué auto y si ya pagó.
+      // shortcut: "ya aboné" sale de que tocó el botón de pagar, no de un pago confirmado; cuando el medio de pago avise el cobro, tomarlo de ahí.
+      const text = (paid) =>
+        [
+          L(`Hola, soy ${name}.`, `Hi, I'm ${name}.`),
+          r.code ? L(`Reserva: ${r.code}`, `Booking: ${r.code}`) : '',
+          L(`Auto: ${o.name}`, `Car: ${o.name}`),
+          L(`Fechas: ${when}`, `Dates: ${when}`),
+          paid ? L('Pago: ya aboné por el link de pago', 'Payment: I already paid with the payment link') : L('Pago: todavía no aboné', 'Payment: not paid yet'),
+        ]
+          .filter(Boolean)
+          .join('\n');
+      const waHref = (paid) => `https://wa.me/${cfg.whatsapp}?text=${encodeURIComponent(text(paid))}`;
       form.remove();
       $('.pub-faq', page)?.remove();
       $('.pub-head', page).insertAdjacentHTML(
@@ -6201,11 +6210,12 @@ async function bookingPage() {
           <p class="muted">${L(`${esc(cfg.company)} te va a escribir para confirmar la reserva.`, `${esc(cfg.company)} will message you to confirm the booking.`)}</p>
           ${r.express ? `<p class="field-warn">${ICON.alert}${L('Como retirás en menos de 24 hs y no es en la oficina, para confirmarla tenés que pagar el total y subir tus datos y la foto de tu licencia.', 'Because pick-up is in less than 24 hours and not at the office, to confirm it you must pay the total and upload your details and a photo of your license.')}</p>` : ''}
           ${r.docs_url ? `<a class="btn primary big" href="${esc(r.docs_url)}" rel="noopener">${L('Subir mis datos y fotos', 'Upload my details and photos')}</a>` : ''}
-          ${cfg.payment_link && r.code ? `<a class="btn primary big" href="${esc(cfg.payment_link)}" target="_blank" rel="noopener">${ICON.money}${L('Pagar la reserva', 'Pay for the booking')}</a>` : ''}
+          ${cfg.payment_link && r.code ? `<a class="btn primary big" id="done-pay" href="${esc(cfg.payment_link)}" target="_blank" rel="noopener">${ICON.money}${L('Pagar la reserva', 'Pay for the booking')}</a>` : ''}
           ${r.card_url ? `<a class="btn primary big" href="${esc(r.card_url)}" rel="noopener">${ICON.money}${L('Dejar mi tarjeta', 'Leave my card')}</a>` : ''}
-          ${cfg.whatsapp ? `<a class="btn ok big" href="https://wa.me/${esc(cfg.whatsapp)}?text=${encodeURIComponent(text)}" target="_blank" rel="noopener">${WA_ICON}Escribirle a la agencia</a>` : ''}
+          ${cfg.whatsapp ? `<a class="btn ok big" id="done-wa" href="${esc(waHref(false))}" target="_blank" rel="noopener">${WA_ICON}Escribirle a la agencia</a>` : ''}
         </div>`,
       );
+      $('#done-pay', page)?.addEventListener('click', () => $('#done-wa', page)?.setAttribute('href', waHref(true)));
       window.scrollTo(0, 0);
     } catch (err) {
       toast(err.message, true);
@@ -6501,8 +6511,9 @@ async function docsPage() {
       ${d.missing.map((f) => `<label class="qr-field">${FIELDS[f][0]}<input name="${f}" type="${FIELDS[f][1]}" maxlength="200" ${f === 'license_number' ? '' : 'required'}></label>`).join('')}
       <h2 style="margin:8px 0 0">${L('Fotos', 'Photos')}</h2>
       ${Object.entries(PHOTOS)
-        .map(([k, label]) => `<div class="stack"><input type="file" accept="image/*" data-photo="${k}" hidden/><button class="btn${done.has(k) ? ' ok' : ''}" type="button" data-pick="${k}">${done.has(k) ? '✓ ' : ''}${label}${k === 'carnet_frente' ? ' *' : ''}</button></div>`)
+        .map(([k, label]) => `<div class="stack"><input type="file" accept="image/*" data-photo="${k}" hidden/><button class="btn${done.has(k) ? ' ok' : ''}" type="button" data-pick="${k}">${done.has(k) ? '✓ ' : ''}${label}${k.startsWith('carnet') ? ' *' : ''}</button></div>`)
         .join('')}
+      <p class="muted" style="margin:0;font-size:13px">${L('* Obligatorias: la licencia de los dos lados y la cédula o el pasaporte.', '* Required: both sides of your license, and your ID card or passport.')}</p>
       <p id="docs-status" class="muted" role="status"></p>
       <button class="btn primary big" type="submit">${L('Enviar mis datos', 'Send my details')}</button>
     </form>`);
@@ -6541,6 +6552,8 @@ async function docsPage() {
       return form[empty].focus();
     }
     if (!done.has('carnet_frente')) return void (status.textContent = L('Falta la foto del frente de tu licencia de conducir.', 'The photo of the front of your driver license is missing.'));
+    if (!done.has('carnet_dorso')) return void (status.textContent = L('Falta la foto del dorso de tu licencia de conducir.', 'The photo of the back of your driver license is missing.'));
+    if (!done.has('dni_frente') && !done.has('pasaporte')) return void (status.textContent = L('Falta la foto de tu cédula o de tu pasaporte.', 'The photo of your ID card or passport is missing.'));
     const body = Object.fromEntries(d.missing.map((f) => [f, form[f].value.trim()]));
     const res = await fetch(url + empresaQuery(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!res.ok) return void (status.textContent = (await res.json().catch(() => ({}))).error || L('No se pudo guardar. Probá de nuevo.', 'Could not save. Please try again.'));
