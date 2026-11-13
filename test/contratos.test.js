@@ -143,3 +143,24 @@ test('Panapass: saldo de salida y de entrada en el contrato, y queda en el auto'
     app.close();
   }
 });
+
+test('Panapass: si vuelve con menos saldo, la diferencia se cobra en la devolución', async () => {
+  const app = await start();
+  try {
+    const call = await app.as('operador');
+    assert.equal((await call('PUT', '/api/vehicles/1', { panapass_number: 'PP-001' })).data.panapass_number, 'PP-001');
+    const r = app.reserve(); // 3 días a 50
+    const out = (await call('POST', `/api/reservations/${r.id}/checkout`, { out_panapass: 20 })).data;
+    const body = { in_km: out.contract.out_km + 10, in_fuel: 8, in_at: at(3, 8), in_panapass: 12.5 };
+    const preview = (await call('POST', `/api/reservations/${r.id}/checkin-preview`, body)).data;
+    assert.equal(preview.panapass_used, 7.5);
+    assert.deepEqual(preview.lines, [{ concept: 'Panapass consumido', amount: 7.5 }]);
+    // Sin saldo de vuelta cargado, o si vuelve con más (lo recargó), no se cobra nada.
+    assert.equal((await call('POST', `/api/reservations/${r.id}/checkin-preview`, { ...body, in_panapass: '' })).data.total, 0);
+    assert.equal((await call('POST', `/api/reservations/${r.id}/checkin-preview`, { ...body, in_panapass: 30 })).data.total, 0);
+    const back = (await call('POST', `/api/reservations/${r.id}/checkin`, body)).data;
+    assert.equal(back.contract.final_total, 157.5);
+  } finally {
+    app.close();
+  }
+});
