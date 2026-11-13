@@ -543,6 +543,7 @@ const DEFAULT_SETTINGS = {
   after_hours_from: '20:00',
   after_hours_to: '23:00',
   paypal_surcharge_pct: '0', // recargo al cobrar con PayPal (%), lo carga cada agencia
+  extra_pay_methods: '', // medios de pago propios de la agencia, uno por renglón: se suman a los del país al registrar un cobro
   late_fee_per_day: '0', // recargo por cada día de atraso en el pago
   late_grace_days: '0', // días de tolerancia antes de cobrar el recargo
   holidays: '', // feriados con la tarifa de domingos de la categoría (cobro por día), DD/MM/AAAA separados por coma

@@ -295,8 +295,8 @@ function operationsRoutes(db) {
     if (req.query.format !== 'csv') return res.json(rows);
     res.type('text/csv').send(
       toCsv(
-        ['Referencia', 'Placa', 'Cliente', 'Salida', 'Hora', 'Devolución prevista'],
-        rows.map((r) => [r.code, r.plate, r.customer_name, dmy(r.out_at), hm(r.out_at), `${dmy(r.return_at)} ${hm(r.return_at)}`]),
+        ['Referencia', 'Placa', 'Cliente', 'Salida', 'Hora', 'Devolución prevista', 'Devuelve en'],
+        rows.map((r) => [r.code, r.plate, r.customer_name, dmy(r.out_at), hm(r.out_at), `${dmy(r.return_at)} ${hm(r.return_at)}`, r.return_branch_name || '']),
         req.query.sep === ';' ? ';' : ',',
       ),
     );

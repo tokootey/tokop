@@ -187,6 +187,16 @@ test('link de datos: el cliente completa lo que falta y sin la foto de la licenc
   const v = D.viewDocs(db, docs_token);
   assert.deepEqual(v.missing.filter((f) => ['address', 'license_expiry'].includes(f)), ['address', 'license_expiry']);
   assert.equal(v.doc_number, undefined, 'no devuelve los datos guardados');
+  // Amex: en Panamá el link muestra el número de la agencia; en otro país, no.
+  const { setSetting } = require('../src/db');
+  const country = db.prepare("SELECT value FROM settings WHERE key = 'country'").get();
+  setSetting(db, 'country', 'PA');
+  setSetting(db, 'chat_whatsapp', '50760001234');
+  assert.equal(D.viewDocs(db, docs_token).amex_phone, '+50760001234');
+  setSetting(db, 'country', 'AR');
+  assert.equal(D.viewDocs(db, docs_token).amex_phone, '');
+  setSetting(db, 'country', (country && country.value) || 'AR');
+  setSetting(db, 'chat_whatsapp', '');
   assert.throws(() => D.saveDocs(db, docs_token, { address: 'Calle 1', license_expiry: '2099-01-01' }), /foto del frente/);
   require('../src/routes/files').saveCustomerDocument(db, uploadsDir, r.customer_id, { kind: 'carnet_frente', mime: 'image/jpeg', body: Buffer.from([0xff, 0xd8, 0xff]) });
   const up = (kind) => require('../src/routes/files').saveCustomerDocument(db, uploadsDir, r.customer_id, { kind, mime: 'image/jpeg', body: Buffer.from([0xff, 0xd8, 0xff]) });

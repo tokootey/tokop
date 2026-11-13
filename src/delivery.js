@@ -163,8 +163,11 @@ const docPhotos = (db, customerId) => db.prepare('SELECT kind FROM customer_file
 function viewDocs(db, token) {
   const r = docsOf(db, token);
   const c = db.prepare('SELECT * FROM customers WHERE id = ?').get(r.customer_id);
+  const s = getSettings(db);
   return {
-    company: getSettings(db).company_name || '',
+    company: s.company_name || '',
+    // Panamá: American Express se cobra aparte, coordinando con la agencia.
+    amex_phone: s.country === 'PA' ? String(s.chat_whatsapp || s.company_phone || '').trim().replace(/^(?=\d)/, '+') : '',
     code: r.code,
     name: String(c.full_name || '').split(' ')[0],
     missing: DOC_FIELDS.filter((f) => !String(c[f] || '').trim()),
