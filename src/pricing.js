@@ -42,14 +42,19 @@ function rentalDays(pickupAt, returnAt, graceHours = 2, hourlyHours = 0) {
 const hourlyMax = (settings) => (Number(settings.late_hour_fee) > 0 ? Number(settings.late_hour_max) || 4 : 0);
 /** El límite de km de la categoría rige en alquileres de hasta km_limit_max_days días (0 = siempre). */
 const kmLimited = (settings, days) => !(Number(settings.km_limit_max_days) > 0) || days <= Number(settings.km_limit_max_days);
-/** "25/12/2026, 1/1/2027" → fechas AAAA-MM-DD. */
-function holidaySet(text) {
-  const out = new Set();
-  for (const h of String(text || '').split(',')) {
-    const m = h.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (m) out.add(`${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`);
-  }
-  return out;
+/** Feriados y temporadas con tarifa de feriado ("25/12/2026, 20/12/2026-5/1/2027"): devuelve si un día AAAA-MM-DD cae ahí. */
+function holidayTest(text) {
+  const iso = (t) => {
+    const m = t.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : null;
+  };
+  // Fechas sueltas o rangos "20/12/2026-5/1/2027" (temporadas de alta demanda); lo mal escrito se ignora.
+  const ranges = String(text || '')
+    .split(',')
+    .map((part) => part.split('-').map(iso))
+    .filter((r) => r.length <= 2 && r.every(Boolean))
+    .map((r) => [r[0], r[r.length - 1]]);
+  return (day) => ranges.some(([from, to]) => day >= from && day <= to);
 }
 
 function seasonMultiplier(seasons, dateStr) {
@@ -109,7 +114,7 @@ function computeQuote(db, input) {
     else if (settings.weekend_rates_on === '1' && category.weekend_rate > 0 && days <= 5 && [5, 6, 0].includes(parseLocal(input.pickup_at).getDay())) perDay = category.weekend_rate;
   }
   // Feriados (lo prende la agencia): sólo esos días van con la tarifa de feriado.
-  const holidays = !choferes && settings.holiday_rates_on === '1' && category.holiday_rate > 0 ? holidaySet(settings.holidays) : new Set();
+  const holidays = !choferes && settings.holiday_rates_on === '1' && category.holiday_rate > 0 ? holidayTest(settings.holidays) : () => false;
 
   const seasons = db.prepare('SELECT * FROM seasons').all();
   let base = 0;
@@ -137,7 +142,7 @@ function computeQuote(db, input) {
   for (let i = 0; i < (choferes ? 0 : days); i++) {
     const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
     const day = fmtLocal(d).slice(0, 10);
-    const dayRate = holidays.has(day) ? category.holiday_rate : perDay;
+    const dayRate = holidays(day) ? category.holiday_rate : perDay;
     base += dayRate;
     // El precio de promo es final: esos días no suman temporada ni demanda. Si la tarifa semanal ya es más barata, queda esa.
     const p = promos.find((x) => day >= x.start_date && day <= x.end_date && x.promo_rate < dayRate);

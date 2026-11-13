@@ -546,7 +546,7 @@ const DEFAULT_SETTINGS = {
   extra_pay_methods: '', // medios de pago propios de la agencia, uno por renglón: se suman a los del país al registrar un cobro
   late_fee_per_day: '0', // recargo por cada día de atraso en el pago
   late_grace_days: '0', // días de tolerancia antes de cobrar el recargo
-  holidays: '', // feriados, DD/MM/AAAA separados por coma: en choferes llevan la tarifa de domingos; en turismo, la de feriado si holiday_rates_on = '1'
+  holidays: '', // feriados, DD/MM/AAAA separados por coma: en choferes llevan la tarifa de domingos; en turismo, la de feriado si holiday_rates_on = '1' (ahí también valen rangos DD/MM/AAAA-DD/MM/AAAA)
   weekend_rates_on: '0', // '1': retirando viernes, sábado o domingo por hasta 5 días se cobra la tarifa de fin de semana de la categoría
   holiday_rates_on: '0', // '1': los días feriados se cobran con la tarifa de feriado de la categoría
   late_hour_fee: '0', // precio de cada hora pasada de la tolerancia (0 = pasada la tolerancia se cobra un día más)
