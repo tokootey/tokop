@@ -33,7 +33,9 @@ test('contrato pendiente: con saldo o daños no se cierra hasta resolverlo (solo
   const app = await start();
   try {
     const call = await app.as('operador');
-    const back = (r, body) => call('POST', `/api/reservations/${r.id}/checkin`, { in_km: 1100, in_fuel: 8, in_at: at(3, 8), ...body });
+    // Con las funciones a pedido la entrega y la devolución piden al menos una foto.
+    const back = (r, body) =>
+      app.db.prepare("INSERT INTO reservation_files (reservation_id, stage, name, mime, size, path, created_at) VALUES (?, 'devolucion', 'f.jpg', 'image/jpeg', 1, 'x', '2026-01-01T00:00')").run(r.id) && call('POST', `/api/reservations/${r.id}/checkin`, { in_km: 1100, in_fuel: 8, in_at: at(3, 8), ...body });
     const close = (r) => call('POST', `/api/reservations/${r.id}/close-contract`);
 
     // Sin la función activada, la devolución cierra el contrato como siempre, aunque quede saldo.
@@ -63,7 +65,8 @@ test('contrato pendiente: con saldo o daños no se cierra hasta resolverlo (solo
     // Pagado pero con daños por definir: queda pendiente; un cargo nuevo lo vuelve a trabar hasta cobrarlo.
     const c = app.reserve({ vehicle_id: 1, pickup_at: at(4, 8), return_at: at(7, 8) });
     await call('POST', `/api/reservations/${c.id}/payments`, { kind: 'pago', amount: c.total });
-    await call('POST', `/api/reservations/${c.id}/checkout`, { out_at: at(4, 9) });
+    app.db.prepare("INSERT INTO reservation_files (reservation_id, stage, name, mime, size, path, created_at) VALUES (?, 'entrega', 'f.jpg', 'image/jpeg', 1, 'x', '2026-01-01T00:00')").run(c.id);
+    await call('POST', `/api/reservations/${c.id}/checkout`, { out_at: at(4, 9), out_km: app.db.prepare('SELECT km FROM vehicles WHERE id = 1').get().km, out_fuel: 8 });
     const damaged = (await back(c, { in_km: 1200, in_at: at(7, 8), pending_note: 'Daños por definir' })).data;
     assert.deepEqual([damaged.contract.closed_at, damaged.contract.pending_note, damaged.balance.pending], [null, 'Daños por definir', 0]);
     await call('POST', `/api/reservations/${c.id}/charges`, { kind: 'otro', amount: 80, description: 'Paragolpes' });
@@ -75,7 +78,8 @@ test('contrato pendiente: con saldo o daños no se cierra hasta resolverlo (solo
     app.db.prepare('UPDATE categories SET extra_km_rate = 0').run();
     const d = app.reserve({ vehicle_id: 1, pickup_at: at(8, 8), return_at: at(10, 8) });
     await call('POST', `/api/reservations/${d.id}/payments`, { kind: 'pago', amount: d.total });
-    await call('POST', `/api/reservations/${d.id}/checkout`, { out_at: at(8, 9) });
+    app.db.prepare("INSERT INTO reservation_files (reservation_id, stage, name, mime, size, path, created_at) VALUES (?, 'entrega', 'f.jpg', 'image/jpeg', 1, 'x', '2026-01-01T00:00')").run(d.id);
+    await call('POST', `/api/reservations/${d.id}/checkout`, { out_at: at(8, 9), out_km: app.db.prepare('SELECT km FROM vehicles WHERE id = 1').get().km, out_fuel: 8 });
     const far = (await back(d, { in_km: 9000, in_at: at(10, 8) })).data;
     assert.deepEqual([far.contract.closed_at, far.contract.pending_note, far.balance.pending], [null, 'Km de más', 0]);
     assert.equal((await close(d)).status, 200);
