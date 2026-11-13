@@ -22,9 +22,9 @@ test('alquileres activos: solo los autos entregados, por sucursal, y la planilla
 
     const csv = (await call('GET', '/api/rentals/active?branch=1&format=csv&sep=;')).data;
     const lines = csv.replace('﻿', '').trim().split('\r\n');
-    assert.equal(lines[0], 'Referencia;Placa;Cliente;Salida;Hora;Devolución prevista');
+    assert.equal(lines[0], 'Referencia;Placa;Cliente;Salida;Hora;Devolución prevista;Devuelve en');
     const d = (s) => `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}`;
-    assert.equal(lines[1], `${a.code};AA0001;"Ana; ""la jefa""";${d(at(0, 9))};09:00;${d(at(3, 8))} 08:00`);
+    assert.equal(lines[1], `${a.code};AA0001;"Ana; ""la jefa""";${d(at(0, 9))};09:00;${d(at(3, 8))} 08:00;Tocumen`);
     assert.equal(lines.length, 2);
   } finally {
     app.close();

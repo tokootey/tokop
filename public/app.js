@@ -1346,7 +1346,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       toast('Conductor menor: se suma el recargo y lleva el seguro de menor franquicia');
     }
     refresh(); // el precio puede sumar el recargo por conductor menor
-    $('#cust-selected').innerHTML = `✔ <b>${esc(c.full_name)}</b> · ${esc(c.doc_type || '')} ${esc(c.doc_number || '')} · ${esc(c.phone || '')} · ${esc(c.email || '')}
+    $('#cust-selected').innerHTML = `✔ <b>${esc(c.full_name)}</b> · ${c.doc_number ? esc(docTypeOf(c.doc_type)) : ''} ${esc(c.doc_number || '')} · ${esc(c.phone || '')} · ${esc(c.email || '')}
       ${c.doc_number && c.phone && c.address && c.birth_date && c.license_expiry ? '' : '<br><span class="error">Le faltan datos al cliente (se piden al entregar).</span>'}`;
   };
   let t;
@@ -1506,7 +1506,10 @@ const contractMessage = (r, link) =>
   `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Este es el contrato de tu alquiler con ${state.settings.company_name}. Leelo y firmalo desde el celular`, `This is your rental agreement with ${state.settings.company_name}. Read and sign it from your phone`)}: ${link}`;
 // Links de pago de la agencia: primero la reserva; cuando se registra ese pago, la garantía.
 const payLinkMessage = (r) =>
-  `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Para confirmar tu reserva ${r.code} en ${state.settings.company_name} pagá ${money(r.balance.pending)} desde este link`, `To confirm your booking ${r.code} at ${state.settings.company_name}, pay ${money(r.balance.pending)} with this link`)}: ${state.settings.payment_link_url}`;
+  `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Para confirmar tu reserva ${r.code} en ${state.settings.company_name} pagá ${money(r.balance.pending)} desde este link`, `To confirm your booking ${r.code} at ${state.settings.company_name}, pay ${money(r.balance.pending)} with this link`)}: ${state.settings.payment_link_url}${amexNote()}`;
+// Panamá: el link de pago es Visa o Mastercard; con American Express el cliente coordina con la agencia.
+const amexPhone = () => (state.settings.country === 'PA' ? String(state.settings.chat_whatsapp || state.settings.company_phone || '').trim().replace(/^(?=\d)/, '+') : '');
+const amexNote = () => (amexPhone() ? `\n${L(`Si pagás con American Express, escribinos al ${amexPhone()}.`, `If you pay with American Express, message us at ${amexPhone()}.`)}` : '');
 const depositLinkMessage = (r) =>
   `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Recibimos el pago de tu reserva ${r.code}. Para dejar la garantía${r.deposit > 0 ? ` de ${money(r.deposit)}` : ''} usá este link`, `We received the payment for your booking ${r.code}. To leave the deposit${r.deposit > 0 ? ` of ${money(r.deposit)}` : ''} use this link`)}: ${state.settings.deposit_link_url}`;
 const depositLinkDue = (r) => Boolean(state.settings.deposit_link_url) && ['pendiente', 'confirmada'].includes(r.status) && !(r.balance.deposit_held > 0);
@@ -2666,7 +2669,7 @@ function voucherLines(r) {
       title: 'Cliente y conductor',
       rows: [
         ['Nombre', r.customer_name],
-        r.customer_doc ? ['Documento', `${r.customer_doc_type || docTypes()[0]} ${r.customer_doc}`] : null,
+        r.customer_doc ? ['Documento', `${docTypeOf(r.customer_doc_type)} ${r.customer_doc}`] : null,
         r.customer_phone ? ['Teléfono', r.customer_phone] : null,
         r.customer_email ? ['Email', r.customer_email] : null,
         ['Conductor', r.customer_license ? `El titular · licencia ${r.customer_license}${r.customer_license_expiry ? ` (vence ${d(r.customer_license_expiry)})` : ''}` : 'El titular · traer la licencia al retirar'],
@@ -3288,7 +3291,7 @@ async function printContract(r) {
 <div class="grid">
   <div><h2>Cliente / conductor principal</h2><table>
     ${line('Nombre y apellido', esc(r.customer_name))}
-    ${line('Documento', r.customer_doc ? `${esc(r.customer_doc_type || docTypes()[0])} ${esc(r.customer_doc)}` : '')}
+    ${line('Documento', r.customer_doc ? `${esc(docTypeOf(r.customer_doc_type))} ${esc(r.customer_doc)}` : '')}
     ${line('Domicilio', esc(r.customer_address || ''))}${r.customer_workplace ? line('Lugar de trabajo', esc(r.customer_workplace)) : ''}${r.customer_alt_contact ? line('Contacto alternativo', esc(r.customer_alt_contact)) : ''}
     ${line('Teléfono', esc(r.customer_phone || ''))}
     ${partiesOn() ? '' : line('Email', esc(r.customer_email || ''))}
@@ -3767,7 +3770,13 @@ async function saveLicense(r, d, form) {
 }
 
 // Medios de pago según el país: Mercado Pago es de Argentina; Yappy, de Panamá.
-const payMethods = () =>
+const payMethods = () => {
+  const own = String(state.settings.extra_pay_methods || '').split('\n').map((m) => m.trim().slice(0, 40)).filter(Boolean).map((m) => [m, m]);
+  const base = countryPayMethods();
+  // Los de la agencia van antes de "otro", que queda último.
+  return [...base.slice(0, -1), ...own.filter(([m]) => !base.some(([b]) => b === m)), base[base.length - 1]];
+};
+const countryPayMethods = () =>
   ({
     AR: ['efectivo', 'tarjeta', 'transferencia', 'mercadopago', 'otro'].map((m) => [m, m]),
     PA: [['efectivo', 'efectivo'], ['tarjeta', 'tarjeta (Visa o Mastercard)'], ['transferencia', 'transferencia'], ['yappy', 'Yappy'], ['paypal', 'PayPal'], ['link de pago', 'link de pago (Visa o Mastercard)'], ['otro', 'otro']],
@@ -3782,6 +3791,8 @@ const panapassLine = (c) =>
 const panapassOn = () => state.settings.country === 'PA';
 const panapassField = (name, label) => (panapassOn() ? [{ name, label, type: 'number' }] : []);
 // Tipos de documento según el país: en Argentina DNI; en el resto, cédula, pasaporte o R.U.C. (el primero es el que viene elegido).
+// Fuera de Argentina no se ofrece DNI: uno guardado es el valor por omisión de la base, no una elección.
+const docTypeOf = (t) => (!t || (t === 'DNI' && state.settings.country !== 'AR') ? docTypes()[0] : t);
 const docTypes = () => (state.settings.country === 'AR' ? ['DNI', 'Pasaporte', 'CI', 'CUIT', 'RUT', 'Otro'] : ['Cédula', 'Pasaporte', 'R.U.C.', 'Otro']);
 const docWord = () => (state.settings.country === 'AR' ? 'DNI' : 'Documento');
 // Titular y conductores adicionales, lugar de trabajo y contacto alternativo: agencias con funciones en prueba, alquiler por días.
@@ -3978,7 +3989,7 @@ on(
         <dl class="vcard-facts">
           <div><dt>Km</dt><dd>${num(v.km || 0)}</dd></div>
           <div><dt>Combustible</dt><dd>${fuel(v.fuel) || '—'}</dd></div>
-          ${doc('Seguro', v.insurance_expiry)}${doc('VTV', v.vtv_expiry)}${v.registration_expiry ? doc('Cédula de circulación', v.registration_expiry) : ''}${v.service_due ? doc('Service', v.service_due) : ''}${choferesMode() && v.permit_expiry ? doc('Habilitación', v.permit_expiry) : ''}
+          ${doc('Seguro', v.insurance_expiry)}${doc(inspectionWord(), v.vtv_expiry)}${v.registration_expiry ? doc('Cédula de circulación', v.registration_expiry) : ''}${v.service_due ? doc('Service', v.service_due) : ''}${choferesMode() && v.permit_expiry ? doc('Habilitación', v.permit_expiry) : ''}
         </dl>
         <div class="vcard-actions">
           <button class="btn pill small" type="button" data-hist>${ICON.list}Historial</button>
@@ -4148,7 +4159,7 @@ on(
     canDelete: () => isAdmin(),
     columns: [
       { label: 'Nombre', render: (r) => `<b>${esc(r.full_name)}</b>${r.anonymized_at ? ' <span class="badge">anonimizado</span>' : ''}` },
-      { label: 'Documento', render: (r) => `${esc(r.doc_type || '')} ${esc(r.doc_number || '')}` },
+      { label: 'Documento', render: (r) => (r.doc_number ? `${esc(docTypeOf(r.doc_type))} ${esc(r.doc_number)}` : '') },
       { label: 'Teléfono', key: 'phone' },
       { label: 'Email', key: 'email' },
       { label: 'Licencia', render: (r) => (r.license_number ? `${esc(r.license_number)} <small class="muted">${fmtD(r.license_expiry)}</small>` : '<span class="badge b-pendiente">Falta</span>') },
@@ -4755,6 +4766,7 @@ on(/^\/config$/, async (view) => {
       { name: 'company_tax_id', label: `${s.tax_id_label || 'CUIT'} de la empresa` },
       { name: 'company_phone', label: 'Teléfono' },
       { name: 'company_address', label: 'Dirección', full: true },
+      { name: 'extra_pay_methods', label: 'Otros medios de pago (uno por renglón; aparecen al registrar un cobro)', type: 'textarea', full: true, rows: 3 },
       { name: 'currency', label: 'Moneda', type: 'select', options: CURRENCIES, required: true },
       { name: 'tax_name', label: 'Nombre del impuesto (IVA, IGV, ITBIS, IGIC…)' },
       { name: 'tax_rate', label: 'Impuesto %', type: 'number' },
@@ -6519,6 +6531,7 @@ async function docsPage() {
       <p class="muted" style="margin:0;font-size:13px">${L('* Obligatorias: la licencia de los dos lados y la cédula o el pasaporte.', '* Required: both sides of your license, and your ID card or passport.')}</p>
       <p id="docs-status" class="muted" role="status"></p>
       <button class="btn primary big" type="submit">${L('Enviar mis datos', 'Send my details')}</button>
+      ${d.amex_phone ? `<p class="muted" style="margin:0">${L('¿Pagás con American Express? Escribinos al', 'Paying with American Express? Message us at')} <a href="https://wa.me/${esc(d.amex_phone.replace(/\D/g, ''))}">${esc(d.amex_phone)}</a>.</p>` : ''}
     </form>`);
   const form = $('#docs', page);
   const status = $('#docs-status', form);
