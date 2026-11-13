@@ -867,8 +867,22 @@ function auxPanel(view, d) {
   const list = (title, rows, isOut, empty) =>
     `<div class="card"><h2>${title}${rows.length ? ` <span class="count">${rows.length}</span>` : ''}</h2>${rows.length ? `<div class="daylist">${rows.map((r) => row(r, isOut)).join('')}</div>` : `<p class="muted">${empty}</p>`}</div>`;
   const docs = d.alerts.documents;
+  // Pedidos que entraron y nadie confirmó todavía (por ejemplo, de noche): para escribirle al cliente a la mañana.
+  const fresh = d.pending || [];
   view.innerHTML = `
     <div class="page-head"><h1>Hoy</h1></div>
+    ${
+      fresh.length
+        ? `<div class="card"><h2>Reservas nuevas para contactar <span class="count">${fresh.length}</span></h2><div class="daylist">${fresh
+            .map(
+              (r) => `<div class="dayrow"><span class="plate">${esc(r.vehicle_plate || '—')}</span>
+      <div class="who"><b>${esc(r.customer_name)}</b><small>${esc(r.category_name)} · ${esc(r.pickup_branch_name || '')}</small></div>
+      <div class="when"><b>${fmtDT(r.pickup_at).slice(11)}</b><small>${dayName(r.pickup_at)}</small></div>
+      ${waLink(r.customer_phone) || '<small class="muted">Sin teléfono</small>'}</div>`,
+            )
+            .join('')}</div></div>`
+        : ''
+    }
     ${list('Salen hoy', out, true, 'Hoy no sale ningún auto.')}
     ${list('Vuelven hoy', back, false, 'Hoy no vuelve ningún auto.')}
     <div class="card"><h2>Vencimientos de los próximos 30 días${docs.length ? ` <span class="count">${docs.length}</span>` : ''}</h2>
