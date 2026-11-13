@@ -212,6 +212,12 @@ function computeReturnCharges(db, reservation, contract, input, { byPeriods = fa
     lines.push({ concept: `Combustible faltante (${missingEighths}/8)`, amount: round2(missingEighths * perEighth) });
   }
 
+  // Panapass (peajes de Panamá): si vuelve con menos saldo del que salió, la diferencia la paga el cliente. Si vuelve con más, no se cobra ni se devuelve.
+  const blank = (v) => v === undefined || v === null || v === '';
+  const inPanapass = blank(input.in_panapass) ? NaN : Number(input.in_panapass);
+  const panapassUsed = !blank(contract.out_panapass) && Number.isFinite(inPanapass) ? round2(Math.max(0, contract.out_panapass - inPanapass)) : 0;
+  if (panapassUsed > 0) lines.push({ concept: 'Panapass consumido', amount: panapassUsed });
+
   // Demora: horas pasadas de la devolución pactada, con la misma tolerancia que el cálculo de días.
   const lateHours = (parseLocal(input.in_at) - parseLocal(reservation.return_at)) / 3600000;
   const grace = Number(settings.grace_hours) || 0;
@@ -228,7 +234,7 @@ function computeReturnCharges(db, reservation, contract, input, { byPeriods = fa
     if (Number(c.amount)) lines.push({ concept: String(c.concept || 'Otro cargo'), amount: round2(c.amount) });
   }
 
-  return { km_driven: kmDriven, km_allowed: kmAllowed, km_excess: kmExcess, late_days: byPeriods ? 0 : lateDays, fuel_missing: missingEighths, lines, total: round2(lines.reduce((a, l) => a + l.amount, 0)) };
+  return { km_driven: kmDriven, km_allowed: kmAllowed, km_excess: kmExcess, late_days: byPeriods ? 0 : lateDays, fuel_missing: missingEighths, panapass_used: panapassUsed, lines, total: round2(lines.reduce((a, l) => a + l.amount, 0)) };
 }
 
 module.exports = { youngDriverFee, rentalDays, computeQuote, computeReturnCharges, parseDynamicRules };

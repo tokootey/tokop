@@ -3837,6 +3837,7 @@ const VEHICLE_FIELDS = [
   { name: 'period_rate', get label() { return `Precio por ${periodWord()} de este auto (0 = el de la categoría)`; }, type: 'number', default: 0, when: () => choferesMode() && !payModes() },
   { name: 'rest_day_rate', label: 'Precio de domingos y feriados de este auto (0 = el mismo)', type: 'number', default: 0, when: () => choferesMode() && state.settings.rent_period === 'dia' },
   { name: 'rest_day_free', label: 'Domingos y feriados libres (no se cobran)', type: 'checkbox', full: true, when: () => choferesMode() && state.settings.rent_period === 'dia' },
+  { name: 'panapass_number', label: 'N° de Panapass', when: () => panapassOn() },
   { name: 'panapass', label: 'Saldo de Panapass', type: 'number', when: () => panapassOn() },
   { name: 'web_inquiry', label: 'En la web, solo consulta por WhatsApp (no se puede reservar ni pagar online)', type: 'checkbox', full: true },
   { name: 'notes', label: 'Notas', type: 'textarea', full: true },
