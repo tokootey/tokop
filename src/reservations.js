@@ -139,7 +139,11 @@ function withYoungInsurance(db, data) {
 function createReservation(db, input, userId) {
   const data = normalizeInput(input);
   if (!data.customer_id) fail(400, 'Cliente obligatorio');
-  if (!db.prepare('SELECT 1 FROM customers WHERE id = ?').get(data.customer_id)) fail(400, 'Cliente inexistente');
+  const customer = db.prepare('SELECT blocked_reason FROM customers WHERE id = ?').get(data.customer_id);
+  if (!customer) fail(400, 'Cliente inexistente');
+  // Cliente bloqueado: el motivo lo ve la agencia; a quien reserva por la web no se le muestra.
+  const blocked = String(customer.blocked_reason || '').trim();
+  if (blocked) fail(409, userId ? `Este cliente está bloqueado: ${blocked}` : 'No pudimos tomar tu reserva por acá. Escribinos y la vemos.');
   if (!data.category_id) fail(400, 'Categoría obligatoria');
   const status = data.status && ['pendiente', 'confirmada'].includes(data.status) ? data.status : 'pendiente';
   // Entrega en hotel: se suma sola su tarifa (adicional "Entrega en hotel"), si la agencia le puso precio.
@@ -584,6 +588,15 @@ function checkin(db, id, input, userId) {
   return updated;
 }
 
+/** Nota suelta en el historial de la reserva (por ejemplo, la del auxiliar de flota al entregar o recibir el auto). */
+function addNote(db, id, input, userId) {
+  if (!db.prepare('SELECT 1 FROM reservations WHERE id = ?').get(id)) fail(404, 'Reserva inexistente');
+  const note = String((input && input.note) || '').trim().slice(0, 500);
+  if (!note) fail(400, 'Escribí la nota');
+  log(db, Number(id), userId, 'nota', note);
+  return { ok: true };
+}
+
 /** Cierra un contrato que quedó pendiente después de la devolución. Con saldo o cargos sin cobrar no se puede. */
 function closeContract(db, id, userId) {
   const r = getReservation(db, id);
@@ -674,6 +687,7 @@ module.exports = {
   moveOptions,
   setParties,
   extendReservation,
+  addNote,
   checkoutCheck,
   checkout,
   checkin,

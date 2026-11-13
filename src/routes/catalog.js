@@ -256,7 +256,7 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     crud(db, {
       table: 'customers',
       fields: ['full_name', 'doc_type', 'doc_number', 'email', 'phone', 'address', 'birth_date', 'license_number', 'license_expiry', 'notes',
-        'license_class', 'work_apps', 'guarantor_name', 'guarantor_doc', 'guarantor_phone', 'guarantor_address', 'workplace', 'alt_contact'],
+        'license_class', 'work_apps', 'guarantor_name', 'guarantor_doc', 'guarantor_phone', 'guarantor_address', 'workplace', 'alt_contact', 'blocked_reason'],
       required: ['full_name'],
       order: 'full_name',
       search: ['full_name', 'doc_number', 'email', 'phone'],

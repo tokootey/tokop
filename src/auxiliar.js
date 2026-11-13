@@ -15,6 +15,7 @@ const ALLOWED = [
   ['PUT', /^\/vehicles\/\d+$/],
   ['GET', /^\/reservations\/\d+\/files$/],
   ['POST', /^\/reservations\/\d+\/files$/],
+  ['POST', /^\/reservations\/\d+\/note$/],
   ['GET', /^\/files\/\d+$/],
 ];
 const PHOTO_STAGES = ['entrega', 'devolucion'];
@@ -35,7 +36,7 @@ function auxiliarGuard(db) {
     const deny = () => next(new HttpError(403, 'Tu usuario no tiene permiso para eso'));
     if (!ALLOWED.some(([method, path]) => method === req.method && path.test(req.path))) return deny();
     if (req.method === 'PUT') req.body = pick(req.body, VEHICLE_FIELDS);
-    if (req.method === 'POST' && !PHOTO_STAGES.includes(req.query.stage)) return deny();
+    if (req.method === 'POST' && /\/files$/.test(req.path) && !PHOTO_STAGES.includes(req.query.stage)) return deny();
     const file = req.path.match(/^\/files\/(\d+)$/);
     if (file && !PHOTO_STAGES.includes((db.prepare('SELECT stage FROM reservation_files WHERE id = ?').get(Number(file[1])) || {}).stage)) return deny();
     const listing = /\/files$/.test(req.path) && req.method === 'GET';

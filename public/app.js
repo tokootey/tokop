@@ -835,12 +835,14 @@ async function auxTrip(r) {
          { name: 'stage', label: 'Las fotos nuevas son de', type: 'select', options: [['entrega', 'La entrega'], ['devolucion', 'La devolución']], required: true },
          { name: 'fotos', label: 'Fotos del auto (frente, laterales, cola, interior, tablero con km y combustible)', type: 'photos' },
          ...(v ? auxReadingFields(v) : []),
+         { name: 'note', label: 'Notas (queda en el historial de la reserva)', type: 'textarea', full: true, rows: 2 },
        ],
        { stage: r.status === 'en_curso' ? 'devolucion' : 'entrega', ...(v || {}) },
      )}`,
     async (d, form) => {
       if (v) await auxSaveReading(v, d);
       await uploadFiles(r.id, d.stage, form.fotos.files);
+      if (String(d.note || '').trim()) await POST(`/reservations/${r.id}/note`, { note: `${STAGE_LABEL[d.stage]}: ${String(d.note).trim()}` });
       toast('Guardado');
       route();
     },
@@ -2801,6 +2803,7 @@ const LOG_LABEL = {
   entregado: 'Auto entregado',
   devuelto: 'Auto devuelto',
   extendida: 'Alquiler extendido',
+  nota: 'Nota',
   titular_conductores: 'Titular y conductores',
   contrato_pendiente: 'Contrato pendiente de cierre',
   contrato_cerrado: 'Contrato cerrado',
@@ -3407,6 +3410,8 @@ ${
 let planningFrom = null;
 // El calendario también se puede ver como listado; se recuerda en este navegador.
 const PLAN_VIEW_KEY = 'floty-calendario';
+const PLAN_LIST_STATES = [['pendiente', 'Pendientes'], ['confirmada', 'Confirmadas'], ['en_curso', 'En contrato'], ['finalizada', 'Cerradas'], ['', 'Todas']];
+let planListStatus = 'confirmada';
 const planAsList = () => {
   try {
     return localStorage.getItem(PLAN_VIEW_KEY) === 'lista';
@@ -3476,8 +3481,9 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
 
   const asList = planAsList();
   const plateOf = Object.fromEntries(p.vehicles.map((v) => [v.id, v]));
-  // Listado: sólo las reservas confirmadas de esas dos semanas, una por renglón, en orden de salida.
-  const confirmed = p.reservations.filter((r) => r.status === 'confirmada');
+  // Listado: las reservas de esas dos semanas, una por renglón, en orden de salida. Arranca en las confirmadas; el estado elegido se recuerda mientras dure la sesión.
+  const listed = (st) => p.reservations.filter((r) => !st || r.status === st);
+  const confirmed = listed(planListStatus);
   const listHtml = () =>
     confirmed.length
       ? `<div class="table-wrap"><table><thead><tr><th>Salida</th><th>Devolución</th><th>Cliente</th><th>Auto</th><th>Estado</th><th>Referencia</th></tr></thead><tbody>${confirmed
@@ -3490,13 +3496,14 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
               <td>${badge(r.status)}</td><td class="nowrap">${esc(r.code)}</td></tr>`;
           })
           .join('')}</tbody></table></div>`
-      : '<div class="card muted">No hay reservas confirmadas en estas dos semanas.</div>';
+      : '<div class="card muted">No hay reservas de ese estado en estas dos semanas.</div>';
   view.innerHTML = `
     <div class="page-head"><h1>Calendario de autos</h1>
       <div class="actions"><button class="btn" data-plan-view>${asList ? 'Ver calendario' : 'Ver listado'}</button><button class="btn" data-nav="-7">◀ Semana</button><button class="btn" data-nav="0">Hoy</button><button class="btn" data-nav="7">Semana ▶</button></div></div>
     ${
       asList
-        ? `<p class="muted">Reservas del ${fmtD(fromStr)} al ${fmtD(localISO(addDays(planningFrom, days - 1)))}.</p>${listHtml()}`
+        ? `<p class="muted">Reservas del ${fmtD(fromStr)} al ${fmtD(localISO(addDays(planningFrom, days - 1)))}.</p>
+           <div class="chips" role="group" aria-label="Estado" style="margin-bottom:10px">${PLAN_LIST_STATES.map(([st, label]) => `<button type="button" class="chip${st === planListStatus ? ' on' : ''}" data-list-st="${st}" aria-pressed="${st === planListStatus}">${label} (${listed(st).length})</button>`).join('')}</div>${listHtml()}`
         : `<div class="legend" style="margin-bottom:10px">
       <span style="--c:#e0a100">Pendiente</span><span style="--c:#1f6feb">Confirmada</span><span style="--c:#1a9b5b">En curso</span>
       <span style="--c:#8b94a6">Finalizada</span><span style="--c:#d1373a">En el taller</span><span>· Tocá una barra para abrir la reserva · <b>Para reservar, tocá en la fila de un auto el día de retiro y después el de devolución (con el mouse también podés arrastrar).</b> <b>Con el mouse, arrastrá una barra para mover la reserva, o soltala sobre otra para intercambiar los autos.</b></span></div>
@@ -3505,6 +3512,12 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
       ${rows || '<p class="muted" style="padding:16px">No hay vehículos cargados.</p>'}
     </div>`
     }`;
+  $$('[data-list-st]', view).forEach((b) =>
+    b.addEventListener('click', () => {
+      planListStatus = b.dataset.listSt;
+      route();
+    }),
+  );
   $('[data-plan-view]', view).addEventListener('click', () => {
     try {
       localStorage.setItem(PLAN_VIEW_KEY, asList ? 'calendario' : 'lista');
@@ -4035,7 +4048,10 @@ on(
         const [hist, jobs] = await Promise.all([GET(`/reservations?vehicle_id=${v.id}&limit=50`), shopJobs()]);
         openModal(
           `Historial · ${v.plate}`,
-          `<h3>Reservas</h3>${historyTable(hist)}<h3>Taller</h3>${
+          `<h3>Reservas</h3>${historyTable(hist)}<h3>Fotos de los alquileres</h3><div id="hist-photos">${
+            hist.filter((r) => ['en_curso', 'finalizada'].includes(r.status)).map((r) => `<details data-photos="${r.id}"><summary><b>${esc(r.code)}</b> · ${fmtD(r.pickup_at)} → ${fmtD(r.return_at)} · ${esc(r.customer_name)}</summary><div class="muted">Cargando…</div></details>`).join('') ||
+            '<p class="muted">Todavía no tuvo alquileres.</p>'
+          }</div><h3>Taller</h3>${
             jobs.length
               ? `<table class="mini"><thead><tr><th>Fechas</th><th>Trabajo</th><th>Costo</th><th>Estado</th></tr></thead><tbody>${jobs
                   .map(
@@ -4047,6 +4063,32 @@ on(
           }`,
           null,
           { wide: true },
+        );
+        // Las fotos de cada alquiler se piden recién al abrirlo.
+        $$('#hist-photos [data-photos]').forEach((box) =>
+          box.addEventListener(
+            'toggle',
+            () =>
+              run(async () => {
+                const files = (await GET(`/reservations/${box.dataset.photos}/files`)).filter((f) => ['entrega', 'devolucion'].includes(f.stage));
+                const group = (stage) => {
+                  const list = files.filter((f) => f.stage === stage);
+                  return `<h4 style="margin:8px 0 4px">${STAGE_LABEL[stage]} <small class="muted">(${list.length})</small></h4><div class="thumbs">${
+                    list.map((f) => `<a class="thumb" target="_blank" rel="noopener" title="${esc(f.name)}">${f.mime.startsWith('image/') ? `<img alt="${esc(f.name)}" data-thumb="${f.id}"/>` : `<span data-thumb="${f.id}">PDF</span>`}</a>`).join('') || '<span class="muted">Sin fotos.</span>'
+                  }</div>`;
+                };
+                box.lastElementChild.outerHTML = `<div>${group('entrega')}${group('devolucion')}</div>`;
+                $$('[data-thumb]', box).forEach((el) =>
+                  fileUrl(Number(el.dataset.thumb))
+                    .then((u) => {
+                      if (el.tagName === 'IMG') el.src = u;
+                      el.closest('a').href = u;
+                    })
+                    .catch(() => {}),
+                );
+              }),
+            { once: true },
+          ),
         );
       } else if (e.target.closest('[data-shop]')) {
         const today = new Date().toISOString().slice(0, 10);
@@ -4158,14 +4200,14 @@ on(
     canWrite: () => true,
     canDelete: () => isAdmin(),
     columns: [
-      { label: 'Nombre', render: (r) => `<b>${esc(r.full_name)}</b>${r.anonymized_at ? ' <span class="badge">anonimizado</span>' : ''}` },
+      { label: 'Nombre', render: (r) => `<b>${esc(r.full_name)}</b>${r.anonymized_at ? ' <span class="badge">anonimizado</span>' : ''}${r.blocked_reason ? ` <span class="badge b-cancelada" title="${esc(r.blocked_reason)}">bloqueado</span>` : ''}` },
       { label: 'Documento', render: (r) => (r.doc_number ? `${esc(docTypeOf(r.doc_type))} ${esc(r.doc_number)}` : '') },
       { label: 'Teléfono', key: 'phone' },
       { label: 'Email', key: 'email' },
       { label: 'Licencia', render: (r) => (r.license_number ? `${esc(r.license_number)} <small class="muted">${fmtD(r.license_expiry)}</small>` : '<span class="badge b-pendiente">Falta</span>') },
     ],
     extraActions: (r) =>
-      `<button class="btn small" data-hist="${r.id}">Reservas</button> ${r.anonymized_at ? '' : `<button class="btn small" data-docs="${r.id}">Documentación</button> `}${isAdmin() && !r.anonymized_at ? `<button class="btn small" data-anon="${r.id}">Anonimizar</button> ` : ''}`,
+      `<button class="btn small" data-hist="${r.id}">Reservas</button> ${r.anonymized_at ? '' : `<button class="btn small" data-docs="${r.id}">Documentación</button> <button class="btn small" data-block="${r.id}">${r.blocked_reason ? 'Desbloquear' : 'Bloquear'}</button> `}${isAdmin() && !r.anonymized_at ? `<button class="btn small" data-anon="${r.id}">Anonimizar</button> ` : ''}`,
     nav: (tr, r) => {
       const b = tr.querySelector('[data-hist]');
       if (b)
@@ -4174,6 +4216,30 @@ on(
           openModal(`Reservas de ${r.full_name}`, historyTable(rows));
         });
       tr.querySelector('[data-docs]')?.addEventListener('click', () => openDocuments(r.id, r.full_name));
+      tr.querySelector('[data-block]')?.addEventListener('click', () =>
+        r.blocked_reason
+          ? openModal(
+              `Desbloquear a ${r.full_name}`,
+              `<p>Está bloqueado por: <b>${esc(r.blocked_reason)}</b></p><p>Al desbloquearlo vuelve a poder reservar.</p>
+               <form><div class="actions"><button class="btn primary" type="submit">Desbloquear</button><button class="btn" type="button" data-close>Cancelar</button></div></form>`,
+              async () => {
+                await PUT(`/customers/${r.id}`, { blocked_reason: '' });
+                toast('Cliente desbloqueado');
+                route();
+              },
+            )
+          : openModal(
+              `Bloquear a ${r.full_name}`,
+              formHtml([{ name: 'blocked_reason', label: 'Motivo (lo ve solo la agencia)', type: 'textarea', full: true, rows: 2, required: true }], {}, 'Bloquear') +
+                '<p class="muted">No va a poder reservar por el link ni desde el sistema. Sus reservas ya hechas no cambian.</p>',
+              async (d) => {
+                if (!String(d.blocked_reason || '').trim()) return toast('Escribí el motivo');
+                await PUT(`/customers/${r.id}`, { blocked_reason: String(d.blocked_reason).trim().slice(0, 300) });
+                toast('Cliente bloqueado');
+                route();
+              },
+            ),
+      );
     },
     onEdit: (r) => {
       if (!r.anonymized_at) docsButton(r);

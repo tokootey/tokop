@@ -662,6 +662,8 @@ function migrate(db) {
   }
   // Contrato: titular distinto del conductor (JSON) y conductores adicionales (JSON, hasta 5); lugar de trabajo y contacto alternativo del cliente.
   for (const col of ['holder', 'drivers']) if (!has('reservations', col)) db.exec(`ALTER TABLE reservations ADD COLUMN ${col} TEXT`);
+  // Cliente bloqueado: con motivo cargado no se le toman reservas (vacío = no está bloqueado).
+  if (!has('customers', 'blocked_reason')) db.exec('ALTER TABLE customers ADD COLUMN blocked_reason TEXT');
   for (const col of ['workplace', 'alt_contact']) if (!has('customers', col)) db.exec(`ALTER TABLE customers ADD COLUMN ${col} TEXT`);
   if (!has('payments', 'notes')) db.exec('ALTER TABLE payments ADD COLUMN notes TEXT');
   // Sucursal donde se cobró (caja diaria). En los pagos viejos queda vacía: cuenta la sucursal de retiro.

@@ -63,6 +63,23 @@ test('auxiliar de flota: ve lo de los autos sin precios y no entra a las reserva
     assert.deepEqual(list.map((f) => f.stage), ['devolucion']);
     assert.equal((await aux('GET', `/api/files/${list[0].id}`)).status, 200);
     assert.equal((await aux('GET', `/api/files/${contract.data.id}`)).status, 403);
+
+    // Notas: quedan en el historial de la reserva con su nombre; vacía no se guarda.
+    assert.equal((await aux('POST', `/api/reservations/${r.id}/note`, { note: 'Entrega: rayón en el paragolpes' })).status, 200);
+    assert.equal((await aux('POST', `/api/reservations/${r.id}/note`, { note: '  ' })).status, 400);
+    const log = (await admin('GET', `/api/reservations/${r.id}`)).data.log.find((l) => l.action === 'nota');
+    assert.deepEqual([log.detail, log.user_name], ['Entrega: rayón en el paragolpes', 'auxiliar']);
+
+    // Cliente bloqueado: no se le toman reservas; el motivo lo ve la agencia, no quien reserva por la web.
+    const R = require('../src/reservations');
+    const booking = { customer_id: r.customer_id, category_id: 1, pickup_branch_id: 1, return_branch_id: 1, pickup_at: '2030-01-10T10:00', return_at: '2030-01-12T10:00' };
+    assert.equal((await admin('PUT', `/api/customers/${r.customer_id}`, { blocked_reason: 'No devolvió un auto' })).status, 200);
+    const refused = await admin('POST', '/api/reservations', booking);
+    assert.equal(refused.status, 409);
+    assert.match(refused.data.error, /bloqueado: No devolvió un auto/);
+    assert.throws(() => R.createReservation(app.db, booking), (e) => e.status === 409 && !/No devolvió/.test(e.message));
+    await admin('PUT', `/api/customers/${r.customer_id}`, { blocked_reason: '' });
+    assert.equal((await admin('POST', '/api/reservations', booking)).status, 201);
   } finally {
     app.close();
     fs.rmSync(process.env.UPLOADS_DIR, { recursive: true, force: true });
