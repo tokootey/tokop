@@ -9,6 +9,9 @@ const { seed, seedChoferes, seedHistory, seedSimulaciones } = require('../src/se
 const C = require('../src/choferes');
 const R = require('../src/reservations');
 const { fmtLocal } = require('../src/util');
+// Reloj fijo al mediodía de hoy: los datos de prueba usan horas del día (10:00, 18:00) y corridos
+// muy temprano o de noche daban un día de más o de menos.
+test.mock.timers.enable({ apis: ['Date'], now: new Date().setHours(12, 0, 0, 0) });
 
 async function withApp(db, fn) {
   const server = createApp(db).listen(0);

@@ -165,7 +165,8 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
     const return_at = normDateTime(str(b.return_at, 20));
     if (!pickup_at || !return_at) fail(400, 'Indicá las fechas de retiro y devolución');
     if (return_at <= pickup_at) fail(400, 'La devolución tiene que ser después del retiro');
-    if (pickup_at.slice(0, 10) < nowLocal().slice(0, 10)) fail(400, 'La fecha de retiro ya pasó');
+    // "Hoy" es el día de la agencia, no el del servidor: si no, de tardecita ya no dejaba reservar para el mismo día.
+    if (pickup_at.slice(0, 10) < agencyNow(req.settings.country).slice(0, 10)) fail(400, 'La fecha de retiro ya pasó');
     const hotel = req.settings.chat_hotel === '1' && Boolean(b.hotel);
     const pickupCode = hotel ? officeCode() : b.pickup_branch;
     checkPickup(req, pickupCode, pickup_at);

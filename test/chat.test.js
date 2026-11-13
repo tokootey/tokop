@@ -189,9 +189,14 @@ test('link de datos: el cliente completa lo que falta y sin la foto de la licenc
   assert.equal(v.doc_number, undefined, 'no devuelve los datos guardados');
   assert.throws(() => D.saveDocs(db, docs_token, { address: 'Calle 1', license_expiry: '2099-01-01' }), /foto del frente/);
   require('../src/routes/files').saveCustomerDocument(db, uploadsDir, r.customer_id, { kind: 'carnet_frente', mime: 'image/jpeg', body: Buffer.from([0xff, 0xd8, 0xff]) });
+  const up = (kind) => require('../src/routes/files').saveCustomerDocument(db, uploadsDir, r.customer_id, { kind, mime: 'image/jpeg', body: Buffer.from([0xff, 0xd8, 0xff]) });
+  assert.throws(() => D.saveDocs(db, docs_token, { address: 'Calle 1', license_expiry: '2099-01-01' }), /dorso/);
+  up('carnet_dorso');
+  assert.throws(() => D.saveDocs(db, docs_token, { address: 'Calle 1', license_expiry: '2099-01-01' }), /cédula o de tu pasaporte/);
+  up('pasaporte');
   assert.throws(() => D.saveDocs(db, docs_token, { license_expiry: '2000-01-01' }), /vence antes/);
   D.saveDocs(db, docs_token, { address: 'Calle 1', license_expiry: '2099-01-01' });
   assert.deepEqual({ ...db.prepare('SELECT address, license_expiry FROM customers WHERE id = ?').get(r.customer_id) }, { address: 'Calle 1', license_expiry: '2099-01-01' });
-  assert.deepEqual(D.viewDocs(db, docs_token).photos, ['carnet_frente']);
+  assert.deepEqual(D.viewDocs(db, docs_token).photos.sort(), ['carnet_dorso', 'carnet_frente', 'pasaporte']);
   assert.throws(() => D.viewDocs(db, 'otro-token'), /ya no está disponible/);
 });

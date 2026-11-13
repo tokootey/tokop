@@ -9,6 +9,9 @@ const { computeStats } = require('../src/routes/stats');
 const { fmtLocal } = require('../src/util');
 const C = require('../src/choferes');
 const R = require('../src/reservations');
+// Reloj fijo al mediodía de hoy: los datos de prueba usan horas del día (10:00, 18:00) y corridos
+// muy temprano o de noche daban un día de más o de menos.
+test.mock.timers.enable({ apis: ['Date'], now: new Date().setHours(12, 0, 0, 0) });
 
 test('períodos: un día, una semana o un mes de calendario', () => {
   assert.equal(C.addPeriod('2027-01-05T10:00', 'dia'), '2027-01-06T10:00');
@@ -57,7 +60,7 @@ function fleet(mode = 'choferes') {
 }
 const daysAgo = (n) => {
   const d = new Date();
-  return fmtLocal(new Date(d.getFullYear(), d.getMonth(), d.getDate() - n, 10, 0));
+  return fmtLocal(new Date(d.getFullYear(), d.getMonth(), d.getDate() - n)); // a las 00:00: los pagos llevan la hora real de SQLite y tienen que caer después
 };
 
 test('cobro por día: domingos y feriados van a su tarifa solo si la categoría la tiene', () => {
