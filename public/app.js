@@ -806,7 +806,7 @@ const dueDocs = (v) =>
 /** Km y combustible de un auto: quedan como punto de partida de la entrega y de la devolución. */
 const auxReadingFields = (v) => [
   { name: 'km', label: `Km (tiene ${num(v.km || 0)})`, type: 'number', required: true, attrs: `min="${Number(v.km) || 0}"` },
-  { name: 'fuel', label: 'Combustible (octavos)', type: 'select', options: proOn() ? [['', 'Elegí…'], ...FUEL_OPTS] : FUEL_OPTS, required: true },
+  { name: 'fuel', label: 'Combustible (octavos)', type: 'select', options: [['', 'Elegí…'], ...FUEL_OPTS], required: true },
   ...panapassField('panapass', `Saldo de Panapass${v.panapass === null || v.panapass === undefined ? '' : ` (tiene ${num(v.panapass)})`}`),
 ];
 const auxSaveReading = (v, d) => {
@@ -837,11 +837,11 @@ async function auxTrip(r) {
          ...(v ? auxReadingFields(v) : []),
          { name: 'note', label: 'Notas (queda en el historial de la reserva)', type: 'textarea', full: true, rows: 2 },
        ],
-       // Con las funciones a pedido el km y el combustible no vienen puestos: los carga quien tiene el auto delante.
-       { stage: r.status === 'en_curso' ? 'devolucion' : 'entrega', ...(v || {}), ...(proOn() ? { km: '', fuel: '' } : {}) },
+       // El km y el combustible no vienen puestos: los carga quien tiene el auto delante.
+       { stage: r.status === 'en_curso' ? 'devolucion' : 'entrega', ...(v || {}), km: '', fuel: '' },
      )}`,
     async (d, form) => {
-      if (proOn() && !form.fotos.files.length && !files.some((f) => f.stage === d.stage && f.mime.startsWith('image/'))) {
+      if (!form.fotos.files.length && !files.some((f) => f.stage === d.stage && f.mime.startsWith('image/'))) {
         toast('Faltan las fotos del auto: sacá al menos una', true);
         return false;
       }
@@ -2195,11 +2195,6 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           if (!(await photosFirst(r, 'entrega', form))) return false;
           await POST(`/reservations/${r.id}/checkout`, { ...d, vehicle_id: Number(d.vehicle_id), out_fuel: Number(d.out_fuel) });
           toast('Vehículo entregado. Contrato abierto.');
-          try {
-            if (!proOn()) await uploadFiles(r.id, 'entrega', form.fotos.files);
-          } catch (e) {
-            toast(`La entrega quedó registrada, pero falló una foto: ${e.message}. Podés subirla desde la reserva.`, true);
-          }
           reload();
         },
       );
@@ -2242,11 +2237,6 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           if (!(await photosFirst(r, 'entrega', form))) return false;
           await POST(`/reservations/${r.id}/pre-delivery`, { ...d, vehicle_id: Number(d.vehicle_id), out_fuel: Number(d.out_fuel), terms: contractTermsList(r) });
           toast('Pre-entrega guardada. El alquiler arranca cuando el cliente firme.');
-          try {
-            if (!proOn()) await uploadFiles(r.id, 'entrega', form.fotos.files);
-          } catch (e) {
-            toast(`La pre-entrega quedó guardada, pero falló una foto: ${e.message}. Podés subirla desde la reserva.`, true);
-          }
           location.hash = `#/reservas/${r.id}?accion=express`;
         },
       );
@@ -2281,11 +2271,6 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           if (!(await photosFirst(r, 'devolucion', form))) return false;
           await POST(`/reservations/${r.id}/checkin`, { ...d, return_branch_id: Number(d.return_branch_id), in_fuel: Number(d.in_fuel) });
           toast('Devolución registrada');
-          try {
-            if (!proOn()) await uploadFiles(r.id, 'devolucion', form.fotos.files);
-          } catch (e) {
-            toast(`La devolución quedó registrada, pero falló una foto: ${e.message}. Podés subirla desde la reserva.`, true);
-          }
           // Si quedó saldo (km o combustible de más, daños), se abre el cobro directo.
           location.hash = `#/reservas/${r.id}?accion=pay`;
         },
@@ -2904,11 +2889,10 @@ async function shrinkImage(file, max = 1600, quality = 0.75) {
 }
 
 /**
- * Con las funciones a pedido no se entrega ni se recibe un auto sin fotos: las elegidas se suben antes de guardar,
+ * No se entrega ni se recibe un auto sin fotos: las elegidas se suben antes de guardar,
  * y si no hay ninguna (ni subida antes por el auxiliar) se avisa y el formulario queda abierto.
  */
 async function photosFirst(r, stage, form) {
-  if (!proOn()) return true;
   const have = (r.files || []).some((f) => f.stage === stage && f.mime.startsWith('image/'));
   if (!have && !form.fotos.files.length) {
     toast('Faltan las fotos del auto: sacá al menos una', true);

@@ -46,6 +46,7 @@ test('recargo por atraso: cuenta los días desde que vence cada período hasta q
 /** Empresa en modo choferes con un auto de 100.000 por semana, 1.000 km por semana y el km extra a 50. */
 function fleet(mode = 'choferes') {
   const db = openDb(':memory:');
+  require('./con-fotos')(db);
   setSetting(db, 'business_mode', mode);
   setSetting(db, 'rent_period', 'semana');
   setSetting(db, 'late_fee_per_day', '2000');

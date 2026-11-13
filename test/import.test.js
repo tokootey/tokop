@@ -51,6 +51,7 @@ async function importAuto(kind, text, options) {
 
 test.before(async () => {
   db = openDb(':memory:');
+  require('./con-fotos')(db);
   ensureAdmin(db);
   seed(db);
   uploadsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'imp-'));

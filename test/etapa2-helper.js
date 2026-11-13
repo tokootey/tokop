@@ -14,6 +14,7 @@ const at = (days, hour = 10) => {
 
 async function start() {
   const db = openDb(':memory:');
+  require('./con-fotos')(db);
   ensureAdmin(db);
   db.exec(`INSERT INTO branches (id, code, name) VALUES (1, 'TOC', 'Tocumen'), (2, 'CEN', 'Centro');
     INSERT INTO categories (id, code, name, daily_rate, km_per_day, extra_km_rate) VALUES (1, 'ECO', 'Económico', 50, 100, 2), (2, 'SUV', 'Camioneta', 90, 100, 2);

@@ -520,15 +520,11 @@ function checkout(db, id, input, userId) {
 }
 
 /**
- * Agencias con las funciones a pedido: quien entrega o recibe el auto carga el km y el combustible, y tiene que haber
- * al menos una foto de esa etapa (subida recién o antes por el auxiliar). Se pide en las rutas del panel, no en `checkout`,
- * que también corre solo cuando el cliente firma una pre-entrega.
+ * No se entrega ni se recibe un auto sin al menos una foto de esa etapa (subida recién o antes por el auxiliar).
+ * Se pide en las rutas del panel, no en `checkout`, que también corre solo cuando el cliente firma una pre-entrega.
+ * El km y el combustible los exige el formulario.
  */
-function requireHandover(db, id, stage, input) {
-  if (!proOn(db)) return;
-  const blank = (v) => v === undefined || v === null || v === '';
-  const [km, fuel] = stage === 'entrega' ? ['out_km', 'out_fuel'] : ['in_km', 'in_fuel'];
-  if (blank((input || {})[km]) || blank((input || {})[fuel])) fail(400, 'Cargá el kilometraje y el combustible del auto');
+function requireHandover(db, id, stage) {
   const { n } = db.prepare("SELECT COUNT(*) AS n FROM reservation_files WHERE reservation_id = ? AND stage = ? AND mime LIKE 'image/%'").get(Number(id), stage);
   if (!n) fail(400, `Faltan las fotos del auto: subí al menos una de la ${stage === 'entrega' ? 'entrega' : 'devolución'}`);
 }

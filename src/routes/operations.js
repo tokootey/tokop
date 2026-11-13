@@ -187,9 +187,9 @@ function operationsRoutes(db) {
     R.log(db, r.id, req.user.id, 'whatsapp_enviado', String(req.body.text).slice(0, 300));
     res.json(sent);
   });
-  // Antes de entregar o recibir: km, combustible y fotos (ver R.requireHandover).
+  // Antes de entregar o recibir: fotos del auto (ver R.requireHandover).
   const handover = (stage) => (req, res, next) => {
-    R.requireHandover(db, req.params.id, stage, req.body);
+    R.requireHandover(db, req.params.id, stage);
     next();
   };
   router.post('/reservations/:id/pre-delivery', handover('entrega'), (req, res) => res.json(delivery.preDeliver(db, req.params.id, req.body || {}, getSettings(db), req.user.id)));
