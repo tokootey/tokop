@@ -188,7 +188,7 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
         if (inquiry.has(c.code)) return { code: c.code, name: c.name, description: c.description || '', seats: c.seats, transmission: c.transmission, inquiry_only: true, total: Infinity };
         const q = computeQuote(db, { ...range, category_id: c.id });
         // Al público sólo se le muestra lo necesario: nunca cuántos autos quedan exactamente.
-        return { code: c.code, name: c.name, description: c.description || '', seats: c.seats, transmission: c.transmission, days: q.days, total: q.total, deposit: q.deposit, few_left: c.available <= 1, high_demand: q.dynamic_pct > 0, promo: q.promo, one_way_fee: q.one_way_fee, after_hours_fee: q.after_hours_fee };
+        return { code: c.code, name: c.name, description: c.description || '', seats: c.seats, transmission: c.transmission, days: q.days, total: q.total, deposit: q.deposit, few_left: c.available <= 1, high_demand: q.dynamic_pct > 0, promo: q.promo, one_way_fee: q.one_way_fee, after_hours_fee: q.after_hours_fee, branch_fee: q.branch_fee, extra_hours_fee: q.extra_hours_fee };
       })
       .sort((a, b2) => a.total - b2.total)
       .map((o) => (o.inquiry_only ? { ...o, total: null } : o));

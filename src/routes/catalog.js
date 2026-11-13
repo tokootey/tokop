@@ -145,13 +145,13 @@ function catalogRoutes(db, { uploadsDir } = {}) {
 
   router.use(
     '/branches',
-    crud(db, { table: 'branches', fields: ['code', 'name', 'address', 'phone', 'aliases', 'active', 'pickup_from', 'late_after', 'late_pickup_from', 'express_24h'], required: ['code', 'name'], order: 'name', adminWrite: true }),
+    crud(db, { table: 'branches', fields: ['code', 'name', 'address', 'phone', 'aliases', 'active', 'pickup_from', 'late_after', 'late_pickup_from', 'express_24h', 'fee', 'fee_free_days'], required: ['code', 'name'], order: 'name', adminWrite: true }),
   );
   router.use(
     '/categories',
     crud(db, {
       table: 'categories',
-      fields: ['code', 'name', 'description', 'daily_rate', 'weekly_rate', 'monthly_rate', 'deposit', 'km_per_day', 'km_per_period', 'rest_day_rate', 'extra_km_rate', 'seats', 'transmission', 'aliases', 'active'],
+      fields: ['code', 'name', 'description', 'daily_rate', 'weekly_rate', 'rate_6', 'rate_10', 'weekend_rate', 'holiday_rate', 'monthly_rate', 'deposit', 'km_per_day', 'km_per_period', 'rest_day_rate', 'extra_km_rate', 'seats', 'transmission', 'aliases', 'active'],
       required: ['code', 'name'],
       order: 'daily_rate',
       adminWrite: true,
@@ -256,7 +256,7 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     crud(db, {
       table: 'customers',
       fields: ['full_name', 'doc_type', 'doc_number', 'email', 'phone', 'address', 'birth_date', 'license_number', 'license_expiry', 'notes',
-        'license_class', 'work_apps', 'guarantor_name', 'guarantor_doc', 'guarantor_phone', 'guarantor_address', 'workplace', 'alt_contact'],
+        'license_class', 'work_apps', 'guarantor_name', 'guarantor_doc', 'guarantor_phone', 'guarantor_address', 'workplace', 'alt_contact', 'blocked_reason'],
       required: ['full_name'],
       order: 'full_name',
       search: ['full_name', 'doc_number', 'email', 'phone'],

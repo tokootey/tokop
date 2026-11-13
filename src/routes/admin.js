@@ -92,6 +92,7 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
     if (body.after_hours_fee !== undefined && !(Number(body.after_hours_fee) >= 0)) fail(400, 'El recargo fuera de hora tiene que ser un número positivo');
     for (const k of ['after_hours_from', 'after_hours_to']) if (body[k] !== undefined && !/^[0-9]{2}:[0-9]{2}$/.test(body[k])) fail(400, 'Cargá el horario fuera de hora como 20:00');
     for (const k of ['young_driver_age', 'young_driver_fee']) if (body[k] !== undefined && !(Number(body[k]) >= 0)) fail(400, 'La edad y el recargo por conductor menor tienen que ser números positivos');
+    for (const k of ['late_hour_fee', 'late_hour_max', 'km_limit_max_days']) if (body[k] !== undefined && body[k] !== null && !(Number(body[k]) >= 0)) fail(400, 'El precio de la hora de más, las horas y los días tienen que ser números positivos');
     for (const k of ['late_fee_per_day', 'late_grace_days']) if (body[k] !== undefined && !(Number(body[k]) >= 0)) fail(400, 'El recargo y la tolerancia tienen que ser números positivos');
     const hrs = (k) => (body[k] !== undefined ? Number(body[k]) : Number(getSettings(db)[k]));
     for (const k of ['refund_full_hours', 'refund_partial_hours', 'refund_partial_pct']) {

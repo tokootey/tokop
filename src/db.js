@@ -546,7 +546,12 @@ const DEFAULT_SETTINGS = {
   extra_pay_methods: '', // medios de pago propios de la agencia, uno por renglón: se suman a los del país al registrar un cobro
   late_fee_per_day: '0', // recargo por cada día de atraso en el pago
   late_grace_days: '0', // días de tolerancia antes de cobrar el recargo
-  holidays: '', // feriados con la tarifa de domingos de la categoría (cobro por día), DD/MM/AAAA separados por coma
+  holidays: '', // feriados, DD/MM/AAAA separados por coma: en choferes llevan la tarifa de domingos; en turismo, la de feriado si holiday_rates_on = '1' (ahí también valen rangos DD/MM/AAAA-DD/MM/AAAA)
+  weekend_rates_on: '0', // '1': retirando viernes, sábado o domingo por hasta 5 días se cobra la tarifa de fin de semana de la categoría
+  holiday_rates_on: '0', // '1': los días feriados se cobran con la tarifa de feriado de la categoría
+  late_hour_fee: '0', // precio de cada hora pasada de la tolerancia (0 = pasada la tolerancia se cobra un día más)
+  late_hour_max: '4', // hasta cuántas horas se cobran por hora; con más, es un día entero
+  km_limit_max_days: '0', // el límite de km rige en alquileres de hasta estos días (0 = siempre)
   contract_terms_choferes: CONTRACT_TERMS_CHOFERES,
   // Integración con cotizador
   api_key: '',
@@ -662,6 +667,8 @@ function migrate(db) {
   }
   // Contrato: titular distinto del conductor (JSON) y conductores adicionales (JSON, hasta 5); lugar de trabajo y contacto alternativo del cliente.
   for (const col of ['holder', 'drivers']) if (!has('reservations', col)) db.exec(`ALTER TABLE reservations ADD COLUMN ${col} TEXT`);
+  // Cliente bloqueado: con motivo cargado no se le toman reservas (vacío = no está bloqueado).
+  if (!has('customers', 'blocked_reason')) db.exec('ALTER TABLE customers ADD COLUMN blocked_reason TEXT');
   for (const col of ['workplace', 'alt_contact']) if (!has('customers', col)) db.exec(`ALTER TABLE customers ADD COLUMN ${col} TEXT`);
   if (!has('payments', 'notes')) db.exec('ALTER TABLE payments ADD COLUMN notes TEXT');
   // Sucursal donde se cobró (caja diaria). En los pagos viejos queda vacía: cuenta la sucursal de retiro.
@@ -674,6 +681,10 @@ function migrate(db) {
   }
   // Autos que en la web sólo se consultan por WhatsApp (la agencia quiere escuchar ofertas): no se reservan ni se pagan online.
   if (!has('vehicles', 'web_inquiry')) db.exec('ALTER TABLE vehicles ADD COLUMN web_inquiry INTEGER NOT NULL DEFAULT 0');
+  // Tarifas por tramo de días (6 a 9, 10 o más), de fin de semana y de feriado; recargo por entregar o devolver en una sucursal (gratis desde N días).
+  for (const col of ['rate_6', 'rate_10', 'weekend_rate', 'holiday_rate']) if (!has('categories', col)) db.exec(`ALTER TABLE categories ADD COLUMN ${col} REAL NOT NULL DEFAULT 0`);
+  if (!has('branches', 'fee')) db.exec('ALTER TABLE branches ADD COLUMN fee REAL NOT NULL DEFAULT 0');
+  if (!has('branches', 'fee_free_days')) db.exec('ALTER TABLE branches ADD COLUMN fee_free_days INTEGER NOT NULL DEFAULT 0');
   // Horario de retiro que acepta el cotizador público en cada sucursal (vacío = sin límite).
   for (const col of ['pickup_from', 'late_after', 'late_pickup_from']) {
     if (!has('branches', col)) db.exec(`ALTER TABLE branches ADD COLUMN ${col} TEXT`);

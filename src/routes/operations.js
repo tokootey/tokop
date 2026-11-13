@@ -202,6 +202,7 @@ function operationsRoutes(db) {
     res.json(R.getReservation(db, req.params.id));
   });
   router.post('/reservations/:id/parties', (req, res) => res.json(R.setParties(db, req.params.id, req.body || {}, req.user.id)));
+  router.post('/reservations/:id/note', (req, res) => res.json(R.addNote(db, req.params.id, req.body, req.user.id)));
   router.post('/reservations/:id/extend', (req, res) => res.json(R.extendReservation(db, req.params.id, req.body || {}, req.user.id)));
   router.get('/reservations/:id/move-options', (req, res) => res.json(R.moveOptions(db, req.params.id)));
   router.post('/reservations/:id/swap', (req, res) => res.json(R.swapVehicles(db, req.params.id, req.body.reservation_id, req.user.id)));

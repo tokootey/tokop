@@ -15,6 +15,7 @@ const ALLOWED = [
   ['PUT', /^\/vehicles\/\d+$/],
   ['GET', /^\/reservations\/\d+\/files$/],
   ['POST', /^\/reservations\/\d+\/files$/],
+  ['POST', /^\/reservations\/\d+\/note$/],
   ['GET', /^\/files\/\d+$/],
 ];
 const PHOTO_STAGES = ['entrega', 'devolucion'];
@@ -24,7 +25,7 @@ const VEHICLE_FIELDS = ['branch_id', 'km', 'fuel', 'panapass'];
 const MONEY = new Set([
   'total', 'paid', 'pricing', 'deposit', 'discount_pct', 'discount_amount', 'final_total', 'charges', 'balance', 'payments', 'amount', 'cost',
   'month_revenue', 'owing', 'daily_rate', 'weekly_rate', 'monthly_rate', 'rest_day_rate', 'period_rate', 'extra_km_rate', 'price', 'max_price',
-  'deductible', 'insurance_cost',
+  'deductible', 'insurance_cost', 'rate_6', 'rate_10', 'weekend_rate', 'holiday_rate', 'fee',
 ]);
 const strip = (v) =>
   Array.isArray(v) ? v.map(strip) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([k]) => !MONEY.has(k)).map(([k, x]) => [k, strip(x)])) : v;
@@ -35,7 +36,7 @@ function auxiliarGuard(db) {
     const deny = () => next(new HttpError(403, 'Tu usuario no tiene permiso para eso'));
     if (!ALLOWED.some(([method, path]) => method === req.method && path.test(req.path))) return deny();
     if (req.method === 'PUT') req.body = pick(req.body, VEHICLE_FIELDS);
-    if (req.method === 'POST' && !PHOTO_STAGES.includes(req.query.stage)) return deny();
+    if (req.method === 'POST' && /\/files$/.test(req.path) && !PHOTO_STAGES.includes(req.query.stage)) return deny();
     const file = req.path.match(/^\/files\/(\d+)$/);
     if (file && !PHOTO_STAGES.includes((db.prepare('SELECT stage FROM reservation_files WHERE id = ?').get(Number(file[1])) || {}).stage)) return deny();
     const listing = /\/files$/.test(req.path) && req.method === 'GET';

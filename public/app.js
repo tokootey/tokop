@@ -835,12 +835,14 @@ async function auxTrip(r) {
          { name: 'stage', label: 'Las fotos nuevas son de', type: 'select', options: [['entrega', 'La entrega'], ['devolucion', 'La devolución']], required: true },
          { name: 'fotos', label: 'Fotos del auto (frente, laterales, cola, interior, tablero con km y combustible)', type: 'photos' },
          ...(v ? auxReadingFields(v) : []),
+         { name: 'note', label: 'Notas (queda en el historial de la reserva)', type: 'textarea', full: true, rows: 2 },
        ],
        { stage: r.status === 'en_curso' ? 'devolucion' : 'entrega', ...(v || {}) },
      )}`,
     async (d, form) => {
       if (v) await auxSaveReading(v, d);
       await uploadFiles(r.id, d.stage, form.fotos.files);
+      if (String(d.note || '').trim()) await POST(`/reservations/${r.id}/note`, { note: `${STAGE_LABEL[d.stage]}: ${String(d.note).trim()}` });
       toast('Guardado');
       route();
     },
@@ -1886,6 +1888,8 @@ function breakdownHtml(q) {
     ${q.one_way_fee ? row('Devolución en otra sucursal', money(q.one_way_fee)) : ''}
     ${q.young_driver_fee ? row(`Conductor menor de ${esc(q.young_driver_age)} años`, money(q.young_driver_fee)) : ''}
     ${q.after_hours_fee ? row('Fuera de hora', money(q.after_hours_fee)) : ''}
+    ${(q.branch_fees || []).map((b) => row(`Recargo ${esc(b.name)}`, money(b.amount))).join('')}
+    ${q.extra_hours_fee ? row(`Horas adicionales (${esc(q.extra_hours)})`, money(q.extra_hours_fee)) : ''}
     ${q.discount ? row(`Descuento${q.discount_pct ? ` ${q.discount_pct}%` : ''}`, '−' + money(q.discount)) : ''}
     ${q.tax_rate ? row(`${esc(taxName())} ${q.tax_rate}% ${q.tax_included ? '(incluido)' : ''}`, money(q.tax)) : ''}
     ${q.calculated_total !== undefined ? row('<span class="muted">Precio según tarifas del sistema</span>', `<span class="muted">${money(q.calculated_total)}</span>`) : ''}
@@ -2275,7 +2279,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         const p = await POST(`/reservations/${r.id}/checkin-preview`, d).catch((e) => ({ error: e.message }));
         if (!$('#ret-preview')) return; // la ventana se cerró mientras tanto
         if (p.error) return (box.innerHTML = `<p class="notice warn">${esc(p.error)}</p>`);
-        const alerts = [p.km_excess > 0 && `${num(p.km_excess)} km de más`, p.fuel_missing > 0 && `faltan ${p.fuel_missing}/8 de combustible`].filter(Boolean);
+        const alerts = [p.late_days > 0 && `${p.late_days} día${p.late_days === 1 ? '' : 's'} de más`, p.late_hours > 0 && `${p.late_hours} h de más`, p.km_excess > 0 && `${num(p.km_excess)} km de más`, p.fuel_missing > 0 && `faltan ${p.fuel_missing}/8 de combustible`].filter(Boolean);
         box.innerHTML = `<p><b>Recorrió ${num(p.km_driven)} km</b>${p.km_allowed === null ? '' : ` · incluidos ${num(p.km_allowed)}`}</p>
           ${alerts.length ? `<p class="notice warn">Atención: ${alerts.join(' y ')}.</p>` : ''}
           ${p.lines.length ? `<table class="breakdown"><tbody>${p.lines.map((l) => `<tr><td>${esc(l.concept)}</td><td class="right">${money(l.amount)}</td></tr>`).join('')}<tr class="total"><td>Cargos adicionales</td><td class="right">${money(p.total)}</td></tr></tbody></table>` : ''}`;
@@ -2657,6 +2661,8 @@ function voucherLines(r) {
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
     q.young_driver_fee ? [`Conductor menor de ${q.young_driver_age} años`, money(q.young_driver_fee)] : null,
     q.after_hours_fee ? ['Fuera de hora', money(q.after_hours_fee)] : null,
+    ...(q.branch_fees || []).map((b) => [`Recargo ${b.name}`, money(b.amount)]),
+    q.extra_hours_fee ? [`Horas adicionales (${q.extra_hours})`, money(q.extra_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct} %` : ''}`, `−${money(q.discount)}`] : null,
     q.tax_rate ? [`${taxName()} ${q.tax_rate} %${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
     ['Total', money(r.balance.due)],
@@ -2801,6 +2807,7 @@ const LOG_LABEL = {
   entregado: 'Auto entregado',
   devuelto: 'Auto devuelto',
   extendida: 'Alquiler extendido',
+  nota: 'Nota',
   titular_conductores: 'Titular y conductores',
   contrato_pendiente: 'Contrato pendiente de cierre',
   contrato_cerrado: 'Contrato cerrado',
@@ -3246,6 +3253,8 @@ async function printContract(r) {
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
     q.young_driver_fee ? [`Conductor menor de ${esc(q.young_driver_age)} años`, money(q.young_driver_fee)] : null,
     q.after_hours_fee ? ['Fuera de hora', money(q.after_hours_fee)] : null,
+    ...(q.branch_fees || []).map((b) => [`Recargo ${b.name}`, money(b.amount)]),
+    q.extra_hours_fee ? [`Horas adicionales (${q.extra_hours})`, money(q.extra_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${esc(q.discount_pct)}%` : ''}`, '−' + money(q.discount)] : null,
     q.tax_rate ? [`${esc(taxName())} ${esc(q.tax_rate)}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
   ].filter(Boolean);
@@ -3407,6 +3416,8 @@ ${
 let planningFrom = null;
 // El calendario también se puede ver como listado; se recuerda en este navegador.
 const PLAN_VIEW_KEY = 'floty-calendario';
+const PLAN_LIST_STATES = [['pendiente', 'Pendientes'], ['confirmada', 'Confirmadas'], ['en_curso', 'En contrato'], ['finalizada', 'Cerradas'], ['', 'Todas']];
+let planListStatus = 'confirmada';
 const planAsList = () => {
   try {
     return localStorage.getItem(PLAN_VIEW_KEY) === 'lista';
@@ -3476,8 +3487,9 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
 
   const asList = planAsList();
   const plateOf = Object.fromEntries(p.vehicles.map((v) => [v.id, v]));
-  // Listado: sólo las reservas confirmadas de esas dos semanas, una por renglón, en orden de salida.
-  const confirmed = p.reservations.filter((r) => r.status === 'confirmada');
+  // Listado: las reservas de esas dos semanas, una por renglón, en orden de salida. Arranca en las confirmadas; el estado elegido se recuerda mientras dure la sesión.
+  const listed = (st) => p.reservations.filter((r) => !st || r.status === st);
+  const confirmed = listed(planListStatus);
   const listHtml = () =>
     confirmed.length
       ? `<div class="table-wrap"><table><thead><tr><th>Salida</th><th>Devolución</th><th>Cliente</th><th>Auto</th><th>Estado</th><th>Referencia</th></tr></thead><tbody>${confirmed
@@ -3490,13 +3502,14 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
               <td>${badge(r.status)}</td><td class="nowrap">${esc(r.code)}</td></tr>`;
           })
           .join('')}</tbody></table></div>`
-      : '<div class="card muted">No hay reservas confirmadas en estas dos semanas.</div>';
+      : '<div class="card muted">No hay reservas de ese estado en estas dos semanas.</div>';
   view.innerHTML = `
     <div class="page-head"><h1>Calendario de autos</h1>
       <div class="actions"><button class="btn" data-plan-view>${asList ? 'Ver calendario' : 'Ver listado'}</button><button class="btn" data-nav="-7">◀ Semana</button><button class="btn" data-nav="0">Hoy</button><button class="btn" data-nav="7">Semana ▶</button></div></div>
     ${
       asList
-        ? `<p class="muted">Reservas del ${fmtD(fromStr)} al ${fmtD(localISO(addDays(planningFrom, days - 1)))}.</p>${listHtml()}`
+        ? `<p class="muted">Reservas del ${fmtD(fromStr)} al ${fmtD(localISO(addDays(planningFrom, days - 1)))}.</p>
+           <div class="chips" role="group" aria-label="Estado" style="margin-bottom:10px">${PLAN_LIST_STATES.map(([st, label]) => `<button type="button" class="chip${st === planListStatus ? ' on' : ''}" data-list-st="${st}" aria-pressed="${st === planListStatus}">${label} (${listed(st).length})</button>`).join('')}</div>${listHtml()}`
         : `<div class="legend" style="margin-bottom:10px">
       <span style="--c:#e0a100">Pendiente</span><span style="--c:#1f6feb">Confirmada</span><span style="--c:#1a9b5b">En curso</span>
       <span style="--c:#8b94a6">Finalizada</span><span style="--c:#d1373a">En el taller</span><span>· Tocá una barra para abrir la reserva · <b>Para reservar, tocá en la fila de un auto el día de retiro y después el de devolución (con el mouse también podés arrastrar).</b> <b>Con el mouse, arrastrá una barra para mover la reserva, o soltala sobre otra para intercambiar los autos.</b></span></div>
@@ -3505,6 +3518,12 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
       ${rows || '<p class="muted" style="padding:16px">No hay vehículos cargados.</p>'}
     </div>`
     }`;
+  $$('[data-list-st]', view).forEach((b) =>
+    b.addEventListener('click', () => {
+      planListStatus = b.dataset.listSt;
+      route();
+    }),
+  );
   $('[data-plan-view]', view).addEventListener('click', () => {
     try {
       localStorage.setItem(PLAN_VIEW_KEY, asList ? 'calendario' : 'lista');
@@ -4036,7 +4055,10 @@ on(
         const [hist, jobs] = await Promise.all([GET(`/reservations?vehicle_id=${v.id}&limit=50`), shopJobs()]);
         openModal(
           `Historial · ${v.plate}`,
-          `<h3>Reservas</h3>${historyTable(hist)}<h3>Taller</h3>${
+          `<h3>Reservas</h3>${historyTable(hist)}<h3>Fotos de los alquileres</h3><div id="hist-photos">${
+            hist.filter((r) => ['en_curso', 'finalizada'].includes(r.status)).map((r) => `<details data-photos="${r.id}"><summary><b>${esc(r.code)}</b> · ${fmtD(r.pickup_at)} → ${fmtD(r.return_at)} · ${esc(r.customer_name)}</summary><div class="muted">Cargando…</div></details>`).join('') ||
+            '<p class="muted">Todavía no tuvo alquileres.</p>'
+          }</div><h3>Taller</h3>${
             jobs.length
               ? `<table class="mini"><thead><tr><th>Fechas</th><th>Trabajo</th><th>Costo</th><th>Estado</th></tr></thead><tbody>${jobs
                   .map(
@@ -4048,6 +4070,32 @@ on(
           }`,
           null,
           { wide: true },
+        );
+        // Las fotos de cada alquiler se piden recién al abrirlo.
+        $$('#hist-photos [data-photos]').forEach((box) =>
+          box.addEventListener(
+            'toggle',
+            () =>
+              run(async () => {
+                const files = (await GET(`/reservations/${box.dataset.photos}/files`)).filter((f) => ['entrega', 'devolucion'].includes(f.stage));
+                const group = (stage) => {
+                  const list = files.filter((f) => f.stage === stage);
+                  return `<h4 style="margin:8px 0 4px">${STAGE_LABEL[stage]} <small class="muted">(${list.length})</small></h4><div class="thumbs">${
+                    list.map((f) => `<a class="thumb" target="_blank" rel="noopener" title="${esc(f.name)}">${f.mime.startsWith('image/') ? `<img alt="${esc(f.name)}" data-thumb="${f.id}"/>` : `<span data-thumb="${f.id}">PDF</span>`}</a>`).join('') || '<span class="muted">Sin fotos.</span>'
+                  }</div>`;
+                };
+                box.lastElementChild.outerHTML = `<div>${group('entrega')}${group('devolucion')}</div>`;
+                $$('[data-thumb]', box).forEach((el) =>
+                  fileUrl(Number(el.dataset.thumb))
+                    .then((u) => {
+                      if (el.tagName === 'IMG') el.src = u;
+                      el.closest('a').href = u;
+                    })
+                    .catch(() => {}),
+                );
+              }),
+            { once: true },
+          ),
         );
       } else if (e.target.closest('[data-shop]')) {
         const today = new Date().toISOString().slice(0, 10);
@@ -4159,14 +4207,14 @@ on(
     canWrite: () => true,
     canDelete: () => isAdmin(),
     columns: [
-      { label: 'Nombre', render: (r) => `<b>${esc(r.full_name)}</b>${r.anonymized_at ? ' <span class="badge">anonimizado</span>' : ''}` },
+      { label: 'Nombre', render: (r) => `<b>${esc(r.full_name)}</b>${r.anonymized_at ? ' <span class="badge">anonimizado</span>' : ''}${r.blocked_reason ? ` <span class="badge b-cancelada" title="${esc(r.blocked_reason)}">bloqueado</span>` : ''}` },
       { label: 'Documento', render: (r) => (r.doc_number ? `${esc(docTypeOf(r.doc_type))} ${esc(r.doc_number)}` : '') },
       { label: 'Teléfono', key: 'phone' },
       { label: 'Email', key: 'email' },
       { label: 'Licencia', render: (r) => (r.license_number ? `${esc(r.license_number)} <small class="muted">${fmtD(r.license_expiry)}</small>` : '<span class="badge b-pendiente">Falta</span>') },
     ],
     extraActions: (r) =>
-      `<button class="btn small" data-hist="${r.id}">Reservas</button> ${r.anonymized_at ? '' : `<button class="btn small" data-docs="${r.id}">Documentación</button> `}${isAdmin() && !r.anonymized_at ? `<button class="btn small" data-anon="${r.id}">Anonimizar</button> ` : ''}`,
+      `<button class="btn small" data-hist="${r.id}">Reservas</button> ${r.anonymized_at ? '' : `<button class="btn small" data-docs="${r.id}">Documentación</button> <button class="btn small" data-block="${r.id}">${r.blocked_reason ? 'Desbloquear' : 'Bloquear'}</button> `}${isAdmin() && !r.anonymized_at ? `<button class="btn small" data-anon="${r.id}">Anonimizar</button> ` : ''}`,
     nav: (tr, r) => {
       const b = tr.querySelector('[data-hist]');
       if (b)
@@ -4175,6 +4223,30 @@ on(
           openModal(`Reservas de ${r.full_name}`, historyTable(rows));
         });
       tr.querySelector('[data-docs]')?.addEventListener('click', () => openDocuments(r.id, r.full_name));
+      tr.querySelector('[data-block]')?.addEventListener('click', () =>
+        r.blocked_reason
+          ? openModal(
+              `Desbloquear a ${r.full_name}`,
+              `<p>Está bloqueado por: <b>${esc(r.blocked_reason)}</b></p><p>Al desbloquearlo vuelve a poder reservar.</p>
+               <form><div class="actions"><button class="btn primary" type="submit">Desbloquear</button><button class="btn" type="button" data-close>Cancelar</button></div></form>`,
+              async () => {
+                await PUT(`/customers/${r.id}`, { blocked_reason: '' });
+                toast('Cliente desbloqueado');
+                route();
+              },
+            )
+          : openModal(
+              `Bloquear a ${r.full_name}`,
+              formHtml([{ name: 'blocked_reason', label: 'Motivo (lo ve solo la agencia)', type: 'textarea', full: true, rows: 2, required: true }], {}, 'Bloquear') +
+                '<p class="muted">No va a poder reservar por el link ni desde el sistema. Sus reservas ya hechas no cambian.</p>',
+              async (d) => {
+                if (!String(d.blocked_reason || '').trim()) return toast('Escribí el motivo');
+                await PUT(`/customers/${r.id}`, { blocked_reason: String(d.blocked_reason).trim().slice(0, 300) });
+                toast('Cliente bloqueado');
+                route();
+              },
+            ),
+      );
     },
     onEdit: (r) => {
       if (!r.anonymized_at) docsButton(r);
@@ -4221,6 +4293,9 @@ const EXPENSE_KINDS = [
   ['seguro', 'Seguro'],
   ['patente', 'Patente e impuestos'],
   ['lavado', 'Lavado'],
+  ['peajes', 'Peajes / Panapass'],
+  ['estacionamiento', 'Estacionamiento'],
+  ['legales', 'Gastos legales'],
   ['otro', 'Otro'],
 ];
 let expenseVehicles = [];
@@ -4283,6 +4358,12 @@ async function surchargesTab(box) {
       { name: 'one_way_fee', label: 'Recargo por devolver en otro lugar', type: 'number', when: () => !choferesMode() },
       { name: 'fuel_charge_per_eighth', label: 'Cargo por cada 1/8 de combustible faltante', type: 'number' },
       { name: 'grace_hours', label: 'Tolerancia (horas) antes de cobrar un día más', type: 'number' },
+      { name: 'late_hour_fee', label: 'Precio de cada hora de más, pasada la tolerancia (0 = se cobra un día)', type: 'number', attrs: 'min="0"', when: () => !choferesMode() },
+      { name: 'late_hour_max', label: 'Horas de más que se cobran por hora (con más, es un día entero)', type: 'number', attrs: 'min="0"', when: () => !choferesMode() },
+      { name: 'km_limit_max_days', label: 'El límite de km rige en alquileres de hasta (días, 0 = siempre)', type: 'number', attrs: 'min="0"', when: () => !choferesMode() },
+      { name: 'weekend_rates_on', label: 'Usar la tarifa de fin de semana (retirando viernes, sábado o domingo, hasta 5 días)', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'holiday_rates_on', label: 'Usar la tarifa de feriados (sólo en los días y temporadas de la lista)', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'holidays', label: 'Feriados y temporadas con tarifa de feriado: fechas (25/12/2026) o rangos (20/12/2026-5/1/2027), separados por coma', full: true, when: () => !choferesMode() },
     ],
     s,
   )}</div>`;
@@ -4328,6 +4409,10 @@ on(/^\/tarifas$/, async (view) => {
         { name: 'name', label: 'Nombre', required: true },
         { name: 'daily_rate', label: 'Tarifa diaria', type: 'number', default: 0 },
         { name: 'weekly_rate', label: 'Tarifa semanal (7+ días, opcional)', type: 'number', default: 0 },
+        { name: 'rate_6', label: 'Tarifa por día de 6 a 9 días (0 = no usar)', type: 'number', default: 0, when: () => !choferesMode() },
+        { name: 'rate_10', label: 'Tarifa por día desde 10 días (0 = no usar)', type: 'number', default: 0, when: () => !choferesMode() },
+        { name: 'weekend_rate', label: 'Tarifa por día de fin de semana (0 = no usar)', type: 'number', default: 0, when: () => !choferesMode() },
+        { name: 'holiday_rate', label: 'Tarifa por día feriado o de temporada alta (0 = no usar)', type: 'number', default: 0, when: () => !choferesMode() },
         { name: 'monthly_rate', label: 'Tarifa mensual (choferes)', type: 'number', default: 0, when: () => choferesMode() },
         { name: 'deposit', label: 'Garantía', type: 'number', default: 0 },
         { name: 'km_per_day', label: 'Km incluidos por día (0 = libres)', type: 'number', default: 0 },
@@ -4444,6 +4529,8 @@ on(/^\/tarifas$/, async (view) => {
         { name: 'pickup_from', label: 'Cotizador web: se retira desde las (vacío = sin límite)', type: 'time' },
         { name: 'late_after', label: 'Cotizador web: reservas hechas después de las', type: 'time' },
         { name: 'late_pickup_from', label: '…se retiran recién desde las', type: 'time' },
+        { name: 'fee', label: 'Recargo por entregar o devolver acá (una vez por alquiler)', type: 'number', default: 0 },
+        { name: 'fee_free_days', label: 'Ese recargo no se cobra desde (días de alquiler, 0 = se cobra siempre)', type: 'number', default: 0 },
         { name: 'express_24h', label: 'Sin personal fijo (por ejemplo el aeropuerto): las reservas del link con menos de 24 hs son express', type: 'checkbox', full: true },
       ],
       columns: [
@@ -6042,7 +6129,10 @@ async function bookingPage() {
   const summary = () => {
     const o = options.find((x) => x.code === pick);
     const fee = youngFee(o);
-    const late = o && o.after_hours_fee ? ` · ${L(`incluye ${money(o.after_hours_fee)} por fuera de hora`, `includes ${money(o.after_hours_fee)} after-hours surcharge`)}` : '';
+    const late =
+      (o && o.after_hours_fee ? ` · ${L(`incluye ${money(o.after_hours_fee)} por fuera de hora`, `includes ${money(o.after_hours_fee)} after-hours surcharge`)}` : '') +
+      (o && o.branch_fee ? ` · ${L(`incluye ${money(o.branch_fee)} por el lugar de entrega`, `includes ${money(o.branch_fee)} location surcharge`)}` : '') +
+      (o && o.extra_hours_fee ? ` · ${L(`incluye ${money(o.extra_hours_fee)} por horas adicionales`, `includes ${money(o.extra_hours_fee)} for extra hours`)}` : '');
     $('#bk-what', form).textContent = o ? `${o.name} · ${o.days} ${dayWord(o.days)}${fee ? ` · ${L(`incluye ${money(fee)} por conductor menor de ${cfg.young_driver.age} años`, `includes ${money(fee)} for a driver under ${cfg.young_driver.age}`)}` : ''}${late}` : L('Elegí un auto', 'Choose a car');
     $('#bk-sum', form).textContent = o ? money(o.total + fee) : '';
   };
