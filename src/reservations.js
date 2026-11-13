@@ -519,6 +519,20 @@ function checkout(db, id, input, userId) {
   return updated;
 }
 
+/**
+ * Agencias con las funciones a pedido: quien entrega o recibe el auto carga el km y el combustible, y tiene que haber
+ * al menos una foto de esa etapa (subida recién o antes por el auxiliar). Se pide en las rutas del panel, no en `checkout`,
+ * que también corre solo cuando el cliente firma una pre-entrega.
+ */
+function requireHandover(db, id, stage, input) {
+  if (!proOn(db)) return;
+  const blank = (v) => v === undefined || v === null || v === '';
+  const [km, fuel] = stage === 'entrega' ? ['out_km', 'out_fuel'] : ['in_km', 'in_fuel'];
+  if (blank((input || {})[km]) || blank((input || {})[fuel])) fail(400, 'Cargá el kilometraje y el combustible del auto');
+  const { n } = db.prepare("SELECT COUNT(*) AS n FROM reservation_files WHERE reservation_id = ? AND stage = ? AND mime LIKE 'image/%'").get(Number(id), stage);
+  if (!n) fail(400, `Faltan las fotos del auto: subí al menos una de la ${stage === 'entrega' ? 'entrega' : 'devolución'}`);
+}
+
 /** Los datos de una devolución, revisados: reserva con contrato abierto, km no menor al de salida y combustible entre 0 y 8. */
 function checkinInput(db, id, input) {
   const r = getReservation(db, id);
@@ -647,8 +661,10 @@ function addPayment(db, id, input, userId) {
     );
   }
   log(db, r.id, userId, kind, `${input.method || 'efectivo'} ${round2(amount)}`);
-  const updated = getReservation(db, r.id);
+  let updated = getReservation(db, r.id);
   emit(db, 'reservation.payment', publicView(updated));
+  // Reserva pendiente que queda paga entera: se confirma sola. Una seña o la garantía no alcanzan.
+  if (updated.status === 'pendiente' && kind === 'pago' && updated.balance.pending <= 0.005) updated = changeStatus(db, r.id, 'confirmada', userId, 'pago completo');
   return updated;
 }
 
@@ -689,6 +705,7 @@ module.exports = {
   extendReservation,
   addNote,
   checkoutCheck,
+  requireHandover,
   checkout,
   checkin,
   checkinPreview,

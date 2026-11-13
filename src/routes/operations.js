@@ -187,7 +187,12 @@ function operationsRoutes(db) {
     R.log(db, r.id, req.user.id, 'whatsapp_enviado', String(req.body.text).slice(0, 300));
     res.json(sent);
   });
-  router.post('/reservations/:id/pre-delivery', (req, res) => res.json(delivery.preDeliver(db, req.params.id, req.body || {}, getSettings(db), req.user.id)));
+  // Antes de entregar o recibir: km, combustible y fotos (ver R.requireHandover).
+  const handover = (stage) => (req, res, next) => {
+    R.requireHandover(db, req.params.id, stage, req.body);
+    next();
+  };
+  router.post('/reservations/:id/pre-delivery', handover('entrega'), (req, res) => res.json(delivery.preDeliver(db, req.params.id, req.body || {}, getSettings(db), req.user.id)));
   router.post('/reservations/:id/left-place', (req, res) => res.json(delivery.setLeftPlace(db, req.params.id, (req.body || {}).place, req.user.id)));
   router.post('/reservations/:id/docs-link', (req, res) => res.json(delivery.docsLink(db, req.params.id)));
   router.post('/reservations/:id/return-link', (req, res) => res.json(delivery.returnLink(db, req.params.id)));
@@ -207,8 +212,8 @@ function operationsRoutes(db) {
   router.get('/reservations/:id/move-options', (req, res) => res.json(R.moveOptions(db, req.params.id)));
   router.post('/reservations/:id/swap', (req, res) => res.json(R.swapVehicles(db, req.params.id, req.body.reservation_id, req.user.id)));
   router.post('/reservations/:id/assign', (req, res) => res.json(R.assignVehicle(db, req.params.id, req.body.vehicle_id, req.user.id)));
-  router.post('/reservations/:id/checkout', (req, res) => res.json(R.checkout(db, req.params.id, req.body, req.user.id)));
-  router.post('/reservations/:id/checkin', (req, res) => res.json(R.checkin(db, req.params.id, req.body, req.user.id)));
+  router.post('/reservations/:id/checkout', handover('entrega'), (req, res) => res.json(R.checkout(db, req.params.id, req.body, req.user.id)));
+  router.post('/reservations/:id/checkin', handover('devolucion'), (req, res) => res.json(R.checkin(db, req.params.id, req.body, req.user.id)));
   router.post('/reservations/:id/checkin-preview', (req, res) => res.json(R.checkinPreview(db, req.params.id, req.body || {})));
   router.post('/reservations/:id/close-contract', (req, res) => res.json(R.closeContract(db, req.params.id, req.user.id)));
   router.post('/reservations/:id/payments', (req, res) => res.json(R.addPayment(db, req.params.id, req.body, req.user.id)));
