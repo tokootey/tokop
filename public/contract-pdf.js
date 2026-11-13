@@ -88,7 +88,7 @@ function buildContractPdf(r, photos = []) {
 
   let y = section('Cliente / conductor principal', 34);
   kv(y, [
-    ['Nombre y apellido', txt(r.customer_name), 'Documento', r.customer_doc ? `${txt(r.customer_doc_type || docTypes()[0])} ${r.customer_doc}` : ''],
+    ['Nombre y apellido', txt(r.customer_name), 'Documento', r.customer_doc ? `${txt(docTypeOf(r.customer_doc_type))} ${r.customer_doc}` : ''],
     ['Domicilio', txt(r.customer_address), 'Teléfono', txt(r.customer_phone)],
     // Agencias con el contrato nuevo: sin email ni número de licencia.
     ...(partiesOn()

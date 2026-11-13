@@ -1346,7 +1346,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       toast('Conductor menor: se suma el recargo y lleva el seguro de menor franquicia');
     }
     refresh(); // el precio puede sumar el recargo por conductor menor
-    $('#cust-selected').innerHTML = `✔ <b>${esc(c.full_name)}</b> · ${esc(c.doc_type || '')} ${esc(c.doc_number || '')} · ${esc(c.phone || '')} · ${esc(c.email || '')}
+    $('#cust-selected').innerHTML = `✔ <b>${esc(c.full_name)}</b> · ${c.doc_number ? esc(docTypeOf(c.doc_type)) : ''} ${esc(c.doc_number || '')} · ${esc(c.phone || '')} · ${esc(c.email || '')}
       ${c.doc_number && c.phone && c.address && c.birth_date && c.license_expiry ? '' : '<br><span class="error">Le faltan datos al cliente (se piden al entregar).</span>'}`;
   };
   let t;
@@ -2669,7 +2669,7 @@ function voucherLines(r) {
       title: 'Cliente y conductor',
       rows: [
         ['Nombre', r.customer_name],
-        r.customer_doc ? ['Documento', `${r.customer_doc_type || docTypes()[0]} ${r.customer_doc}`] : null,
+        r.customer_doc ? ['Documento', `${docTypeOf(r.customer_doc_type)} ${r.customer_doc}`] : null,
         r.customer_phone ? ['Teléfono', r.customer_phone] : null,
         r.customer_email ? ['Email', r.customer_email] : null,
         ['Conductor', r.customer_license ? `El titular · licencia ${r.customer_license}${r.customer_license_expiry ? ` (vence ${d(r.customer_license_expiry)})` : ''}` : 'El titular · traer la licencia al retirar'],
@@ -3291,7 +3291,7 @@ async function printContract(r) {
 <div class="grid">
   <div><h2>Cliente / conductor principal</h2><table>
     ${line('Nombre y apellido', esc(r.customer_name))}
-    ${line('Documento', r.customer_doc ? `${esc(r.customer_doc_type || docTypes()[0])} ${esc(r.customer_doc)}` : '')}
+    ${line('Documento', r.customer_doc ? `${esc(docTypeOf(r.customer_doc_type))} ${esc(r.customer_doc)}` : '')}
     ${line('Domicilio', esc(r.customer_address || ''))}${r.customer_workplace ? line('Lugar de trabajo', esc(r.customer_workplace)) : ''}${r.customer_alt_contact ? line('Contacto alternativo', esc(r.customer_alt_contact)) : ''}
     ${line('Teléfono', esc(r.customer_phone || ''))}
     ${partiesOn() ? '' : line('Email', esc(r.customer_email || ''))}
@@ -3791,6 +3791,8 @@ const panapassLine = (c) =>
 const panapassOn = () => state.settings.country === 'PA';
 const panapassField = (name, label) => (panapassOn() ? [{ name, label, type: 'number' }] : []);
 // Tipos de documento según el país: en Argentina DNI; en el resto, cédula, pasaporte o R.U.C. (el primero es el que viene elegido).
+// Fuera de Argentina no se ofrece DNI: uno guardado es el valor por omisión de la base, no una elección.
+const docTypeOf = (t) => (!t || (t === 'DNI' && state.settings.country !== 'AR') ? docTypes()[0] : t);
 const docTypes = () => (state.settings.country === 'AR' ? ['DNI', 'Pasaporte', 'CI', 'CUIT', 'RUT', 'Otro'] : ['Cédula', 'Pasaporte', 'R.U.C.', 'Otro']);
 const docWord = () => (state.settings.country === 'AR' ? 'DNI' : 'Documento');
 // Titular y conductores adicionales, lugar de trabajo y contacto alternativo: agencias con funciones en prueba, alquiler por días.
@@ -3987,7 +3989,7 @@ on(
         <dl class="vcard-facts">
           <div><dt>Km</dt><dd>${num(v.km || 0)}</dd></div>
           <div><dt>Combustible</dt><dd>${fuel(v.fuel) || '—'}</dd></div>
-          ${doc('Seguro', v.insurance_expiry)}${doc('VTV', v.vtv_expiry)}${v.registration_expiry ? doc('Cédula de circulación', v.registration_expiry) : ''}${v.service_due ? doc('Service', v.service_due) : ''}${choferesMode() && v.permit_expiry ? doc('Habilitación', v.permit_expiry) : ''}
+          ${doc('Seguro', v.insurance_expiry)}${doc(inspectionWord(), v.vtv_expiry)}${v.registration_expiry ? doc('Cédula de circulación', v.registration_expiry) : ''}${v.service_due ? doc('Service', v.service_due) : ''}${choferesMode() && v.permit_expiry ? doc('Habilitación', v.permit_expiry) : ''}
         </dl>
         <div class="vcard-actions">
           <button class="btn pill small" type="button" data-hist>${ICON.list}Historial</button>
@@ -4157,7 +4159,7 @@ on(
     canDelete: () => isAdmin(),
     columns: [
       { label: 'Nombre', render: (r) => `<b>${esc(r.full_name)}</b>${r.anonymized_at ? ' <span class="badge">anonimizado</span>' : ''}` },
-      { label: 'Documento', render: (r) => `${esc(r.doc_type || '')} ${esc(r.doc_number || '')}` },
+      { label: 'Documento', render: (r) => (r.doc_number ? `${esc(docTypeOf(r.doc_type))} ${esc(r.doc_number)}` : '') },
       { label: 'Teléfono', key: 'phone' },
       { label: 'Email', key: 'email' },
       { label: 'Licencia', render: (r) => (r.license_number ? `${esc(r.license_number)} <small class="muted">${fmtD(r.license_expiry)}</small>` : '<span class="badge b-pendiente">Falta</span>') },
