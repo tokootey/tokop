@@ -6406,8 +6406,11 @@ async function signPage() {
     bindPrint(page);
     return;
   }
+  // En la demo la firma es una simulación (scripts/demo/runtime.js).
+  const demoNote = window.__demo ? `<p class="notice warn">${L('Esto es una demostración: la firma no se guarda ni se envía a ningún lado.', 'This is a demo: the signature is not saved or sent anywhere.')}</p>` : '';
   const page = publicPage(`${head}
     <form class="card qr" id="sign-form">
+      ${demoNote}
       <label>${L('Nombre y apellido', 'Full name')}<input name="name" required maxlength="120" value="${esc(d.customer_name || '')}"/></label>
       <label>${L('Documento', 'ID or passport')}<input name="doc" required maxlength="40" value="${esc(d.customer_doc || '')}"/></label>
       <label class="check"><input type="checkbox" name="accepted" required/> ${L('Leí y acepto este contrato y sus condiciones', 'I have read and accept this agreement and its terms')}${seen}</label>
@@ -6439,7 +6442,7 @@ async function signPage() {
       const r = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(r.error || `Error ${res.status}`);
       form.insertAdjacentHTML('afterend', '<div id="sign-done"></div>');
-      $('#sign-done', page).innerHTML = signedHtml({ at: r.at, hash: r.hash, name: form.name.value, doc: form.doc.value, image: canvas.toDataURL('image/png') }, r.left_place);
+      $('#sign-done', page).innerHTML = demoNote + signedHtml({ at: r.at, hash: r.hash, name: form.name.value, doc: form.doc.value, image: canvas.toDataURL('image/png') }, r.left_place);
       form.remove();
       bindPrint(page);
       $('#sign-done', page).scrollIntoView(); // arriba está el contrato: el lugar del auto queda a la vista

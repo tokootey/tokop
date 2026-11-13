@@ -7,6 +7,7 @@
  */
 (function () {
   'use strict';
+  window.__demo = true;
   // Demo personalizada para una agencia (build-demo --perfil=<nombre>): sus datos se guardan aparte de la demo general.
   const PROFILE = __PROFILE__;
   // Demo general: al entrar se elige "alquiler turístico" o "autos para trabajo" (?tipo=trabajo); cada una guarda sus datos aparte.
@@ -47,6 +48,12 @@
   class Buffer extends Uint8Array {
     static from(v, enc) {
       if (typeof v === 'string') {
+        if (enc === 'base64' || enc === 'base64url') {
+          const bin = atob(v.replace(/-/g, '+').replace(/_/g, '/'));
+          const b = new Buffer(bin.length);
+          for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+          return b;
+        }
         if (enc === 'hex') {
           const b = new Buffer(v.length / 2);
           for (let i = 0; i < b.length; i++) b[i] = parseInt(v.substr(i * 2, 2), 16);
@@ -66,6 +73,10 @@
     }
     toString(enc) {
       if (enc === 'hex') return Array.from(this, (x) => x.toString(16).padStart(2, '0')).join('');
+      const bin = () => Array.from(this, (x) => String.fromCharCode(x)).join('');
+      if (enc === 'latin1' || enc === 'binary') return bin();
+      if (enc === 'base64') return btoa(bin());
+      if (enc === 'base64url') return btoa(bin()).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
       return new TextDecoder().decode(this);
     }
   }
@@ -358,6 +369,8 @@
       setSetting(db, 'demo_history', '1');
       scheduleSave();
     }
+    // Links creados antes de este arreglo: su código no sirve en una dirección web. Se descartan y se piden de nuevo.
+    db.prepare("DELETE FROM delivery_links WHERE token GLOB '*[^A-Za-z0-9_-]*'").run();
     // En la demo no se obliga a cambiar la contraseña de ejemplo.
     db.prepare('UPDATE users SET must_change_password = 0').run();
     app = createApp(db);
@@ -366,6 +379,10 @@
   async function handle(url, init) {
     await ready;
     const u = new URL(url, location.href);
+    // La firma del cliente es una simulación: no se guarda ni sale del navegador.
+    if ((init.method || 'GET').toUpperCase() === 'POST' && u.pathname.startsWith('/api/public/entrega/contrato/')) {
+      return new Response(JSON.stringify({ ok: true, demo: true, at: new Date().toISOString(), hash: 'simulacion-demo', left_place: null }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
     const headers = new Headers(init.headers || {});
     const method = (init.method || 'GET').toUpperCase();
     const ctype = (headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
