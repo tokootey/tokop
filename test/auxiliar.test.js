@@ -25,6 +25,10 @@ test('auxiliar de flota: ve lo de los autos sin precios y no entra a las reserva
     // Ve qué sale hoy, el calendario y los autos, pero ningún importe.
     const dash = await aux('GET', '/api/dashboard');
     assert.equal(dash.status, 200);
+    // Los pedidos sin confirmar le llegan con el teléfono del cliente (para contactarlo a la mañana) y sin importes.
+    const asked = app.reserve({ status: 'pendiente', vehicle_id: 2, name: 'Pedido de noche' });
+    const fresh = (await aux('GET', '/api/dashboard')).data.pending.find((x) => x.id === asked.id);
+    assert.deepEqual([fresh.customer_name, fresh.customer_phone, 'total' in fresh], ['Pedido de noche', '+507 6000 0000', false]);
     const trip = dash.data.pickups_today.find((x) => x.id === r.id);
     assert.deepEqual([trip.code, trip.vehicle_plate, trip.vehicle_id], [r.code, 'AA0001', 1]);
     const text = JSON.stringify([dash.data, (await aux('GET', '/api/planning')).data, (await aux('GET', '/api/categories')).data, (await aux('GET', '/api/vehicles')).data]);
