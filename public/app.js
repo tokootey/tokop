@@ -1859,7 +1859,7 @@ on(/^\/mas$/, async (view) => {
       ${tile('#/reservas/completa', 'Reserva con más opciones', 'Adicionales, descuento, vuelo, otro lugar de devolución', ICON.plus)}
       ${tile('#/clientes', 'Clientes', 'Datos, licencia y sus reservas', ICON.user)}
       ${tile('#/flota?estado=mantenimiento', 'Taller', 'Autos en el taller: mandar, sacar y su historial', ICON.wrench, 'warm')}
-      ${choferesMode() ? tile('#/gastos', 'Gastos de los autos', 'Taller, repuestos, combustible, seguro: lo que gasta cada auto', ICON.money, 'warm') : ''}
+      ${tile('#/gastos', 'Gastos de los autos', 'Peajes, combustible, lavado, repuestos: se cargan sin mandar el auto al taller', ICON.money, 'warm')}
     </div>
     <div class="mas-group">Para explicar Floty</div>
     <div class="mas">
