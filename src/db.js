@@ -644,6 +644,7 @@ function migrate(db) {
   // Seguros: un adicional con tipo "seguro" (se elige uno por reserva) y su franquicia, que carga cada agencia.
   if (!has('extras', 'kind')) db.exec("ALTER TABLE extras ADD COLUMN kind TEXT NOT NULL DEFAULT 'adicional'");
   if (!has('extras', 'deductible')) db.exec('ALTER TABLE extras ADD COLUMN deductible REAL NOT NULL DEFAULT 0');
+  if (!has('extras', 'one_day_price')) db.exec('ALTER TABLE extras ADD COLUMN one_day_price REAL NOT NULL DEFAULT 0');
   // Modo choferes: tarifa mensual y km por período en la categoría, datos del chofer y su garante, service cada X km.
   if (!has('categories', 'monthly_rate')) db.exec('ALTER TABLE categories ADD COLUMN monthly_rate REAL NOT NULL DEFAULT 0');
   if (!has('categories', 'km_per_period')) db.exec('ALTER TABLE categories ADD COLUMN km_per_period INTEGER NOT NULL DEFAULT 0');

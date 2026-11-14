@@ -557,6 +557,11 @@ test('recargo por conductor menor: se suma solo por la fecha de nacimiento, una 
   assert.deepEqual(r.extras.filter((x) => x.kind === 'seguro').map((x) => x.extra_id), best ? [best.id] : []);
   const r2 = (await call('POST', '/api/reservations', { ...trip, pickup_at: '2027-11-10T10:00', return_at: '2027-11-13T10:00', customer_id: adult.data.id })).data;
   assert.equal(r2.extras.filter((x) => x.kind === 'seguro').length, 0);
+  // Seguro con precio propio para el alquiler de 1 solo día: 60 por un día; desde dos días, el valor por día.
+  const full = (await call('POST', '/api/extras', { name: 'Full 1 día', price: 38.5, one_day_price: 60, charge_type: 'dia', kind: 'seguro' })).data;
+  const insLine = async (ret) => (await call('POST', '/api/quote', { ...trip, pickup_at: '2027-11-10T10:00', return_at: ret, extras: [{ extra_id: full.id }] })).data.extras.find((x) => x.extra_id === full.id).amount;
+  assert.deepEqual([await insLine('2027-11-11T10:00'), await insLine('2027-11-12T10:00')], [60, 77]);
+  await call('PUT', `/api/extras/${full.id}`, { active: 0 });
   // Recargo propio de la agencia: se suma al tildarlo y el cotizador público no lo ofrece.
   const fee = (await call('POST', '/api/extras', { name: 'Entrega nocturna', price: 300, charge_type: 'fijo', kind: 'recargo', active: 1 })).data;
   assert.equal((await call('POST', '/api/quote', { ...trip, extras: [{ extra_id: fee.id }] })).data.total, base + 300);

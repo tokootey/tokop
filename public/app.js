@@ -1460,11 +1460,11 @@ const hotelInputs = (h = {}, cls = 'qr-field') =>
 /* ---------- Seguros: los carga la agencia (Precios y lugares → Seguros); en cada reserva se elige uno ---------- */
 const insurances = () => (state.extras || []).filter((e) => e.kind === 'seguro' && e.active).sort((a, b) => a.price - b.price);
 const insurancePrice = (x, days) => {
-  const a = x.charge_type === 'fijo' ? x.price : x.price * days;
+  const a = x.charge_type === 'fijo' ? x.price : (days === 1 && x.one_day_price > 0 ? x.one_day_price : x.price) * days; // igual que src/pricing.js
   return x.max_price > 0 ? Math.min(a, x.max_price) : a;
 };
 const insuranceNote = (x) =>
-  x ? `${x.deductible ? `Franquicia: ${money(x.deductible)} (lo que paga el cliente si hay un daño)` : 'Sin franquicia: si hay un daño, el cliente no paga nada'}${x.price ? ` · ${money(x.price)}${x.charge_type === 'dia' ? ' por día' : ' por alquiler'}` : ' · incluido en la tarifa'}` : '';
+  x ? `${x.deductible ? `Franquicia: ${money(x.deductible)} (lo que paga el cliente si hay un daño)` : 'Sin franquicia: si hay un daño, el cliente no paga nada'}${x.price ? ` · ${money(x.price)}${x.charge_type === 'dia' ? ' por día' : ' por alquiler'}` : ' · incluido en la tarifa'}${x.one_day_price > 0 && x.charge_type !== 'fijo' ? ` · ${money(x.one_day_price)} si el alquiler es de 1 día` : ''}` : '';
 // Viene elegido el más barato (normalmente el incluido en la tarifa). Abajo, la franquicia del elegido.
 // Conductor menor: edad al día del retiro, igual que src/pricing.js. Vale sólo si la agencia cargó el recargo.
 const youngCfg = (s) => (Number(s.young_driver_fee) > 0 ? { age: Number(s.young_driver_age) || 21, fee: Number(s.young_driver_fee) } : null);
@@ -4506,6 +4506,7 @@ on(/^\/tarifas$/, async (view) => {
       fields: [
         { name: 'name', label: 'Nombre del seguro', required: true, full: true, attrs: 'placeholder="Ej.: Cobertura total (sin franquicia)"' },
         { name: 'price', label: 'Precio (0 = incluido en la tarifa)', type: 'number', default: 0 },
+        { name: 'one_day_price', label: 'Precio si el alquiler es de 1 día (0 = el mismo)', type: 'number', default: 0 },
         { name: 'charge_type', label: 'Se cobra', type: 'select', options: [['dia', 'Por día'], ['fijo', 'Por alquiler']], required: true, default: 'dia' },
         { name: 'deductible', label: 'Franquicia (0 = sin franquicia)', type: 'number', default: 0 },
         { name: 'max_price', label: 'Tope por alquiler (0 = sin tope)', type: 'number', default: 0 },

@@ -27,7 +27,7 @@ function publicRoutes(db, { publicQuery = '' } = {}) {
           'SELECT code, name, description, daily_rate, weekly_rate, deposit, km_per_day, extra_km_rate, seats, transmission FROM categories WHERE active = 1 ORDER BY daily_rate',
         )
         .all(),
-      extras: db.prepare('SELECT code, name, price, charge_type, max_price FROM extras WHERE active = 1 ORDER BY name').all(),
+      extras: db.prepare('SELECT code, name, price, charge_type, max_price, one_day_price FROM extras WHERE active = 1 ORDER BY name').all(),
     });
   });
 
