@@ -224,6 +224,28 @@ function platformRoutes(platform, company) {
     audit(company.db, req, 'agencia_ejemplo_precios', `empresa #${c.id}`);
     res.json({ scenarios, booking_url: c.address ? `${c.address}/reservar` : `/reservar?empresa=${encodeURIComponent(c.slug)}` });
   });
+  // Antes de que una agencia empiece a usar el sistema: borra las pruebas que se le indiquen (reservas con sus
+  // contratos y pagos, autos, categorías, clientes). Todo o nada: si algo sigue en uso, no se borra nada.
+  // shortcut: las fotos y archivos de esas reservas quedan en el disco; limpiarlos si llega a pesar.
+  router.post('/companies/:id/purge', (req, res) => {
+    const c = platform.get(req.params.id);
+    if (!c) fail(404, 'Empresa inexistente');
+    const deleted = {};
+    c.db.exec('BEGIN');
+    try {
+      for (const table of ['reservations', 'vehicles', 'categories', 'customers']) {
+        const del = c.db.prepare(`DELETE FROM ${table} WHERE id = ?`);
+        deleted[table] = [].concat((req.body || {})[table] || []).reduce((n, id) => n + del.run(Number(id)).changes, 0);
+      }
+      c.db.exec('COMMIT');
+    } catch (err) {
+      c.db.exec('ROLLBACK');
+      if (/FOREIGN KEY/i.test(err.message)) fail(409, 'No se borró nada: algo de la lista todavía tiene registros asociados');
+      throw err;
+    }
+    audit(company.db, req, 'agencia_pruebas_borradas', `empresa #${c.id}: ${JSON.stringify(deleted)}`);
+    res.json({ deleted });
+  });
   // Estadísticas de una agencia (las mismas que ve su administrador), sin entrar a su cuenta.
   router.get('/companies/:id/stats', (req, res) => {
     const c = platform.get(req.params.id);
