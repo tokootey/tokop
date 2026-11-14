@@ -105,8 +105,8 @@ test('sólo un administrador puede importar', async () => {
 
 test('flota: reconoce columnas, crea, actualiza y avisa lo que no entiende', async () => {
   const csv = [
-    'Dominio,Marca,Modelo,Año,Grupo,Base,Estado,Kilometraje,Nafta,Vto. seguro,VTV',
-    'AA 111 BB,Fiat,Cronos,2022,compacto,Aeropuerto,disponible,"45.300",3/4,30/06/2027,15/03/2027',
+    'Dominio,Marca,Modelo,Año,Grupo,Base,Estado,Kilometraje,Nafta,Vto. seguro,VTV,Panapass,Aseguradora,Póliza',
+    'AA 111 BB,Fiat,Cronos,2022,compacto,Aeropuerto,disponible,"45.300",3/4,30/06/2027,15/03/2027,507170,La Regional,10-30-2000817',
     'af123bc,Fiat,Mobi,2021,A,,en taller,61000,lleno,,',
     'AC 222 DD,Toyota,Hilux,1800,camion gigante,Marte,???,abc,,99/99/2027,',
     ',Ford,Ka,2015,A,,,,,,',
@@ -132,6 +132,7 @@ test('flota: reconoce columnas, crea, actualiza y avisa lo que no entiende', asy
   assert.equal(v.fuel, 6);
   assert.equal(v.category_id, 2);
   assert.equal(v.insurance_expiry, '2027-06-30');
+  assert.deepEqual([v.panapass_number, v.insurance_company, v.insurance_policy], ['507170', 'La Regional', '10-30-2000817']);
   assert.equal(db.prepare('SELECT name FROM branches WHERE id = ?').get(v.branch_id).name, 'Aeropuerto Ushuaia');
   // AF123BC ya existía: en modo "completar" no se pisa el estado ni el km.
   const old = db.prepare("SELECT * FROM vehicles WHERE plate = 'AF123BC'").get();
