@@ -131,6 +131,8 @@ const KINDS = {
     label: 'Flota',
     fields: [
       { key: 'plate', label: 'Patente', required: true, test: (k) => PLATE.test(k) },
+      { key: 'insurance_company', label: 'Aseguradora', test: (k) => /aseguradora|compania_?(de_)?seguro|insurer/.test(k) },
+      { key: 'insurance_policy', label: 'Nº de póliza', test: (k) => /^(n|nro|numero)?_?(de_)?poliza$|policy/.test(k) },
       { key: 'insurance_expiry', label: 'Vencimiento del seguro', date: true, test: (k) => /seguro|poliza|insurance/.test(k) },
       { key: 'vtv_expiry', label: 'Vencimiento VTV', date: true, test: (k) => /vtv|rto|itv|inspecc/.test(k) },
       { key: 'year', label: 'Año', test: (k) => /^(ano|anio|year)$|ano_?(de_)?fabric|^modelo_?ano$|^ano_?modelo$/.test(k) },
@@ -142,6 +144,7 @@ const KINDS = {
       { key: 'status', label: 'Estado', test: (k) => STATUS.test(k) },
       { key: 'km', label: 'Kilometraje', test: (k) => /^km|kilomet|odometro|mileage|kms/.test(k) },
       { key: 'fuel', label: 'Combustible', test: (k) => /combust|nafta|fuel|tanque/.test(k) },
+      { key: 'panapass_number', label: 'N° de Panapass', test: (k) => /panapass/.test(k) },
       { key: 'notes', label: 'Observaciones', test: (k) => NOTES.test(k) },
     ],
   },
@@ -179,7 +182,7 @@ const KINDS = {
 // Orden en que se muestran los campos en pantalla (el de arriba es el orden en que se reconocen).
 const DISPLAY_ORDER = {
   clientes: ['full_name', 'last_name', 'doc_type', 'doc_number', 'email', 'phone', 'address', 'birth_date', 'license_number', 'license_expiry', 'notes'],
-  flota: ['plate', 'brand', 'model', 'year', 'color', 'category', 'branch', 'status', 'km', 'fuel', 'insurance_expiry', 'vtv_expiry', 'notes'],
+  flota: ['plate', 'brand', 'model', 'year', 'color', 'category', 'branch', 'status', 'km', 'fuel', 'insurance_company', 'insurance_policy', 'insurance_expiry', 'vtv_expiry', 'panapass_number', 'notes'],
   reservas: ['external_id', 'customer_name', 'customer_last_name', 'customer_doc', 'customer_email', 'customer_phone', 'pickup_date', 'pickup_time', 'pickup_branch', 'return_date', 'return_time', 'return_branch', 'days', 'plate', 'category', 'status', 'total', 'paid', 'flight', 'notes'],
 };
 
@@ -380,7 +383,7 @@ function lookup(db, table, text) {
 }
 
 const CUSTOMER_FIELDS = ['full_name', 'doc_type', 'doc_number', 'email', 'phone', 'address', 'birth_date', 'license_number', 'license_expiry', 'notes'];
-const VEHICLE_FIELDS = ['plate', 'brand', 'model', 'year', 'color', 'category_id', 'branch_id', 'status', 'km', 'fuel', 'insurance_expiry', 'vtv_expiry', 'notes'];
+const VEHICLE_FIELDS = ['plate', 'brand', 'model', 'year', 'color', 'category_id', 'branch_id', 'status', 'km', 'fuel', 'insurance_company', 'insurance_policy', 'insurance_expiry', 'vtv_expiry', 'panapass_number', 'notes'];
 
 /**
  * Guarda un registro nuevo o existente según el modo:
@@ -473,7 +476,7 @@ function importVehicle(db, ctx, row) {
     .all()
     .find((v) => compactPlate(v.plate) === compactPlate(plate));
   const data = { plate: existing ? existing.plate : plate };
-  for (const k of ['brand', 'model', 'color']) data[k] = read.get(row, k) || undefined;
+  for (const k of ['brand', 'model', 'color', 'panapass_number', 'insurance_company', 'insurance_policy']) data[k] = read.get(row, k) || undefined;
   const catText = read.get(row, 'category');
   const cat = catText ? lookup(db, 'categories', catText) : null;
   if (cat) data.category_id = cat.id;

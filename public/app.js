@@ -5794,6 +5794,7 @@ on(/^\/importar$/, async (view) => {
       <h2>¿Qué es cada columna?</h2>
       <p class="muted">${esc(st.fileName)} · ${plural(a.total_rows, 'fila', 'filas')}. Revisá lo que reconoció el sistema y corregí lo que haga falta.</p>
       <div class="form-grid">${a.fields
+        .filter((f) => f.key !== 'panapass_number' || panapassOn())
         .map((f) => `<label>${esc(f.label)}${f.required ? ' *' : ''}<select data-map="${f.key}">${opt(a.mapping[f.key])}</select></label>`)
         .join('')}</div>
       <h3 style="margin-top:18px">Primeras filas</h3>
