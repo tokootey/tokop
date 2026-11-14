@@ -369,6 +369,26 @@ test('Panel de Floty administrativo: uso de cada agencia, prueba de su direcció
   assert.equal((await call(cookieA, 'POST', `/api/platform/companies/${companyB.id}/check`)).data.ok, null);
 });
 
+test('Panel de Floty: borrar las pruebas de una agencia antes de que empiece a usarla', async () => {
+  const made = await call(cookieA, 'POST', '/api/platform/companies', { name: 'Pruebas Panamá', country: 'PA', admin_name: 'Dueño', admin_email: 'pruebas@panama.test' });
+  const id = made.data.company.id;
+  assert.equal((await call(cookieA, 'POST', `/api/platform/companies/${id}/demand-example`)).status, 200);
+  const db = platform.get(id).db;
+  const ids = (t) => db.prepare(`SELECT id FROM ${t}`).all().map((r) => r.id);
+  const count = (t) => db.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n;
+  assert.ok(count('reservations') && count('vehicles'));
+  const url = `/api/platform/companies/${id}/purge`;
+  assert.equal((await call(cookieB, 'POST', url, { reservations: ids('reservations') })).status, 403);
+  // Un auto con reservas no se puede borrar: no se borra nada, ni siquiera la reserva que venía en la misma lista.
+  const half = await call(cookieA, 'POST', url, { reservations: ids('reservations').slice(0, 1), vehicles: ids('vehicles') });
+  assert.equal(half.status, 409);
+  assert.equal(count('reservations'), ids('reservations').length);
+  const all = await call(cookieA, 'POST', url, { reservations: ids('reservations'), vehicles: ids('vehicles'), categories: ids('categories'), customers: ids('customers') });
+  assert.equal(all.status, 200, JSON.stringify(all.data));
+  assert.deepEqual(['reservations', 'vehicles', 'categories', 'customers', 'payments', 'contracts'].map(count), [0, 0, 0, 0, 0, 0]);
+  assert.equal((await call(cookieA, 'DELETE', `/api/platform/companies/${id}`)).status, 200);
+});
+
 test('cada empresa guarda su base en su propio archivo, y el registro sobrevive a un reinicio', () => {
   assert.ok(fs.existsSync(path.join(dir, 'empresas.db')));
   assert.ok(fs.existsSync(path.join(dir, 'empresas', `${companyB.slug}.db`)));
