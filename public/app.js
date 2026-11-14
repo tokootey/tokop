@@ -670,6 +670,12 @@ on(/^\/panel$/, async (view) => {
     ${d.choferes ? choferesCards(d.choferes) : ''}
     ${/* Lo del día va primero; los primeros pasos de una empresa nueva, abajo. */ setupCard(d.setup)}
     ${
+      !d.choferes && isAdmin() && (d.alerts.rates || []).length
+        ? `<div class="card"><h2>Tarifas por completar <span class="count">${d.alerts.rates.length}</span></h2>
+            <div class="notice warn">${d.alerts.rates.map(esc).join('<br>')}</div><p class="muted"><a href="#/tarifas">Ir a Tarifas</a></p></div>`
+        : ''
+    }
+    ${
       d.alerts.documents.length
         ? `<div class="card"><h2>Vencimientos de los próximos 30 días <span class="count">${d.alerts.documents.length}</span></h2>
             <p class="muted">Seguro, ${inspectionWord()}, cédula de circulación y service de cada auto: avisa un mes antes.</p>
@@ -4423,6 +4429,7 @@ on(/^\/tarifas$/, async (view) => {
         { name: 'name', label: 'Nombre', required: true },
         { name: 'daily_rate', label: 'Tarifa diaria', type: 'number', default: 0 },
         { name: 'weekly_rate', label: 'Tarifa semanal (7+ días, opcional)', type: 'number', default: 0 },
+        { name: 'rate_1', label: 'Tarifa de 1 solo día (0 = no usar)', type: 'number', default: 0, when: () => !choferesMode() },
         { name: 'rate_6', label: 'Tarifa por día de 6 a 9 días (0 = no usar)', type: 'number', default: 0, when: () => !choferesMode() },
         { name: 'rate_10', label: 'Tarifa por día desde 10 días (0 = no usar)', type: 'number', default: 0, when: () => !choferesMode() },
         { name: 'weekend_rate', label: 'Tarifa por día de fin de semana (0 = no usar)', type: 'number', default: 0, when: () => !choferesMode() },

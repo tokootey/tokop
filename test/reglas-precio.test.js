@@ -30,12 +30,18 @@ test('tramos de días, fin de semana y feriados', async () => {
     assert.equal(quote(db, '2030-01-07T10:00', '2030-01-13T10:00').base, 270);
     assert.equal(quote(db, '2030-01-07T10:00', '2030-01-17T10:00').base, 400);
 
+    // Un solo día: con su tarifa cargada, sólo cambia el alquiler de 1 día.
+    db.exec('UPDATE categories SET rate_1 = 70 WHERE id = 1');
+    assert.equal(quote(db, '2030-01-07T10:00', '2030-01-08T10:00').base, 70);
+    assert.equal(quote(db, '2030-01-07T10:00', '2030-01-09T10:00').base, 100);
+
     // Fin de semana: apagado no cambia nada; prendido, retirando viernes por hasta 5 días.
     assert.equal(quote(db, '2030-01-04T10:00', '2030-01-06T10:00').base, 100);
     setSetting(db, 'weekend_rates_on', '1');
     assert.equal(quote(db, '2030-01-04T10:00', '2030-01-06T10:00').base, 120);
     assert.equal(quote(db, '2030-01-04T10:00', '2030-01-09T10:00').base, 300, 'viernes por 5 días: fin de semana');
     assert.equal(quote(db, '2030-01-07T10:00', '2030-01-09T10:00').base, 100, 'retirando lunes: tarifa normal');
+    assert.equal(quote(db, '2030-01-04T10:00', '2030-01-05T10:00').base, 60, '1 día retirando viernes: manda el fin de semana');
     assert.equal(quote(db, '2030-01-04T10:00', '2030-01-10T10:00').base, 270, 'desde 6 días manda el tramo');
 
     // Feriados: sólo el día feriado, y sólo con el interruptor prendido.
@@ -47,6 +53,11 @@ test('tramos de días, fin de semana y feriados', async () => {
     setSetting(db, 'holidays', '25/12/2029, 8/1/2030-9/1/2030, enero, 1/2/2030-');
     assert.equal(quote(db, '2030-01-07T10:00', '2030-01-10T10:00').base, 210);
     assert.equal(quote(db, '2030-01-14T10:00', '2030-01-17T10:00').base, 150);
+
+    // Hoy avisa de las categorías a las que les falta la tarifa de fin de semana (la 1 la tiene).
+    const rates = (await (await app.as('admin'))('GET', '/api/dashboard')).data.alerts.rates;
+    assert.ok(rates.length && rates.every((r) => /fin de semana/.test(r)), JSON.stringify(rates));
+    assert.equal(rates.length, db.prepare('SELECT COUNT(*) n FROM categories WHERE active = 1 AND weekend_rate = 0').get().n);
   } finally {
     app.close();
   }

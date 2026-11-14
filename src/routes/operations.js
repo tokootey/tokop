@@ -398,6 +398,12 @@ function operationsRoutes(db) {
       reminders: reminders.pending(db, now),
       quote_errors: db.prepare(`SELECT COUNT(*) AS n FROM quote_inbox WHERE status = 'error'`).get().n,
       alerts: {
+        // Categorías a las que les falta un precio: sin tarifa por día, o sin la de fin de semana cuando la agencia la usa.
+        rates: db
+          .prepare('SELECT name, daily_rate, weekend_rate FROM categories WHERE active = 1 ORDER BY name')
+          .all()
+          .map((c) => (!(c.daily_rate > 0) ? `${c.name}: sin tarifa por día` : getSettings(db).weekend_rates_on === '1' && !(c.weekend_rate > 0) ? `${c.name}: sin tarifa de fin de semana (cobra la normal)` : null))
+          .filter(Boolean),
         documents: db
           .prepare(
             `SELECT v.id, v.plate, v.insurance_expiry, v.vtv_expiry, v.permit_expiry, v.registration_expiry, v.service_due FROM vehicles v

@@ -682,7 +682,7 @@ function migrate(db) {
   // Autos que en la web sólo se consultan por WhatsApp (la agencia quiere escuchar ofertas): no se reservan ni se pagan online.
   if (!has('vehicles', 'web_inquiry')) db.exec('ALTER TABLE vehicles ADD COLUMN web_inquiry INTEGER NOT NULL DEFAULT 0');
   // Tarifas por tramo de días (6 a 9, 10 o más), de fin de semana y de feriado; recargo por entregar o devolver en una sucursal (gratis desde N días).
-  for (const col of ['rate_6', 'rate_10', 'weekend_rate', 'holiday_rate']) if (!has('categories', col)) db.exec(`ALTER TABLE categories ADD COLUMN ${col} REAL NOT NULL DEFAULT 0`);
+  for (const col of ['rate_1', 'rate_6', 'rate_10', 'weekend_rate', 'holiday_rate']) if (!has('categories', col)) db.exec(`ALTER TABLE categories ADD COLUMN ${col} REAL NOT NULL DEFAULT 0`);
   if (!has('branches', 'fee')) db.exec('ALTER TABLE branches ADD COLUMN fee REAL NOT NULL DEFAULT 0');
   if (!has('branches', 'fee_free_days')) db.exec('ALTER TABLE branches ADD COLUMN fee_free_days INTEGER NOT NULL DEFAULT 0');
   // Horario de retiro que acepta el cotizador público en cada sucursal (vacío = sin límite).
