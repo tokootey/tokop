@@ -112,6 +112,8 @@ function computeQuote(db, input) {
     else if (days >= 6 && category.rate_6 > 0) perDay = category.rate_6;
     // Fin de semana (lo prende la agencia): retirando viernes, sábado o domingo por hasta 5 días, todos los días van con esa tarifa.
     else if (settings.weekend_rates_on === '1' && category.weekend_rate > 0 && days <= 5 && [5, 6, 0].includes(parseLocal(input.pickup_at).getDay())) perDay = category.weekend_rate;
+    // Un solo día: la categoría puede tener su tarifa (si ese día no va con la de fin de semana).
+    else if (days === 1 && category.rate_1 > 0) perDay = category.rate_1;
   }
   // Feriados (lo prende la agencia): sólo esos días van con la tarifa de feriado.
   const holidays = !choferes && settings.holiday_rates_on === '1' && category.holiday_rate > 0 ? holidayTest(settings.holidays) : () => false;
