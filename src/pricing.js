@@ -68,12 +68,26 @@ function seasonMultiplier(seasons, dateStr) {
 /** Recargo por conductor menor: lo paga quien el día del retiro no llegó a la edad que cargó la agencia. Sin fecha de nacimiento no se cobra. */
 function youngDriverFee(db, settings, input) {
   const fee = Number(settings.young_driver_fee) || 0;
-  if (!(fee > 0) || !input.pickup_at) return 0;
+  return fee > 0 && driverIsYoung(db, settings, input) ? fee : 0;
+}
+
+/** El conductor no llegó a la edad que cargó la agencia el día del retiro. Sin fecha de nacimiento, no. */
+function driverIsYoung(db, settings, input) {
+  if (!input.pickup_at) return false;
   const birth = String(input.birth_date || (input.customer_id && (db.prepare('SELECT birth_date FROM customers WHERE id = ?').get(input.customer_id) || {}).birth_date) || '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(birth)) return 0;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(birth)) return false;
   const day = String(input.pickup_at).slice(0, 10);
   const age = Number(day.slice(0, 4)) - Number(birth.slice(0, 4)) - (day.slice(5) < birth.slice(5) ? 1 : 0);
-  return age < (Number(settings.young_driver_age) || 21) ? fee : 0;
+  return age < (Number(settings.young_driver_age) || 21);
+}
+
+/** "SUV:250, 7P:250": recargo del lugar distinto para algunas categorías (por código); las demás pagan el general. */
+function branchFeeFor(branch, code) {
+  const own = String(branch.fee_by_category || '')
+    .split(',')
+    .map((p) => p.split(':').map((x) => x.trim()))
+    .find(([c, v]) => c && c.toUpperCase() === String(code).toUpperCase() && v !== undefined && v !== '' && Number(v) >= 0);
+  return own ? Number(own[1]) : branch.fee;
 }
 
 /** Fuera de hora: si el retiro o la devolución cae entre after_hours_from y after_hours_to (por ejemplo de 20:00 a 23:00) se paga un recargo fijo, una sola vez. */
@@ -114,6 +128,8 @@ function computeQuote(db, input) {
     else if (settings.weekend_rates_on === '1' && category.weekend_rate > 0 && days <= 5 && [5, 6, 0].includes(parseLocal(input.pickup_at).getDay())) perDay = category.weekend_rate;
     // Un solo día: la categoría puede tener su tarifa (si ese día no va con la de fin de semana).
     else if (days === 1 && category.rate_1 > 0) perDay = category.rate_1;
+    // Conductor joven: si la categoría tiene su tarifa, van todos los días con esa.
+    if (category.young_rate > 0 && driverIsYoung(db, settings, input)) perDay = category.young_rate;
   }
   // Feriados (lo prende la agencia): sólo esos días van con la tarifa de feriado.
   const holidays = !choferes && settings.holiday_rates_on === '1' && category.holiday_rate > 0 ? holidayTest(settings.holidays) : () => false;
@@ -185,12 +201,15 @@ function computeQuote(db, input) {
   const branchFees = choferes
     ? []
     : [...new Set([input.pickup_branch_id, input.return_branch_id].filter(Boolean).map(Number))]
-        .map((id) => db.prepare('SELECT name, fee, fee_free_days FROM branches WHERE id = ?').get(id))
-        .filter((b) => b && b.fee > 0 && !(b.fee_free_days > 0 && days >= b.fee_free_days))
-        .map((b) => ({ name: b.name, amount: round2(b.fee) }));
+        .map((id) => db.prepare('SELECT name, fee, fee_free_days, fee_by_category FROM branches WHERE id = ?').get(id))
+        .filter((b) => b && !(b.fee_free_days > 0 && days >= b.fee_free_days))
+        .map((b) => ({ name: b.name, amount: round2(branchFeeFor(b, category.code)) }))
+        .filter((b) => b.amount > 0);
   const branchFee = branchFees.reduce((a, b) => a + b.amount, 0);
   const extraHoursFee = extraHours * (Number(settings.late_hour_fee) || 0);
-  const subtotal = base + seasonExtra + demandExtra - promoDiscount + extrasTotal + oneWay + young + afterHours + branchFee + extraHoursFee;
+  // Sin depósito: lo pide la reserva y la categoría tiene su recargo por día; el depósito queda en 0.
+  const noDeposit = !choferes && [true, 1, '1', 'true', 'on'].includes(input.no_deposit) && category.no_deposit_fee > 0 ? category.no_deposit_fee * days : 0;
+  const subtotal = base + seasonExtra + demandExtra - promoDiscount + extrasTotal + oneWay + young + afterHours + branchFee + extraHoursFee + noDeposit;
   const discountPct = Math.min(100, Math.max(0, Number(input.discount_pct) || 0));
   // El porcentaje y el monto fijo (por ejemplo 10.000 para redondear) se suman; nunca más que el subtotal.
   const discountAmount = Math.max(0, Number(input.discount_amount) || 0);
@@ -221,6 +240,7 @@ function computeQuote(db, input) {
     branch_fee: round2(branchFee),
     extra_hours: extraHours,
     extra_hours_fee: round2(extraHoursFee),
+    ...(noDeposit > 0 ? { no_deposit: true, no_deposit_fee: round2(noDeposit) } : {}),
     young_driver_age: young ? Number(settings.young_driver_age) || 21 : undefined,
     subtotal: round2(subtotal),
     discount_pct: discountPct,
@@ -230,7 +250,7 @@ function computeQuote(db, input) {
     tax_included: included,
     tax: round2(tax),
     total: round2(total),
-    deposit: round2(category.deposit),
+    deposit: noDeposit > 0 ? 0 : round2(category.deposit),
     km_included: choferes ? (category.km_per_period > 0 ? category.km_per_period * periods : null) : category.km_per_day > 0 && kmLimited(settings, days) ? category.km_per_day * days : null,
     ...(choferes ? { period, periods } : {}),
     currency: settings.currency,
@@ -253,7 +273,7 @@ function computeReturnCharges(db, reservation, contract, input, { byPeriods = fa
   if (kmExcess > 0 && category.extra_km_rate > 0) lines.push({ concept: `Km excedentes (${kmExcess} km)`, amount: round2(kmExcess * category.extra_km_rate) });
 
   const missingEighths = Math.max(0, Number(contract.out_fuel) - Number(input.in_fuel));
-  const perEighth = Number(settings.fuel_charge_per_eighth) || 0;
+  const perEighth = category.fuel_charge > 0 ? category.fuel_charge : Number(settings.fuel_charge_per_eighth) || 0;
   if (missingEighths > 0 && perEighth > 0) {
     lines.push({ concept: `Combustible faltante (${missingEighths}/8)`, amount: round2(missingEighths * perEighth) });
   }

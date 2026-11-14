@@ -32,7 +32,7 @@ function getReservation(db, id) {
               cat.code AS category_code, cat.name AS category_name, cat.km_per_day AS category_km_per_day, cat.extra_km_rate AS category_extra_km_rate, cat.km_per_period AS category_km_per_period,
               v.plate AS vehicle_plate, v.brand AS vehicle_brand, v.model AS vehicle_model, v.color AS vehicle_color, v.year AS vehicle_year,
               v.km AS vehicle_km, v.fuel AS vehicle_fuel, v.panapass AS vehicle_panapass,
-              ${placeSql('deliver', 'pb')} AS pickup_branch_name, ${placeSql('return', 'rb')} AS return_branch_name
+              ${placeSql('deliver', 'pb')} AS pickup_branch_name, ${placeSql('return', 'rb')} AS return_branch_name, pb.hours AS pickup_branch_hours
        FROM reservations r
        JOIN customers c ON c.id = r.customer_id
        JOIN categories cat ON cat.id = r.category_id
@@ -215,6 +215,7 @@ function updateReservation(db, id, input, userId) {
     return_at: current.return_at,
     discount_pct: current.discount_pct,
     discount_amount: current.discount_amount,
+    no_deposit: !!(current.pricing && current.pricing.no_deposit),
     flight: current.flight,
     notes: current.notes,
     extras: current.extras,

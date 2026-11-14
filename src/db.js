@@ -590,6 +590,7 @@ const DEFAULT_SETTINGS = {
   refund_full_hours: '72', // con esta anticipación o más se devuelve el 100 %
   refund_partial_hours: '24', // entre ésta y la anterior se devuelve refund_partial_pct
   refund_partial_pct: '50',
+  cancel_day_fee_hours: '0', // > 0: quien cancela con menos de esas horas paga 1 día de alquiler (reemplaza a los porcentajes)
   refund_terms:
     'La garantía se devuelve completa al cancelar. Las devoluciones se hacen por el mismo medio de pago dentro de los 10 días hábiles. Si la empresa cancela la reserva, se devuelve el 100 % de lo pagado.',
   refund_terms_en:
@@ -685,6 +686,9 @@ function migrate(db) {
   for (const col of ['rate_1', 'rate_6', 'rate_10', 'weekend_rate', 'holiday_rate']) if (!has('categories', col)) db.exec(`ALTER TABLE categories ADD COLUMN ${col} REAL NOT NULL DEFAULT 0`);
   if (!has('branches', 'fee')) db.exec('ALTER TABLE branches ADD COLUMN fee REAL NOT NULL DEFAULT 0');
   if (!has('branches', 'fee_free_days')) db.exec('ALTER TABLE branches ADD COLUMN fee_free_days INTEGER NOT NULL DEFAULT 0');
+  // Precios propios de cada categoría (0 = no usar): conductor joven, sin depósito y combustible faltante. Y del lugar: recargo por categoría y horarios.
+  for (const col of ['young_rate', 'no_deposit_fee', 'fuel_charge']) if (!has('categories', col)) db.exec(`ALTER TABLE categories ADD COLUMN ${col} REAL NOT NULL DEFAULT 0`);
+  for (const col of ['fee_by_category', 'hours']) if (!has('branches', col)) db.exec(`ALTER TABLE branches ADD COLUMN ${col} TEXT`);
   // Horario de retiro que acepta el cotizador público en cada sucursal (vacío = sin límite).
   for (const col of ['pickup_from', 'late_after', 'late_pickup_from']) {
     if (!has('branches', col)) db.exec(`ALTER TABLE branches ADD COLUMN ${col} TEXT`);

@@ -150,3 +150,12 @@ test('varias empresas: cada una cancela con su propia política', (t) => {
   assert.equal(cancelIn(a, 100).percent, 100);
   assert.equal(cancelIn(b, 100).percent, 0);
 });
+
+test('cancelación con cargo de 1 día: con menos de las horas cargadas se cobra un día; con más, nada', () => {
+  const S = { ...DEFAULTS, cancel_day_fee_hours: '48' };
+  const r = (hours, reason) => refundFor({ ...pickupIn(hours), total: 300, days: 3 }, S, NOW, reason);
+  assert.deepEqual([r(100).amount, r(48).amount], [1000, 1000]);
+  assert.deepEqual([r(47).amount, r(47).rule], [900, 'menos de 48 h antes: se cobra 1 día de alquiler']);
+  assert.equal(r(100, 'no_show').amount, 0);
+  assert.equal(refundFor({ ...pickupIn(10), total: 300, days: 3, balance: { paid: 50 } }, S, NOW).amount, 0, 'nunca más de lo pagado');
+});
