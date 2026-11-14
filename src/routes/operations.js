@@ -65,6 +65,7 @@ function operationsRoutes(db) {
         extras,
         discount_pct: req.query.discount_pct,
         discount_amount: req.query.discount_amount,
+        no_deposit: req.query.no_deposit,
         customer_id: Number(req.query.customer_id) || undefined, // recargo por conductor menor
       }),
     }));

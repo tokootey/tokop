@@ -189,6 +189,7 @@ function buildContractPdf(r, photos = []) {
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
     q.young_driver_fee ? [`Conductor menor de ${q.young_driver_age} años`, money(q.young_driver_fee)] : null,
     q.after_hours_fee ? ['Fuera de hora', money(q.after_hours_fee)] : null,
+    q.no_deposit_fee ? ['Sin depósito', money(q.no_deposit_fee)] : null,
     ...(q.branch_fees || []).map((b) => [`Recargo ${b.name}`, money(b.amount)]),
     q.extra_hours_fee ? [`Horas adicionales (${q.extra_hours})`, money(q.extra_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct}%` : ''}`, `- ${money(q.discount)}`] : null,

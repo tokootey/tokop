@@ -30,6 +30,13 @@ function refundFor(r, settings, at = new Date(), reason = 'cancelada') {
   const hours = Math.round(((parseLocal(r.pickup_at) - at) / 3600000) * 10) / 10;
   const pct = reason === 'no_show' ? 0 : hours >= p.full ? 100 : hours >= p.partial ? p.pct : 0;
   const paid = Math.max(0, (r.balance && r.balance.paid) || 0);
+  // Otra forma de cobrar la cancelación (la prende la agencia): con menos de esas horas se paga 1 día de alquiler; con más, nada.
+  const dayHours = Number(settings.cancel_day_fee_hours) || 0;
+  if (dayHours > 0 && reason !== 'no_show') {
+    const late = hours < dayHours;
+    const amount = late ? Math.round(Math.max(0, paid - (Number(r.total) || 0) / Math.max(1, Number(r.days) || 1)) * 100) / 100 : paid;
+    return { hours_before: hours, percent: paid ? Math.round((amount / paid) * 100) : 100, paid, amount, rule: late ? `menos de ${dayHours} h antes: se cobra 1 día de alquiler` : `${dayHours} h o más antes` };
+  }
   return {
     hours_before: hours,
     percent: pct,

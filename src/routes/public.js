@@ -21,7 +21,7 @@ function publicRoutes(db, { publicQuery = '' } = {}) {
   router.get('/catalog', (_req, res) => {
     res.json({
       currency: getSetting(db, 'currency'),
-      branches: db.prepare('SELECT code, name, address, phone FROM branches WHERE active = 1 ORDER BY name').all(),
+      branches: db.prepare('SELECT code, name, address, phone, hours FROM branches WHERE active = 1 ORDER BY name').all(),
       categories: db
         .prepare(
           'SELECT code, name, description, daily_rate, weekly_rate, deposit, km_per_day, extra_km_rate, seats, transmission FROM categories WHERE active = 1 ORDER BY daily_rate',

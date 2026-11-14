@@ -1201,6 +1201,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
               `<label class="check"><input type="checkbox" name="extra_${x.id}"/> ${esc(x.name)} <small class="muted">(${money(x.price)}${x.charge_type === 'dia' ? '/día' : ''})</small></label>`,
           )
           .join('')}</div>` : ''}
+        ${state.categories.some((c) => c.no_deposit_fee > 0) ? `<label class="check" style="margin-top:12px"><input type="checkbox" name="no_deposit"/> Sin depósito <small class="muted">(suma el recargo por día de la categoría y deja el depósito en 0)</small></label>` : ''}
         <div class="form-grid" style="margin-top:12px">
           <label>Descuento %<input type="number" name="discount_pct" min="0" max="100" step="any" value="0"/></label>
           <label>Descuento en $ <small class="muted">(para redondear, ej. 10.000)</small><input type="number" name="discount_amount" min="0" step="any" value="0"/></label>
@@ -1293,6 +1294,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       return_branch_id: f.return_branch_id || '',
       discount_pct: f.discount_pct || 0,
       discount_amount: f.discount_amount || 0,
+      no_deposit: f.no_deposit ? 1 : '',
       extras: f.extras.join(','),
       customer_id: sel.customer_id || '', // recargo por conductor menor
     });
@@ -1427,6 +1429,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       return_at: f.return_at,
       discount_pct: f.discount_pct || 0,
       discount_amount: f.discount_amount || 0,
+      no_deposit: !!f.no_deposit,
       flight: f.flight,
       notes: f.notes,
       extras: f.extras.map((id) => ({ extra_id: id, quantity: 1 })),
@@ -1908,6 +1911,7 @@ function breakdownHtml(q) {
     ${q.one_way_fee ? row('Devolución en otra sucursal', money(q.one_way_fee)) : ''}
     ${q.young_driver_fee ? row(`Conductor menor de ${esc(q.young_driver_age)} años`, money(q.young_driver_fee)) : ''}
     ${q.after_hours_fee ? row('Fuera de hora', money(q.after_hours_fee)) : ''}
+    ${q.no_deposit_fee ? row('Sin depósito', money(q.no_deposit_fee)) : ''}
     ${(q.branch_fees || []).map((b) => row(`Recargo ${esc(b.name)}`, money(b.amount))).join('')}
     ${q.extra_hours_fee ? row(`Horas adicionales (${esc(q.extra_hours)})`, money(q.extra_hours_fee)) : ''}
     ${q.discount ? row(`Descuento${q.discount_pct ? ` ${q.discount_pct}%` : ''}`, '−' + money(q.discount)) : ''}
@@ -2440,6 +2444,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'category_id', label: 'Categoría', type: 'select', options: () => state.categories.map((x) => [x.id, `${x.code} · ${x.name}`]), required: true },
             { name: 'discount_pct', label: 'Descuento %', type: 'number' },
             { name: 'discount_amount', label: 'Descuento en $', type: 'number' },
+            ...(state.categories.some((c) => c.no_deposit_fee > 0) ? [{ name: 'no_deposit', label: 'Sin depósito (suma el recargo por día de la categoría y deja el depósito en 0)', type: 'checkbox', full: true }] : []),
             { name: 'price_override', label: `Precio final acordado (opcional; ahora ${money(r.total)})`, type: 'number' },
             { name: 'flight', label: 'Vuelo / referencia', when: () => !choferesMode() },
             { name: 'notes', label: 'Notas', type: 'textarea', full: true },
@@ -2447,10 +2452,10 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
               ? [{ name: 'recalculate', label: 'Recalcular el precio con las tarifas del sistema (descarta el precio del cotizador)', type: 'checkbox', full: true }]
               : []),
           ],
-          r,
+          { ...r, no_deposit: r.pricing && r.pricing.no_deposit ? 1 : 0 },
         ),
         async (d) => {
-          const body = { ...d, category_id: Number(d.category_id), recalculate: !!d.recalculate };
+          const body = { ...d, category_id: Number(d.category_id), recalculate: !!d.recalculate, ...(d.no_deposit !== undefined ? { no_deposit: !!d.no_deposit } : {}) };
           if (body.category_id !== r.category_id) body.vehicle_id = null;
           await PUT(`/reservations/${r.id}`, body);
           toast('Reserva modificada');
@@ -2654,6 +2659,16 @@ function refundPolicyText(s = state.settings) {
   const full = n(s.refund_full_hours, 72);
   const partial = Math.min(full, n(s.refund_partial_hours, 24));
   const pct = n(s.refund_partial_pct, 50);
+  const dayHours = n(s.cancel_day_fee_hours, 0);
+  if (dayHours > 0) {
+    const extra = LANG === 'en' ? s.refund_terms_en || s.refund_terms : s.refund_terms;
+    return (
+      L(
+        `Si se cancela con menos de ${dayHours} h de anticipación al retiro se cobra 1 día de alquiler; con más, se devuelve todo lo pagado. Si el cliente no se presenta, no hay devolución.`,
+        `If cancelled less than ${dayHours} h before pick-up, 1 rental day is charged; earlier, the full amount paid is refunded. If the customer does not show up, there is no refund.`,
+      ) + (extra ? ` ${extra}` : '')
+    );
+  }
   if (LANG === 'en') {
     const extra = s.refund_terms_en || s.refund_terms;
     return `If cancelled ${full} h or more before pick-up, 100 % of the amount paid is refunded${partial < full ? `; between ${full} and ${partial} h, ${pct} %` : ''}; with less than ${partial} h or if the customer does not show up, there is no refund.${extra ? ` ${extra}` : ''}`;
@@ -2681,6 +2696,7 @@ function voucherLines(r) {
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
     q.young_driver_fee ? [`Conductor menor de ${q.young_driver_age} años`, money(q.young_driver_fee)] : null,
     q.after_hours_fee ? ['Fuera de hora', money(q.after_hours_fee)] : null,
+    q.no_deposit_fee ? ['Sin depósito', money(q.no_deposit_fee)] : null,
     ...(q.branch_fees || []).map((b) => [`Recargo ${b.name}`, money(b.amount)]),
     q.extra_hours_fee ? [`Horas adicionales (${q.extra_hours})`, money(q.extra_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct} %` : ''}`, `−${money(q.discount)}`] : null,
@@ -2706,6 +2722,7 @@ function voucherLines(r) {
       rows: [
         ['Vehículo', vehicle],
         ['Retiro', `${dt(r.pickup_at)} · ${r.pickup_branch_name || ''}`],
+        r.pickup_branch_hours ? ['Horarios', r.pickup_branch_hours] : null,
         ['Devolución', `${dt(r.return_at)} · ${r.return_branch_name || ''}`],
         r.hotel && r.hotel.address ? ['Dirección del hotel', r.hotel.address] : null,
         r.hotel && r.hotel.notes ? ['Indicaciones', r.hotel.notes] : null,
@@ -3273,6 +3290,7 @@ async function printContract(r) {
     q.one_way_fee ? ['Devolución en otro lugar', money(q.one_way_fee)] : null,
     q.young_driver_fee ? [`Conductor menor de ${esc(q.young_driver_age)} años`, money(q.young_driver_fee)] : null,
     q.after_hours_fee ? ['Fuera de hora', money(q.after_hours_fee)] : null,
+    q.no_deposit_fee ? ['Sin depósito', money(q.no_deposit_fee)] : null,
     ...(q.branch_fees || []).map((b) => [`Recargo ${b.name}`, money(b.amount)]),
     q.extra_hours_fee ? [`Horas adicionales (${q.extra_hours})`, money(q.extra_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${esc(q.discount_pct)}%` : ''}`, '−' + money(q.discount)] : null,
@@ -4434,12 +4452,15 @@ on(/^\/tarifas$/, async (view) => {
         { name: 'rate_10', label: 'Tarifa por día desde 10 días (0 = no usar)', type: 'number', default: 0, when: () => !choferesMode() },
         { name: 'weekend_rate', label: 'Tarifa por día de fin de semana (0 = no usar)', type: 'number', default: 0, when: () => !choferesMode() },
         { name: 'holiday_rate', label: 'Tarifa por día feriado o de temporada alta (0 = no usar)', type: 'number', default: 0, when: () => !choferesMode() },
+        { name: 'young_rate', label: 'Tarifa por día para conductor joven (0 = no usar)', type: 'number', default: 0, when: () => !choferesMode() },
+        { name: 'no_deposit_fee', label: 'Recargo por día por alquilar sin depósito (0 = no se ofrece)', type: 'number', default: 0, when: () => !choferesMode() },
         { name: 'monthly_rate', label: 'Tarifa mensual (choferes)', type: 'number', default: 0, when: () => choferesMode() },
         { name: 'deposit', label: 'Garantía', type: 'number', default: 0 },
         { name: 'km_per_day', label: 'Km incluidos por día (0 = libres)', type: 'number', default: 0 },
         { name: 'km_per_period', label: 'Km incluidos por período de alquiler (choferes, 0 = libres)', type: 'number', default: 0, when: () => choferesMode() },
         { name: 'rest_day_rate', label: 'Tarifa domingos y feriados (cobro por día, 0 = la diaria)', type: 'number', default: 0, when: () => choferesMode() },
         { name: 'extra_km_rate', label: 'Precio km excedente', type: 'number', default: 0 },
+        { name: 'fuel_charge', label: 'Cargo por cada 1/8 de combustible faltante (0 = el general)', type: 'number', default: 0 },
         { name: 'seats', label: 'Plazas', type: 'number' },
         { name: 'transmission', label: 'Transmisión', type: 'select', options: [['Manual', 'Manual'], ['Automática', 'Automática']] },
         { name: 'active', label: 'Activa', type: 'checkbox', default: 1 },
@@ -4552,6 +4573,8 @@ on(/^\/tarifas$/, async (view) => {
         { name: 'late_pickup_from', label: '…se retiran recién desde las', type: 'time' },
         { name: 'fee', label: 'Recargo por entregar o devolver acá (una vez por alquiler)', type: 'number', default: 0 },
         { name: 'fee_free_days', label: 'Ese recargo no se cobra desde (días de alquiler, 0 = se cobra siempre)', type: 'number', default: 0 },
+        { name: 'fee_by_category', label: 'Recargo distinto para algunas categorías (código:precio, por ejemplo SUV:250, CAM:270)', full: true },
+        { name: 'hours', label: 'Horarios (salen en el voucher)', type: 'textarea', full: true, rows: 2 },
         { name: 'express_24h', label: 'Sin personal fijo (por ejemplo el aeropuerto): las reservas del link con menos de 24 hs son express', type: 'checkbox', full: true },
       ],
       columns: [
@@ -4899,6 +4922,7 @@ on(/^\/config$/, async (view) => {
       { name: 'refund_full_hours', label: 'Devolución del 100 % si cancela con esta anticipación o más (horas)', type: 'number', attrs: 'min="0"', when: () => !choferesMode() },
       { name: 'refund_partial_hours', label: 'Devolución parcial si cancela con esta anticipación o más (horas)', type: 'number', attrs: 'min="0"', when: () => !choferesMode() },
       { name: 'refund_partial_pct', label: 'Porcentaje de la devolución parcial (%)', type: 'number', attrs: 'min="0" max="100"', when: () => !choferesMode() },
+      { name: 'cancel_day_fee_hours', label: 'O cobrar 1 día de alquiler a quien cancela con menos de (horas, 0 = usar los porcentajes de arriba)', type: 'number', attrs: 'min="0"', when: () => !choferesMode() },
       { name: 'refund_terms', label: 'Condiciones extra de cancelación y devoluciones', type: 'textarea', full: true, rows: 3, when: () => !choferesMode() },
       // Versión en inglés: contrato, voucher y política cuando la app está en inglés (i18n.js).
       { name: 'jurisdiction_en', label: 'Jurisdicción del contrato en inglés (courts of...)', full: true, when: () => !choferesMode() },

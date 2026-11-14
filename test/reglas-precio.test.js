@@ -113,3 +113,44 @@ test('horas de más por hora y límite de km sólo en alquileres cortos', async 
     app.close();
   }
 });
+
+test('precios propios de la categoría: conductor joven, sin depósito, combustible y recargo del lugar', async () => {
+  const app = await start();
+  try {
+    const { db } = app;
+    const R = require('../src/reservations');
+    const [mon, thu] = ['2030-01-07T10:00', '2030-01-10T10:00'];
+    const plain = quote(db, mon, thu);
+    db.exec('UPDATE categories SET young_rate = 80, no_deposit_fee = 30, fuel_charge = 7.5, deposit = 150 WHERE id = 1');
+
+    // Conductor joven (menos de la edad que cargó la agencia, 21 si no cargó): todos los días con su tarifa.
+    assert.equal(quote(db, mon, thu, { birth_date: '2012-01-01' }).base, 240);
+    assert.equal(quote(db, mon, thu, { birth_date: '1990-01-01' }).base, plain.base);
+    assert.equal(quote(db, mon, thu).base, plain.base, 'sin fecha de nacimiento, tarifa normal');
+
+    // Sin depósito: suma el recargo por día y deja el depósito en 0. Si nadie lo pide, no cambia nada.
+    const nd = quote(db, mon, thu, { no_deposit: '1' });
+    assert.deepEqual([nd.no_deposit_fee, nd.deposit, nd.subtotal - plain.subtotal], [90, 0, 90]);
+    assert.deepEqual([quote(db, mon, thu).no_deposit_fee, quote(db, mon, thu).deposit], [undefined, 150]);
+    // La reserva lo recuerda al editarla, y se le puede sacar.
+    const r = app.reserve({ name: 'Ana' });
+    assert.equal(R.updateReservation(db, r.id, { no_deposit: true }, 1).deposit, 0);
+    const kept = R.updateReservation(db, r.id, { notes: 'otra cosa' }, 1);
+    assert.ok(kept.deposit === 0 && kept.pricing.no_deposit_fee > 0);
+    assert.equal(R.updateReservation(db, r.id, { no_deposit: false }, 1).deposit, 150);
+
+    // Combustible: el precio de la categoría manda sobre el general.
+    setSetting(db, 'fuel_charge_per_eighth', '5');
+    const back = (cat) => computeReturnCharges(db, { category_id: cat, days: 3, total: 150, return_at: thu }, { out_km: 1000, out_fuel: 8 }, { in_km: 1100, in_fuel: 6, in_at: thu });
+    assert.deepEqual(back(1).lines, [{ concept: 'Combustible faltante (2/8)', amount: 15 }]);
+    assert.deepEqual(back(2).lines, [{ concept: 'Combustible faltante (2/8)', amount: 10 }]);
+
+    // Lugar: recargo distinto para algunas categorías, por código; lo mal escrito se ignora.
+    const code = db.prepare('SELECT code FROM categories WHERE id = 1').get().code;
+    db.prepare('UPDATE branches SET fee = 25, fee_by_category = ? WHERE id = 1').run(`OTRA:99, ${code.toLowerCase()}: 40, x`);
+    assert.equal(quote(db, mon, thu, { pickup_branch_id: 1, return_branch_id: 1 }).branch_fee, 40);
+    assert.equal(quote(db, mon, thu, { pickup_branch_id: 1, return_branch_id: 1, category_id: 2 }).branch_fee, 25);
+  } finally {
+    app.close();
+  }
+});
