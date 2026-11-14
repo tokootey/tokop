@@ -179,7 +179,9 @@ function computeQuote(db, input) {
     const extra = db.prepare('SELECT * FROM extras WHERE id = ?').get(item.extra_id);
     if (!extra) fail(400, `Adicional inexistente (${item.extra_id})`);
     const qty = Math.max(1, Number(item.quantity) || 1);
-    let amount = extra.charge_type === 'fijo' ? extra.price * qty : extra.price * days * qty;
+    // Precio propio del alquiler de 1 solo día (ej.: full cover a 60 en vez del valor por día); 0 = el mismo
+    const perDay = days === 1 && extra.one_day_price > 0 ? extra.one_day_price : extra.price;
+    let amount = extra.charge_type === 'fijo' ? extra.price * qty : perDay * days * qty;
     if (extra.max_price > 0) amount = Math.min(amount, extra.max_price * qty);
     extrasLines.push({ extra_id: extra.id, name: extra.name, quantity: qty, amount: round2(amount), kind: extra.kind || 'adicional', deductible: extra.deductible || 0 });
   }

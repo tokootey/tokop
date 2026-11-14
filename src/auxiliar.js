@@ -24,7 +24,7 @@ const VEHICLE_FIELDS = ['branch_id', 'km', 'fuel', 'panapass'];
 // Todo lo que sea plata se saca de lo que recibe, esté donde esté.
 const MONEY = new Set([
   'total', 'paid', 'pricing', 'deposit', 'discount_pct', 'discount_amount', 'final_total', 'charges', 'balance', 'payments', 'amount', 'cost',
-  'month_revenue', 'owing', 'daily_rate', 'weekly_rate', 'monthly_rate', 'rest_day_rate', 'period_rate', 'extra_km_rate', 'price', 'max_price',
+  'month_revenue', 'owing', 'daily_rate', 'weekly_rate', 'monthly_rate', 'rest_day_rate', 'period_rate', 'extra_km_rate', 'price', 'max_price', 'one_day_price',
   'deductible', 'insurance_cost', 'rate_1', 'rate_6', 'rate_10', 'young_rate', 'no_deposit_fee', 'fuel_charge', 'fee_by_category', 'weekend_rate', 'holiday_rate', 'fee',
 ]);
 const strip = (v) =>
