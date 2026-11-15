@@ -12,6 +12,7 @@ test('auxiliar de flota: ve lo de los autos sin precios y no entra a las reserva
   process.env.UPLOADS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'aux-'));
   const app = await start();
   try {
+    app.db.exec('DROP TRIGGER prueba_con_fotos'); // acá se cuentan las fotos que sube el auxiliar
     const admin = await app.as('admin');
     const aux = await app.as('auxiliar');
     const r = app.reserve();

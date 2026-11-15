@@ -27,6 +27,7 @@ async function login(email, password) {
 
 test.before(async () => {
   db = openDb(':memory:');
+  require('./con-fotos')(db);
   ensureAdmin(db);
   seed(db);
   server = createApp(db).listen(0);
