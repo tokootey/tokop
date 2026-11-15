@@ -4,7 +4,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { start, at } = require('./etapa2-helper');
-const { setSetting } = require('../src/db');
 
 test('extender un alquiler en curso: suma los días nuevos y no pisa otra reserva del mismo auto', async () => {
   const app = await start();
