@@ -696,6 +696,7 @@ function publicView(r) {
 module.exports = {
   extraCodes,
   extraFits,
+  withYoungInsurance,
   balanceOf,
   driverOf,
   addDriver,
