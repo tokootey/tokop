@@ -521,6 +521,13 @@ test('contrato: el texto viejo se reemplaza al abrir la base', () => {
 test('recargo de PayPal: se anota aparte, entra a caja y no descuenta de la deuda', async () => {
   assert.equal((await call('PUT', '/api/settings', { paypal_surcharge_pct: 150 })).status, 400);
   assert.equal((await call('PUT', '/api/settings', { paypal_surcharge_pct: 5 })).status, 200);
+  // Logo del contrato: solo una imagen PNG o JPG en base64; los avisos de la hoja 1 se guardan tal cual.
+  assert.equal((await call('PUT', '/api/settings', { company_logo: 'https://otro-sitio.com/logo.png' })).status, 400);
+  assert.equal((await call('PUT', '/api/settings', { company_logo: 'data:image/svg+xml;base64,PHN2Zz4=' })).status, 400);
+  assert.equal((await call('PUT', '/api/settings', { company_logo: 'data:image/png;base64,iVBORw0KGgo=', contract_front_notes: 'Multa $10 por pase negativo' })).status, 200);
+  const logoSet = (await call('GET', '/api/settings')).data;
+  assert.deepEqual([logoSet.company_logo, logoSet.contract_front_notes], ['data:image/png;base64,iVBORw0KGgo=', 'Multa $10 por pase negativo']);
+  await call('PUT', '/api/settings', { company_logo: '', contract_front_notes: '' });
   // Medios de pago propios de la agencia: se guardan y vuelven con los ajustes.
   assert.equal((await call('PUT', '/api/settings', { extra_pay_methods: 'ACH\nCheque' })).status, 200);
   assert.equal((await call('GET', '/api/settings')).data.extra_pay_methods, 'ACH\nCheque');

@@ -31,7 +31,7 @@ function getReservation(db, id) {
               c.work_apps AS customer_work_apps, c.workplace AS customer_workplace, c.alt_contact AS customer_alt_contact, c.guarantor_name, c.guarantor_doc, c.guarantor_phone, c.guarantor_address,
               cat.code AS category_code, cat.name AS category_name, cat.km_per_day AS category_km_per_day, cat.extra_km_rate AS category_extra_km_rate, cat.km_per_period AS category_km_per_period,
               v.plate AS vehicle_plate, v.brand AS vehicle_brand, v.model AS vehicle_model, v.color AS vehicle_color, v.year AS vehicle_year,
-              v.km AS vehicle_km, v.fuel AS vehicle_fuel, v.panapass AS vehicle_panapass,
+              v.km AS vehicle_km, v.fuel AS vehicle_fuel, v.panapass AS vehicle_panapass, v.panapass_number AS vehicle_panapass_number,
               ${placeSql('deliver', 'pb')} AS pickup_branch_name, ${placeSql('return', 'rb')} AS return_branch_name, pb.hours AS pickup_branch_hours
        FROM reservations r
        JOIN customers c ON c.id = r.customer_id
