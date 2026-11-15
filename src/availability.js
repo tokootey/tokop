@@ -1,6 +1,6 @@
 'use strict';
 
-const { getSetting, proOn } = require('./db');
+const { getSetting } = require('./db');
 const { fmtLocal, parseLocal } = require('./util');
 
 /** Estados de reserva que ocupan un vehículo / cupo de categoría. */
@@ -16,7 +16,7 @@ const inList = (arr) => arr.map((s) => `'${s}'`).join(',');
  * shortcut: cuenta desde la devolución pactada, no desde la real. Si hace falta, sumar las devoluciones reales al control.
  */
 function paddedRange(db, pickup_at, return_at) {
-  const minutes = proOn(db) ? Math.max(0, Number(getSetting(db, 'turnaround_minutes')) || 0) : 0;
+  const minutes = Math.max(0, Number(getSetting(db, 'turnaround_minutes')) || 0);
   if (!minutes) return [pickup_at, return_at];
   const shift = (s, m) => fmtLocal(new Date(parseLocal(s).getTime() + m * 60000));
   return [shift(pickup_at, -minutes), shift(return_at, minutes)];

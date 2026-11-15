@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { proOn, getSettings } = require('./db');
+const { getSettings } = require('./db');
 const { fail } = require('./util');
 const R = require('./reservations');
 
@@ -23,9 +23,7 @@ function ensureRow(db, id) {
   return rowOf(db, id);
 }
 
-// pro = false: la firma del contrato y las fotos de la entrega, que tienen todas las agencias.
-function reservationOf(db, id, pro = true) {
-  if (pro && !proOn(db)) fail(403, 'Esta función no está activada para tu agencia');
+function reservationOf(db, id) {
   const r = R.getReservation(db, id);
   if (!r) fail(404, 'Reserva inexistente');
   return r;
@@ -59,7 +57,7 @@ function stateOf(db, r) {
 
 /** Deja el contrato listo para firmar. Las condiciones llegan armadas desde el panel de la agencia, con sus datos ya completos. */
 function requestSignature(db, id, terms, settings, userId) {
-  const r = reservationOf(db, id, false);
+  const r = reservationOf(db, id);
   if (!OPEN.includes(r.status)) fail(409, 'Sólo se pide la firma de una reserva pendiente, confirmada o en curso');
   if (!Array.isArray(terms) || !terms.length || terms.length > 80) fail(400, 'Faltan las condiciones del contrato');
   const row = ensureRow(db, r.id);
@@ -95,7 +93,7 @@ function requestSignature(db, id, terms, settings, userId) {
 
 /** Link de las fotos de la entrega. */
 function photosLink(db, id) {
-  const r = reservationOf(db, id, false);
+  const r = reservationOf(db, id);
   return { photos_token: ensureRow(db, r.id).photos_token };
 }
 
@@ -146,7 +144,7 @@ const DOC_PHOTOS = ['carnet_frente', 'carnet_dorso', 'dni_frente', 'pasaporte'];
 const isDate = (v) => /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(v);
 
 function docsLink(db, id) {
-  const r = reservationOf(db, id, false);
+  const r = reservationOf(db, id);
   if (!BEFORE_PICKUP.includes(r.status)) fail(409, 'Los datos se le piden al cliente antes de entregar el auto');
   return { docs_token: ensureRow(db, r.id).docs_token };
 }
@@ -202,7 +200,7 @@ function docsUploadTarget(db, token, kind) {
 const MAX_RETURN_PHOTOS = 30;
 
 function returnOf(db, token) {
-  const row = token && proOn(db) && db.prepare('SELECT reservation_id FROM delivery_links WHERE return_token = ?').get(String(token));
+  const row = token && db.prepare('SELECT reservation_id FROM delivery_links WHERE return_token = ?').get(String(token));
   if (!row) fail(404, 'Este link ya no está disponible');
   return db.prepare('SELECT id, code, status FROM reservations WHERE id = ?').get(row.reservation_id);
 }
@@ -323,13 +321,13 @@ function cardLink(db, id) {
 
 /** Link para que el cliente deje la tarjeta después de pedir una reserva por la web o la API. */
 function cardUrlFor(db, code, req, query = '') {
-  if (!code || !proOn(db)) return null;
+  if (!code) return null;
   const r = db.prepare('SELECT id FROM reservations WHERE code = ?').get(String(code));
   return r ? `${req.protocol}://${req.get('host')}/tarjeta/${ensureRow(db, r.id).card_token}${query}` : null;
 }
 
 function cardOf(db, token) {
-  const row = token && proOn(db) && db.prepare('SELECT * FROM delivery_links WHERE card_token = ?').get(String(token));
+  const row = token && db.prepare('SELECT * FROM delivery_links WHERE card_token = ?').get(String(token));
   if (!row) fail(404, 'Este link ya no está disponible');
   const r = R.getReservation(db, row.reservation_id);
   if (!OPEN.includes(r.status)) fail(404, 'Este link ya no está disponible');

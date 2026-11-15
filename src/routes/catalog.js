@@ -4,6 +4,7 @@ const express = require('express');
 const { requireAdmin, audit } = require('../auth');
 const { fail, pick, normDate, nowLocal, fmtLocal } = require('../util');
 const { removeCustomerDocuments } = require('./files');
+const { getSetting, phoneHint } = require('../db');
 
 /**
  * CRUD genérico para tablas maestras.
@@ -242,7 +243,7 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     const phone = String((req.body || {}).phone || '').trim();
     if (!['POST', 'PUT'].includes(req.method) || !phone) return next();
     const digits = phone.replace(/\D/g, '').length;
-    if (!/^[+\d\s().-]+$/.test(phone) || digits < 8 || digits > 15) fail(400, 'El WhatsApp tiene que ser un número con código de país, por ejemplo +54 9 2901 555123');
+    if (!/^[+\d\s().-]+$/.test(phone) || digits < 8 || digits > 15) fail(400, `El WhatsApp tiene que ser un número con código de país, por ejemplo ${phoneHint(getSetting(db, 'country'))}`);
     next();
   });
   // Licencia vencida: no se guarda, así no queda un cliente que después no puede retirar el auto.

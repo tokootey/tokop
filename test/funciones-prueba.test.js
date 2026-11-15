@@ -506,7 +506,8 @@ test('firma: la tienen todas las agencias, también en autos para trabajo y sin 
     assert.equal(D.viewContract(db, s.token).can_sign, true);
     D.sign(db, s.token, { name: 'Ana López', doc: '30111222', accepted: true, image: PNG }, { ip: '200.1.1.1', userAgent: 'test' });
     assert.equal(D.stateOf(db, R.getReservation(db, r.id)).name, 'Ana López');
-    assert.throws(() => D.cardLink(db, r.id), /no está activada/);
+    // Las funciones de Ancon (tarjeta, pre-entrega, fotos de devolución) también son de todas.
+    assert.ok(D.cardLink(db, r.id));
     db.close();
   }
 });

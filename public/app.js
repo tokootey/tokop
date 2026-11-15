@@ -21,7 +21,8 @@ const num = (n) => Number(n).toLocaleString(locale());
 const plural = (n, one, many) => `${num(n)} ${Number(n) === 1 ? one : many}`;
 // WhatsApp: vacío o un número de 8 a 15 dígitos (con +, espacios, guiones o paréntesis).
 const validPhone = (s) => !s || (/^[+\d\s().-]+$/.test(s) && String(s).replace(/\D/g, '').length >= 8 && String(s).replace(/\D/g, '').length <= 15);
-const PHONE_ERROR = 'Tiene que ser un número con código de país, por ejemplo +54 9 2901 555123.';
+const phoneHint = () => state.settings.phone_hint || '+00 000 000 000';
+const phoneError = () => `Tiene que ser un número con código de país, por ejemplo ${phoneHint()}.`;
 // Una fecha que ya pasó (con 5 minutos de margen): se avisa antes de guardar.
 const isPast = (d) => d < new Date(Date.now() - 5 * 60000);
 const money = (n) => {
@@ -792,8 +793,8 @@ document.addEventListener('click', (e) => {
    ============================================================ */
 const isAux = () => !!state.user && state.user.role === 'auxiliar';
 const ROLE_LABEL = { admin: 'Administrador', operador: 'Operador', auxiliar: 'Auxiliar de flota' };
-// VTV es de Argentina; en Panamá es el revisado.
-const inspectionWord = () => ({ AR: 'VTV', PA: 'Revisado' })[state.settings.country] || 'Inspección técnica';
+// Palabra que se entiende en todos los países; Panamá (Ancon) pidió "Revisado".
+const inspectionWord = () => (state.settings.country === 'PA' ? 'Revisado' : 'Inspección técnica');
 /** Vencimientos de un auto: seguro, inspección y cédula de circulación (rojo si venció, ámbar si falta poco). */
 const dueList = (v) => [
   ['Seguro', v.insurance_expiry],
@@ -905,7 +906,7 @@ async function auxFleet(view) {
   const branches = branchOptions();
   view.innerHTML = `
     <div class="page-head"><h1>Autos</h1></div>
-    <div class="table-wrap"><table><thead><tr><th>${plateWord()}</th><th>Auto</th><th>Estado</th><th>Sucursal</th><th>Km</th><th>Combustible</th><th>Vencimientos</th><th></th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>Placa</th><th>Auto</th><th>Estado</th><th>Sucursal</th><th>Km</th><th>Combustible</th><th>Vencimientos</th><th></th></tr></thead><tbody>
     ${rows
       .map(
         (v) => `<tr data-id="${v.id}"><td class="nowrap"><span class="plate">${esc(v.plate)}</span></td><td>${esc([v.brand, v.model].filter(Boolean).join(' '))}</td><td>${badge(v.status)}</td>
@@ -955,7 +956,7 @@ on(/^\/reservas$/, async (view) => {
   view.innerHTML = `
     <div class="page-head"><h1>Reservas</h1></div>
     <form class="toolbar" id="res-filter">
-      <label>Buscar<input name="q" placeholder="Código, cliente, ${docWord().toLowerCase() === "dni" ? "DNI" : "documento"}, patente…"/></label>
+      <label>Buscar<input name="q" placeholder="Código, cliente, documento, placa…"/></label>
       <input type="hidden" name="status" value=""/>
       <button class="btn">Buscar</button>
       <div class="chips status-chips" role="group" aria-label="Estado">${RES_FILTERS.map(([v, l], i) => `<button type="button" class="chip${i ? '' : ' on'}" data-st="${v}" aria-pressed="${!i}">${l}</button>`).join('')}</div>
@@ -1015,8 +1016,6 @@ on(/^\/reservas$/, async (view) => {
 /* ============================================================
    Alquileres activos: los autos que están en la calle
    ============================================================ */
-// En Argentina y Uruguay se dice patente; en el resto, placa.
-const plateWord = () => (['AR', 'UY'].includes(state.settings.country) ? 'Patente' : 'Placa');
 /** Baja una planilla del servidor (?format=csv). Con coma decimal en la compu, Excel separa por punto y coma. */
 async function downloadCsv(path, filename) {
   const sep = (1.1).toLocaleString().includes(',') ? ';' : ',';
@@ -1032,7 +1031,7 @@ on(/^\/alquileres$/, async (view) => {
     <p class="muted">${plural(rows.length, 'auto en la calle', 'autos en la calle')} · ${branch ? esc(branch.name) : 'todas las sucursales'}</p>
     ${
       rows.length
-        ? `<div class="table-wrap"><table><thead><tr><th>Referencia</th><th>${plateWord()}</th><th>Cliente</th><th>Salida</th><th>Hora</th><th>Devolución prevista</th></tr></thead><tbody>
+        ? `<div class="table-wrap"><table><thead><tr><th>Referencia</th><th>Placa</th><th>Cliente</th><th>Salida</th><th>Hora</th><th>Devolución prevista</th></tr></thead><tbody>
         ${rows
           .map(
             (r) => `<tr class="click" data-href="#/reservas/${r.id}">
@@ -1216,7 +1215,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       <div class="card">
         <h2>3 · Cliente</h2>
         <div class="toolbar">
-          <label style="flex:1">Buscar cliente existente<input id="cust-q" placeholder="Nombre, ${docWord().toLowerCase() === "dni" ? "DNI" : "documento"}, email o teléfono"/></label>
+          <label style="flex:1">Buscar cliente existente<input id="cust-q" placeholder="Nombre, documento, email o teléfono"/></label>
           <button type="button" class="btn" id="cust-new">+ Cliente nuevo</button>
         </div>
         <div id="cust-results"></div>
@@ -1585,7 +1584,7 @@ document.addEventListener('click', async (e) => {
 
 /** La tarjeta que dejó el cliente: identifica la tarjeta, no permite cobrar. */
 function clientCardHtml(r) {
-  if (!proOn() || choferesMode() || ['cancelada', 'no_show'].includes(r.status)) return '';
+  if (choferesMode() || ['cancelada', 'no_show'].includes(r.status)) return '';
   const c = r.signature && r.signature.card;
   const open = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
   const ask = open ? `<div class="actions no-print" style="margin-top:12px"><button class="btn" type="button" data-act="card">${c ? 'Pedirle otra tarjeta' : 'Pedirle la tarjeta'}</button></div>` : '';
@@ -1685,7 +1684,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         <div style="display:flex;flex-direction:column;gap:8px">
           <label class="qr-field">Nombre y apellido <span class="req">*</span><input name="name" autocomplete="off" required aria-describedby="err-name"></label>
           <p class="field-error hidden" data-err="name" id="err-name"></p>
-          <label class="qr-field">WhatsApp (con código de país)<input name="phone" type="tel" inputmode="tel" placeholder="+54 9 2901 555123" aria-describedby="err-phone"></label>
+          <label class="qr-field">WhatsApp (con código de país)<input name="phone" type="tel" inputmode="tel" placeholder="${esc(phoneHint())}" aria-describedby="err-phone"></label>
           <p class="field-error hidden" data-err="phone" id="err-phone"></p>
         </div>
       </section>
@@ -1784,7 +1783,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   form.addEventListener('change', (e) => {
     if (e.target.name === 'insurance' || e.target.dataset.rec) return summary();
     // El WhatsApp se revisa al salir del campo: así el voucher no se manda a un número mal cargado.
-    if (e.target.name === 'phone') return showErr('phone', validPhone(e.target.value.trim()) ? '' : PHONE_ERROR);
+    if (e.target.name === 'phone') return showErr('phone', validPhone(e.target.value.trim()) ? '' : phoneError());
     if (e.target.name === 'name') return showErr('name', e.target.value.trim() ? '' : 'Escribí el nombre y apellido del cliente.');
     // "Hotel" en el lugar de entrega abre el formulario del hotel ahí mismo.
     if (e.target.name === 'place') {
@@ -1813,7 +1812,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
     const phone = form.phone.value.trim();
     showErr('car', c ? '' : 'Elegí un auto de la lista.');
     showErr('name', name ? '' : 'Escribí el nombre y apellido del cliente.');
-    showErr('phone', validPhone(phone) ? '' : PHONE_ERROR);
+    showErr('phone', validPhone(phone) ? '' : phoneError());
     if (!c || !name || !validPhone(phone)) {
       $('.field-error:not(.hidden)', form)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       return;
@@ -1956,11 +1955,11 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   const hotelOpen = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
   if (hotelOpen && !r.hotel && !choferesMode()) more.push('<button data-act="hotel">Entregar o retirar en un hotel</button>');
   if (r.status === 'en_curso') actions.push(`<button class="btn ok" data-act="checkin">${ICON.in}Registrar devolución</button>`);
-  if (proOn() && !choferesMode() && r.status === 'confirmada') {
+  if (!choferesMode() && r.status === 'confirmada') {
     actions.push(`<button class="btn" data-act="preDelivery">${ICON.key}${r.signature && r.signature.pre_delivery ? 'Cambiar la pre-entrega' : 'Pre-entrega'}</button>`);
     if (r.signature && r.signature.pre_delivery) actions.push(`<button class="btn" data-act="express">${ICON.send}Mandar link de firma</button>`);
   }
-  if (proOn() && !choferesMode() && r.status === 'en_curso') actions.push(`<button class="btn" data-act="returnPhotos">${ICON.send}Fotos de la devolución</button>`);
+  if (!choferesMode() && r.status === 'en_curso') actions.push(`<button class="btn" data-act="returnPhotos">${ICON.send}Fotos de la devolución</button>`);
   // Saldo a cobrar a la vista, con el importe: un toque abre el cobro ya completado.
   if (['confirmada', 'en_curso', 'finalizada'].includes(r.status) && r.balance.pending > 0)
     actions.push(`<button class="btn ${r.status === 'finalizada' ? 'primary' : ''}" data-act="pay">${ICON.money}Cobrar ${money(r.balance.pending)}</button>`);
@@ -2697,7 +2696,7 @@ function voucherLines(r) {
   const q = r.pricing || {};
   const days = `${r.days} día${r.days === 1 ? '' : 's'}`;
   const vehicle = `Categoría ${r.category_code} · ${r.category_name}${
-    r.vehicle_plate ? ` · ${r.vehicle_brand || ''} ${r.vehicle_model || ''} patente ${r.vehicle_plate}`.replace(/\s+/g, ' ') : ' (el auto se asigna al retirar)'
+    r.vehicle_plate ? ` · ${r.vehicle_brand || ''} ${r.vehicle_model || ''} placa ${r.vehicle_plate}`.replace(/\s+/g, ' ') : ' (el auto se asigna al retirar)'
   }`;
   const price = [
     q.base !== undefined ? [`Tarifa ${days}${q.per_day ? ` × ${money(q.per_day)}` : ''}`, money(q.base)] : null,
@@ -2816,7 +2815,7 @@ function sendVoucher(r) {
   const file = new File([doc.output('blob')], filename, { type: 'application/pdf' });
   const text = voucherWhatsapp(r);
   const emailText = voucherEmail(r);
-  // WhatsApp necesita el número con código de país, sin signos: +54 9 2901 123456 → 5492901123456.
+  // WhatsApp necesita el número con código de país, sin signos: +507 6123 4567 → 50761234567.
   const phone = String(r.customer_phone || '').replace(/\D/g, '');
   const wa = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
   const mail = `mailto:${encodeURIComponent(r.customer_email || '')}?subject=${encodeURIComponent(trDoc(`Voucher de tu reserva ${r.code} · ${state.settings.company_name}`))}&body=${encodeURIComponent(emailText)}`;
@@ -3381,7 +3380,7 @@ ${String(s.contract_front_notes || '').trim() ? `<div style="border:2px solid #1
       }`}</div>
   <div><h2>Vehículo</h2><table>
     ${line('Marca y modelo', r.vehicle_plate ? `${esc(r.vehicle_brand || '')} ${esc(r.vehicle_model || '')}` : '')}
-    ${line('Patente', r.vehicle_plate ? `<b>${esc(r.vehicle_plate)}</b>` : '')}
+    ${line('Placa', r.vehicle_plate ? `<b>${esc(r.vehicle_plate)}</b>` : '')}
     ${line('Color / año', r.vehicle_plate ? `${esc(r.vehicle_color || '')} ${r.vehicle_year ? '· ' + esc(r.vehicle_year) : ''}` : '')}
     ${line('Categoría', `${esc(r.category_code)} · ${esc(r.category_name)}`)}
     ${panapassOn() && r.vehicle_panapass_number ? line('Cuenta Panapass', esc(r.vehicle_panapass_number)) : ''}
@@ -3865,9 +3864,9 @@ const panapassField = (name, label) => (panapassOn() ? [{ name, label, type: 'nu
 // Fuera de Argentina no se ofrece DNI: uno guardado es el valor por omisión de la base, no una elección.
 const docTypeOf = (t) => (!t || (t === 'DNI' && state.settings.country !== 'AR') ? docTypes()[0] : t);
 const docTypes = () => (state.settings.country === 'AR' ? ['DNI', 'Pasaporte', 'CI', 'CUIT', 'RUT', 'Otro'] : ['Cédula', 'Pasaporte', 'R.U.C.', 'Otro']);
-const docWord = () => (state.settings.country === 'AR' ? 'DNI' : 'Documento');
+const docWord = () => 'Documento';
 // Titular y conductores adicionales, lugar de trabajo y contacto alternativo: agencias con funciones en prueba, alquiler por días.
-const partiesOn = () => proOn() && !choferesMode();
+const partiesOn = () => !choferesMode();
 
 const CUSTOMER_FIELDS = [
   { name: 'full_name', label: 'Nombre y apellido', required: true, full: true },
@@ -3885,14 +3884,14 @@ const CUSTOMER_FIELDS = [
   { name: 'license_class', label: 'Clase de licencia (ej. D1 profesional)', when: () => choferesMode() },
   { name: 'work_apps', label: 'Trabaja con (Uber, DiDi, Cabify, PedidosYa, remis…)', when: () => choferesMode() },
   { name: 'guarantor_name', label: 'Garante: nombre y apellido', when: () => choferesMode() },
-  { name: 'guarantor_doc', label: 'Garante: DNI', when: () => choferesMode() },
+  { name: 'guarantor_doc', label: 'Garante: documento', when: () => choferesMode() },
   { name: 'guarantor_phone', label: 'Garante: teléfono', when: () => choferesMode() },
   { name: 'guarantor_address', label: 'Garante: domicilio', when: () => choferesMode() },
   { name: 'notes', label: 'Notas', type: 'textarea', full: true },
 ];
 
 const VEHICLE_FIELDS = [
-  { name: 'plate', label: 'Patente', required: true },
+  { name: 'plate', label: 'Placa', required: true },
   { name: 'category_id', label: 'Categoría', type: 'select', required: true, options: () => state.categories.map((c) => [c.id, `${c.code} · ${c.name}`]) },
   // Agencias con modalidad de pago: la modalidad y el monto van primero; su monto manda sobre la categoría.
   { name: 'pay_every', label: 'Modalidad de pago', type: 'select', required: true, options: [[24, 'Cada 24 horas'], [12, 'Cada 12 horas']], default: 24, when: payModes },
@@ -3906,7 +3905,7 @@ const VEHICLE_FIELDS = [
   { name: 'km', label: 'Kilometraje', type: 'number', default: 0 },
   { name: 'fuel', label: 'Combustible (octavos)', type: 'number', default: 8, attrs: 'min="0" max="8"' },
   { name: 'insurance_expiry', label: 'Vencimiento seguro', type: 'date' },
-  { name: 'vtv_expiry', label: 'Vencimiento VTV', type: 'date' },
+  { name: 'vtv_expiry', label: 'Vencimiento inspección técnica', type: 'date' },
   { name: 'registration_expiry', label: 'Vencimiento de la cédula de circulación', type: 'date', when: () => state.settings.country !== 'AR' },
   { name: 'insurance_company', label: 'Aseguradora' },
   { name: 'insurance_policy', label: 'N° de póliza' },
@@ -4046,10 +4045,10 @@ on(
     if (isAux()) return auxFleet(view);
     let filter = FLEET_FILTERS.some(([k]) => k === estado) ? estado : '';
     view.innerHTML = `<div class="page-head"><h1>Autos</h1><div class="chips" style="margin:0 0 0 auto" role="group" aria-label="Ver como"><button type="button" class="chip" data-look="cards">Tarjetas</button><button type="button" class="chip" data-look="list">Lista</button></div><button class="btn primary" data-new>${ICON.plus}Agregar auto</button></div>
-      <div class="fleet-bar"><input id="fleet-q" type="search" placeholder="Buscar por patente, marca o modelo" aria-label="Buscar auto"/>
+      <div class="fleet-bar"><input id="fleet-q" type="search" placeholder="Buscar por placa, marca o modelo" aria-label="Buscar auto"/>
         <div class="chips" id="fleet-chips" role="group" aria-label="Estado"></div></div>
       <div id="fleet"></div>`;
-    // Seguro y VTV: rojo si venció, ámbar si vence en 30 días.
+    // Seguro e inspección técnica: rojo si venció, ámbar si vence en 30 días.
     const doc = (label, d) => `<div><dt>${label}</dt><dd class="doc-${d ? dueTone(d) : 'wait'}">${d ? fmtD(d) : '—'}</dd></div>`;
     const card = (v) => `<article class="vcard st-${v.status}" data-id="${v.id}">
         <div class="vcard-top">
@@ -4074,7 +4073,7 @@ on(
     // Fila de la vista en lista: lo mismo que la tarjeta, en una línea (útil con muchos autos).
     const row = (v) => `<tr class="vcard-row" data-id="${v.id}"><td><span class="plate">${esc(v.plate)}</span></td><td><b>${esc([v.brand, v.model].filter(Boolean).join(' ') || v.category_name)}</b>${v.year ? ` <small class="muted">${esc(v.year)}</small>` : ''}</td><td>${esc(v.category_code)}</td><td>${esc(v.branch_name || '')}</td><td>${badge(v.status)}</td><td class="right nowrap">${num(v.km || 0)}</td><td class="nowrap">${v.insurance_expiry ? `<span class="doc-${dueTone(v.insurance_expiry)}">${fmtD(v.insurance_expiry)}</span>` : '—'}</td><td class="nowrap right"><button class="btn small" type="button" data-hist>Historial</button> <button class="btn small" type="button" data-edit>Editar</button></td></tr>`;
     const table = (list) =>
-      `<div class="table-wrap"><table><thead><tr><th>${plateWord()}</th><th>Auto</th><th>Categoría</th><th>Sucursal</th><th>Estado</th><th class="right">Km</th><th>Seguro vence</th><th></th></tr></thead><tbody>${list.map(row).join('')}</tbody></table></div>`;
+      `<div class="table-wrap"><table><thead><tr><th>Placa</th><th>Auto</th><th>Categoría</th><th>Sucursal</th><th>Estado</th><th class="right">Km</th><th>Seguro vence</th><th></th></tr></thead><tbody>${list.map(row).join('')}</tbody></table></div>`;
     let look = 'cards';
     try {
       look = localStorage.getItem('fleet_look') === 'list' ? 'list' : 'cards';
@@ -4364,9 +4363,9 @@ document.addEventListener('click', (e) => {
 const EXPENSE_KINDS = [
   ['taller', 'Taller / mecánico'],
   ['repuestos', 'Repuestos'],
-  ['combustible', 'Combustible / GNC'],
+  ['combustible', 'Combustible'],
   ['seguro', 'Seguro'],
-  ['patente', 'Patente e impuestos'],
+  ['patente', 'Impuestos del auto'],
   ['lavado', 'Lavado'],
   ['peajes', 'Peajes / Panapass'],
   ['estacionamiento', 'Estacionamiento'],
@@ -4672,8 +4671,7 @@ on(/^\/cotizador$/, async (view) => {
     const fromWeb = d.inbox.filter((i) => i.channel === 'web');
     const siteSet = d.webform.allowed_origins && !/discoverushuaia/.test(d.webform.allowed_origins);
     const devNote = `Hola! Necesito conectar el formulario de cotización de mi página con mi sistema de reservas. Pegá esta línea antes de </body> en la página del cotizador:\n\n${d.webform.script_tag}\n\nEl formulario sigue funcionando igual: solo manda una copia de cada pedido al sistema. Si la página tiene más de un formulario, cambiá data-form="form" por el selector del cotizador.`;
-    const guide = proOn()
-      ? `<div class="card stack" style="margin-bottom:16px">
+    const guide = `<div class="card stack" style="margin-bottom:16px">
         <h2>Dejar tu página conectada</h2>
         <form id="site-form" class="stack"><label><b>1.</b> Dirección de tu página<input name="webform_site" required placeholder="mipagina.com" value="${siteSet ? esc(d.webform.allowed_origins.split(',').pop()) : ''}"/></label>
           ${siteSet ? '<small class="muted">Ya acepta pedidos de esa página.</small>' : '<small class="error">Falta: sin esto, los pedidos de tu página no entran.</small>'}
@@ -4681,8 +4679,7 @@ on(/^\/cotizador$/, async (view) => {
         <label><b>2.</b> Mandale esto a quien hace tu página<textarea id="dev-note" readonly rows="7" data-notr>${esc(devNote)}</textarea></label>
         <div class="actions"><button class="btn" type="button" data-copy="dev-note">Copiar</button></div>
         <p><b>3.</b> Mandá una cotización de prueba desde tu página. ${fromWeb.length ? `<span class="badge b-confirmada">Conectada</span> Último pedido: ${esc(fromWeb[0].received_at)}` : '<span class="badge b-pendiente">Todavía no llegó ningún pedido</span>'}</p>
-      </div>`
-      : '';
+      </div>`;
     body.innerHTML = `${guide}
       <div class="grid cols-2">
         <div class="card stack">
@@ -4946,8 +4943,8 @@ on(/^\/config$/, async (view) => {
       { name: 'prices_include_tax', label: 'Las tarifas incluyen el impuesto', type: 'checkbox' },
       { name: 'tax_id_label', label: 'Nombre de la identificación fiscal (CUIT, RUT, RFC, NIF…)' },
       { name: 'locale', label: 'Formato de números y fechas', type: 'select', options: LOCALES },
-      { name: 'turnaround_minutes', label: 'Minutos libres entre la devolución de un auto y su próximo alquiler', type: 'number', attrs: 'min="0"', when: () => proOn() },
-      { name: 'dynamic_pricing_rules', label: 'Subir precios según ocupación (ocupación:recargo, por ejemplo 70:10, 90:20)', when: () => proOn() && !choferesMode() },
+      { name: 'turnaround_minutes', label: 'Minutos libres entre la devolución de un auto y su próximo alquiler', type: 'number', attrs: 'min="0"' },
+      { name: 'dynamic_pricing_rules', label: 'Subir precios según ocupación (ocupación:recargo, por ejemplo 70:10, 90:20)', when: () => !choferesMode() },
       { name: 'min_driver_age', label: 'Edad mínima del conductor', type: 'number' },
       { name: 'deductible_amount', label: 'Franquicia del seguro (vacío = la de la póliza)', type: 'number' },
       { name: 'jurisdiction', label: 'Jurisdicción del contrato (tribunales de...)', full: true },
@@ -5562,7 +5559,7 @@ on(/^\/empresas$/, async (view) => {
     );
   const ACCOUNT_FIELDS = [
     { name: 'contact_name', label: 'Responsable' },
-    { name: 'contact_phone', label: 'WhatsApp o teléfono', attrs: 'placeholder="+54 9 2901 …"' },
+    { name: 'contact_phone', label: 'WhatsApp o teléfono', attrs: 'placeholder="+código de país y número"' },
     { name: 'notes', label: 'Notas', type: 'textarea', full: true, rows: 3, attrs: 'placeholder="Le prometí cargarle la flota…"' },
     { name: 'plan_price', label: 'Precio del plan (por mes)', type: 'number' },
     { name: 'billing_day', label: 'Día de cobro (1 a 31)', type: 'number', step: '1' },
@@ -5800,9 +5797,9 @@ async function logoDataUrl(file) {
    Importar datos de sistemas anteriores (sólo administradores)
    ============================================================ */
 const IMPORT_KINDS = [
-  { key: 'flota', label: '1 · Flota', hint: 'Patente, marca, modelo, año, categoría, estado, km, vencimientos de seguro y VTV.' },
+  { key: 'flota', label: '1 · Flota', hint: 'Placa, marca, modelo, año, categoría, estado, km, vencimientos de seguro e inspección técnica.' },
   { key: 'clientes', label: '2 · Clientes', hint: 'Nombre, documento, email, teléfono, domicilio, licencia, fecha de nacimiento.' },
-  { key: 'reservas', label: '3 · Reservas', hint: 'Cliente, fechas y horas de entrega y devolución, patente o categoría, estado, total y seña.' },
+  { key: 'reservas', label: '3 · Reservas', hint: 'Cliente, fechas y horas de entrega y devolución, placa o categoría, estado, total y seña.' },
 ];
 const IMPORT_ACTION = {
   creado: ['Nuevo', 'b-en_curso'],
@@ -5917,7 +5914,7 @@ on(/^\/importar$/, async (view) => {
       <p class="muted">${
         st.kind === 'reservas'
           ? 'Las reservas que ya se importaron antes (mismo número, o mismo cliente y fechas) se saltean, así que podés volver a importar el archivo sin duplicar. Los clientes que no estén cargados se crean.'
-          : 'Los registros repetidos se detectan solos (clientes por documento, email o teléfono; autos por patente), así que podés volver a importar sin duplicar.'
+          : 'Los registros repetidos se detectan solos (clientes por documento, email o teléfono; autos por placa), así que podés volver a importar sin duplicar.'
       }</p>
       <div class="actions" style="margin-top:14px"><button class="btn" id="imp-test" type="button">Probar (no guarda nada)</button><button class="btn primary" id="imp-run" type="button">Importar</button></div>
     </div>`;
@@ -6476,7 +6473,7 @@ function howItWorksPage() {
     <ol class="sheet-list">
       <li><b>Hoy</b><span>Al abrirlo ves quién retira y quién devuelve un auto, cuánto debe cada cliente y los pedidos para confirmar.</span></li>
       <li><b>Reservas en un minuto</b><span>Fechas, auto y cliente. El voucher y el contrato salen solos y se mandan por WhatsApp.</span></li>
-      <li><b>Calendario y autos</b><span>Qué auto está ocupado cada día, cuáles están en el taller y qué seguro o VTV está por vencer.</span></li>
+      <li><b>Calendario y autos</b><span>Qué auto está ocupado cada día, cuáles están en el taller y qué seguro o inspección técnica está por vencer.</span></li>
       <li><b>Pedidos de internet</b><span>Los pedidos de tu página web entran solos y los confirmás con un toque. Si no tenés reservas por internet, podés activar un link para Instagram y WhatsApp.</span></li>
     </ol>
     <h2>Qué hace falta para arrancar</h2>

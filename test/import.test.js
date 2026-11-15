@@ -140,7 +140,7 @@ test('flota: reconoce columnas, crea, actualiza y avisa lo que no entiende', asy
   const rowCat = r.rows.find((x) => x.line === 4);
   assert.equal(rowCat.action, 'error');
   assert.match(rowCat.messages[0], /Categoría desconocida/);
-  assert.match(r.rows.find((x) => x.line === 5).messages[0], /patente/);
+  assert.match(r.rows.find((x) => x.line === 5).messages[0], /placa/);
 
   // Con categoría por defecto, la fila rara entra con avisos.
   const r2 = (await run('flota', csv, m, { default_category_id: 5 })).data;

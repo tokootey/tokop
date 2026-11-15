@@ -2,7 +2,7 @@
 
 const express = require('express');
 const crypto = require('node:crypto');
-const { getSettings, setSetting, newApiKey, DEFAULT_SETTINGS, CONTRACT_TERMS, CONTRACT_TERMS_EN, CONTRACT_TERMS_CHOFERES, COUNTRY_PRESETS } = require('../db');
+const { getSettings, setSetting, newApiKey, DEFAULT_SETTINGS, CONTRACT_TERMS, CONTRACT_TERMS_EN, CONTRACT_TERMS_CHOFERES, COUNTRY_PRESETS, phoneHint } = require('../db');
 const { hashPassword, requireAdmin, assertPassword, audit } = require('../auth');
 const { getMapping, getWebformMapping, interpret, ingestQuote, reprocessInbox } = require('../integration');
 const { emit } = require('../webhooks');
@@ -74,6 +74,7 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
     s.contract_terms_en_default = CONTRACT_TERMS_EN;
     s.contract_terms_choferes_default = CONTRACT_TERMS_CHOFERES;
     s.country_presets = COUNTRY_PRESETS;
+    s.phone_hint = phoneHint(s.country);
     s.chat_faq_default = FAQ_DEFAULT;
     res.json(s);
   });
