@@ -102,7 +102,21 @@ function buildContractPdf(r, photos = []) {
   );
   doc.setLineWidth(0.6).line(M, headEnd, W - M, headEnd);
 
-  let y = section('Cliente / conductor principal', headEnd + 6);
+  // Avisos de la agencia (Configuración): recuadrados arriba de todo, así salen siempre en la primera hoja.
+
+  const notes = String(s.contract_front_notes || '').trim();
+  const gap = 4; // separación entre secciones
+  let bodyTop = headEnd;
+  if (notes) {
+    doc.setFont('helvetica', 'bold').setFontSize(8);
+    const lines = doc.splitTextToSize(notes, W - 2 * M - 5);
+    const bh = lines.length * 3.5 + 3;
+    doc.setDrawColor(17).setLineWidth(0.5).rect(M, headEnd + 2, W - 2 * M, bh);
+    doc.setTextColor(17).text(lines, M + 2.5, headEnd + 5.8);
+    bodyTop = headEnd + 2 + bh - 1;
+  }
+
+  let y = section('Cliente / conductor principal', bodyTop + 6);
   kv(y, [
     ['Nombre y apellido', txt(r.customer_name), 'Documento', r.customer_doc ? `${txt(docTypeOf(r.customer_doc_type))} ${r.customer_doc}` : ''],
     ['Domicilio', txt(r.customer_address), 'Teléfono', txt(r.customer_phone)],
@@ -116,7 +130,7 @@ function buildContractPdf(r, photos = []) {
     ...(r.customer_workplace || r.customer_alt_contact ? [['Lugar de trabajo', txt(r.customer_workplace), 'Contacto alt.', txt(r.customer_alt_contact)]] : []),
   ]);
   if (r.holder) {
-    y = section('Titular del contrato', lastY() + 6);
+    y = section('Titular del contrato', lastY() + gap);
     kv(y, [
       ['Nombre', txt(r.holder.full_name), 'Documento', [r.holder.doc_type, r.holder.doc_number].filter(Boolean).join(' ')],
       ['Domicilio', txt(r.holder.address), 'Teléfono', txt(r.holder.phone)],
@@ -124,7 +138,7 @@ function buildContractPdf(r, photos = []) {
   }
 
   if (choferesMode()) {
-    y = section('Licencia profesional y garante', lastY() + 6);
+    y = section('Licencia profesional y garante', lastY() + gap);
     kv(y, [
       ['Clase de licencia', txt(r.customer_license_class), 'Trabaja con', txt(r.customer_work_apps)],
       ['Garante', txt(r.guarantor_name), 'Documento', txt(r.guarantor_doc)],
@@ -133,7 +147,7 @@ function buildContractPdf(r, photos = []) {
   } else {
     // Los conductores cargados en la reserva; si no hay, queda el renglón en blanco para completar a mano.
     const drivers = (r.drivers || []).length ? r.drivers : [{}];
-    y = section(drivers.length > 1 ? 'Conductores adicionales' : 'Conductor adicional', lastY() + 6);
+    y = section(drivers.length > 1 ? 'Conductores adicionales' : 'Conductor adicional', lastY() + gap);
     kv(
       y,
       drivers.flatMap((x) => [
@@ -143,17 +157,19 @@ function buildContractPdf(r, photos = []) {
     );
   }
 
-  y = section('Vehículo y período', lastY() + 6);
+  const category = `${r.category_code} · ${r.category_name}`;
+  const panapass = panapassOn() && r.vehicle_panapass_number ? txt(r.vehicle_panapass_number) : '';
+  y = section('Vehículo y período', lastY() + gap);
   kv(y, [
     ['Marca y modelo', r.vehicle_plate ? `${txt(r.vehicle_brand)} ${txt(r.vehicle_model)}` : '', 'Patente', txt(r.vehicle_plate)],
-    ['Color / año', r.vehicle_plate ? [r.vehicle_color, r.vehicle_year].filter(Boolean).join(' · ') : '', 'Categoría', `${r.category_code} · ${r.category_name}`],
     // Panamá: el cliente necesita la cuenta del Panapass para recargarla (sale del auto; si cambia, se edita el auto).
-    ...(panapassOn() && r.vehicle_panapass_number ? [['Cuenta Panapass', txt(r.vehicle_panapass_number), '', '']] : []),
+    // Va en el lugar de la categoría, que pasa al renglón de los días: así no suma un renglón.
+    ['Color / año', r.vehicle_plate ? [r.vehicle_color, r.vehicle_year].filter(Boolean).join(' · ') : '', ...(panapass ? ['Cuenta Panapass', panapass] : ['Categoría', category])],
     ['Retiro', `${dt(r.pickup_at)} · ${txt(r.pickup_branch_name)}`, 'Devolución pactada', `${dt(r.return_at)} · ${txt(r.return_branch_name)}`],
-    ['Días', txt(r.days), 'Vuelo / referencia', txt(r.flight)],
+    ['Días', panapass ? `${txt(r.days)} · Cat. ${category}` : txt(r.days), 'Vuelo / referencia', txt(r.flight)],
   ]);
 
-  y = section('Entrega y devolución del vehículo', lastY() + 6);
+  y = section('Entrega y devolución del vehículo', lastY() + gap);
   const back = c && c.in_at;
   table({
     ...base,
@@ -173,7 +189,7 @@ function buildContractPdf(r, photos = []) {
   });
 
   // Diagrama del auto (visto desde arriba) para marcar daños, y observaciones.
-  y = ensure(section('Estado del vehículo (marcar con X los daños)', lastY() + 6) + 2, 42);
+  y = ensure(section('Estado del vehículo (marcar con X los daños)', lastY() + gap) + 2, 42);
   doc.setDrawColor(40).setLineWidth(0.5).roundedRect(M + 4, y + 4, 52, 26, 8, 8);
   doc.setLineWidth(0.25).setDrawColor(140);
   doc.roundedRect(M + 20, y + 8, 20, 18, 2, 2);
@@ -193,7 +209,7 @@ function buildContractPdf(r, photos = []) {
   doc.setTextColor(17).setFontSize(8);
   if (c && c.out_notes) doc.text(doc.splitTextToSize(c.out_notes, nw - 3).slice(0, 3), nx + 1.5, y + 5.5);
   if (c && c.in_notes) doc.text(doc.splitTextToSize(c.in_notes, nw - 3).slice(0, 3), nx + 1.5, y + 24);
-  y += 38;
+  y += 36;
 
   // Precio y pagos, lado a lado.
   y = ensure(section('Precio, pagos y garantía', y + 2), 50);
@@ -235,24 +251,13 @@ function buildContractPdf(r, photos = []) {
         .map((x) => ['Seguro', `${x.name} · ${x.deductible ? `franquicia ${money(x.deductible)}` : 'sin franquicia'}`]),
       ['Adicionales', r.extras.filter((x) => x.kind !== 'seguro').map((x) => x.name).join(', ') || '-'],
     ],
-    columnStyles: { 0: { fontStyle: 'bold', fillColor: [240, 240, 240] }, 1: { halign: 'right' } },
+    // Ancho fijo para la primera columna: si no, un seguro de nombre largo se parte en muchos renglones.
+    columnStyles: { 0: { fontStyle: 'bold', fillColor: [240, 240, 240], cellWidth: 34 }, 1: { halign: 'right' } },
   });
-  y = Math.max(leftEnd, lastY()) + 6;
-
-  // Avisos de la agencia (Configuración), recuadrados antes de las firmas.
-  const notes = String(s.contract_front_notes || '').trim();
-  if (notes) {
-    doc.setFont('helvetica', 'bold').setFontSize(8.5);
-    const lines = doc.splitTextToSize(notes, W - 2 * M - 6);
-    const bh = lines.length * 3.8 + 4;
-    y = ensure(y, bh + 2);
-    doc.setDrawColor(17).setLineWidth(0.5).rect(M, y, W - 2 * M, bh);
-    doc.setTextColor(17).text(lines, M + 3, y + 4.5);
-    y += bh + 6;
-  }
+  y = Math.max(leftEnd, lastY()) + gap;
 
   // Conformidad y firmas.
-  y = ensure(y, 34);
+  if (y + 31 > H - 13) y = ensure(y, H); // las firmas ocupan 31 mm: si no entran enteras, van a la hoja siguiente
   doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(17);
   doc.text(
     doc.splitTextToSize(
@@ -262,7 +267,7 @@ function buildContractPdf(r, photos = []) {
     M,
     y,
   );
-  signatures(y + 22, ['Firma del cliente', choferesMode() ? 'Garante' : 'Conductor adicional', `Por ${company}`]);
+  signatures(y + 18, ['Firma del cliente', choferesMode() ? 'Garante' : 'Conductor adicional', `Por ${company}`]);
 
   /* ---------- Hoja 2: condiciones generales ---------- */
   doc.addPage();

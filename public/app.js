@@ -3334,6 +3334,7 @@ async function printContract(r) {
     ${delivered ? `N° <b>${esc(c.number)}</b>` : '<span class="badge">Sin entregar todavía</span>'}<br>
     Reserva ${esc(r.code)} · Emitido ${esc(new Date().toLocaleDateString(locale()))}</div>
 </div>
+${String(s.contract_front_notes || '').trim() ? `<div style="border:2px solid #111;padding:4px 8px;margin-top:6px;font-weight:700;font-size:10px;white-space:pre-wrap">${esc(String(s.contract_front_notes).trim())}</div>` : ''}
 
 <div class="grid">
   <div><h2>Cliente / conductor principal</h2><table>
@@ -3416,7 +3417,6 @@ async function printContract(r) {
   </table></div>
 </div>
 
-${String(s.contract_front_notes || '').trim() ? `<div style="border:2px solid #111;padding:6px 8px;margin-top:10px;font-weight:700;white-space:pre-wrap">${esc(String(s.contract_front_notes).trim())}</div>` : ''}
 <p style="margin-top:10px">El Cliente declara haber leído y aceptado las condiciones generales que forman parte de este contrato (página siguiente) y recibir el vehículo en el estado indicado.</p>
 <div class="sign">
   <div>${signedBy}Firma del cliente<small>Aclaración:<br>${docWord()}:</small></div>
@@ -4924,7 +4924,7 @@ on(/^\/config$/, async (view) => {
       { name: 'company_tax_id', label: `${s.tax_id_label || 'CUIT'} de la empresa` },
       { name: 'company_phone', label: 'Teléfono' },
       { name: 'company_address', label: 'Dirección', full: true },
-      { name: 'contract_front_notes', label: 'Avisos de la primera hoja del contrato (salen recuadrados antes de las firmas: multas, kilometraje, devolución del depósito, teléfonos de asistencia…)', type: 'textarea', full: true, rows: 4, when: () => !choferesMode() },
+      { name: 'contract_front_notes', label: 'Avisos de la primera hoja del contrato (salen recuadrados arriba, debajo de los datos de la empresa: multas, kilometraje, devolución del depósito, teléfonos de asistencia…)', type: 'textarea', full: true, rows: 4, when: () => !choferesMode() },
       { name: 'extra_pay_methods', label: 'Otros medios de pago (uno por renglón; aparecen al registrar un cobro)', type: 'textarea', full: true, rows: 3 },
       { name: 'currency', label: 'Moneda', type: 'select', options: CURRENCIES, required: true },
       { name: 'tax_name', label: 'Nombre del impuesto (IVA, IGV, ITBIS, IGIC…)' },
