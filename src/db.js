@@ -512,6 +512,8 @@ const DEFAULT_SETTINGS = {
   company_tax_id: '',
   company_address: '',
   company_phone: '',
+  company_logo: '', // imagen chica en base64: sale en la barra de arriba y en el contrato (también la carga el dueño de Floty, src/platform.js)
+  contract_front_notes: '', // avisos recuadrados en la primera hoja del contrato (multas, horarios, teléfonos)
   country: 'AR',
   locale: 'es-AR',
   currency: 'ARS',

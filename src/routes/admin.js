@@ -87,6 +87,10 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
     if (body.business_mode !== undefined && !['turismo', 'choferes'].includes(body.business_mode)) fail(400, 'Tipo de negocio inválido');
     if (body.rent_period !== undefined && !['dia', 'semana', 'mes'].includes(body.rent_period)) fail(400, 'Período de alquiler inválido');
     if (body.paypal_surcharge_pct !== undefined && !(Number(body.paypal_surcharge_pct) >= 0 && Number(body.paypal_surcharge_pct) <= 100)) fail(400, 'El recargo de PayPal tiene que ser un porcentaje entre 0 y 100');
+    // El logo va dentro del contrato: solo una imagen chica en base64 (nada de links ni otros formatos).
+    if (body.company_logo && !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(body.company_logo)) fail(400, 'El logo tiene que ser una imagen PNG o JPG');
+    if (body.company_logo && body.company_logo.length > 300000) fail(400, 'El logo es muy pesado: probá con una imagen más chica');
+    if (body.contract_front_notes !== undefined) body.contract_front_notes = String(body.contract_front_notes ?? '').slice(0, 1500);
     if (body.extra_pay_methods !== undefined) body.extra_pay_methods = String(body.extra_pay_methods).slice(0, 500);
     for (const k of ['payment_link_url', 'deposit_link_url']) if (body[k] && !String(body[k]).trim().toLowerCase().startsWith('https://')) fail(400, 'El link de pago tiene que empezar con https://');
     if (body.after_hours_fee !== undefined && !(Number(body.after_hours_fee) >= 0)) fail(400, 'El recargo fuera de hora tiene que ser un número positivo');

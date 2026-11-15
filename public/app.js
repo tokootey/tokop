@@ -3327,9 +3327,9 @@ async function printContract(r) {
   .badge { display: inline-block; border: 1px solid #111; padding: 1px 6px; font-weight: 700; }
 </style></head><body>
 <div class="head">
-  <div><h1>${esc(s.company_name || '')}</h1>
+  <div style="display:flex;gap:10px;align-items:flex-start">${s.company_logo ? `<img src="${esc(s.company_logo)}" alt="" style="max-height:60px;max-width:150px">` : ''}<div><h1>${esc(s.company_name || '')}</h1>
     <div>${esc(s.company_address || '')}</div>
-    <div>${esc(s.company_phone || '')}${s.company_tax_id ? ` · ${esc(taxIdLabel())} ${esc(s.company_tax_id)}` : ''}</div></div>
+    <div>${esc(s.company_phone || '')}${s.company_tax_id ? ` · ${esc(taxIdLabel())} ${esc(s.company_tax_id)}` : ''}</div></div></div>
   <div class="right"><b>${title}</b><br>
     ${delivered ? `N° <b>${esc(c.number)}</b>` : '<span class="badge">Sin entregar todavía</span>'}<br>
     Reserva ${esc(r.code)} · Emitido ${esc(new Date().toLocaleDateString(locale()))}</div>
@@ -3371,6 +3371,7 @@ async function printContract(r) {
     ${line('Patente', r.vehicle_plate ? `<b>${esc(r.vehicle_plate)}</b>` : '')}
     ${line('Color / año', r.vehicle_plate ? `${esc(r.vehicle_color || '')} ${r.vehicle_year ? '· ' + esc(r.vehicle_year) : ''}` : '')}
     ${line('Categoría', `${esc(r.category_code)} · ${esc(r.category_name)}`)}
+    ${panapassOn() && r.vehicle_panapass_number ? line('Cuenta Panapass', esc(r.vehicle_panapass_number)) : ''}
   </table>
   <h2>Período del alquiler</h2><table>
     ${line('Retiro', `${fmtDT(r.pickup_at)} · ${esc(r.pickup_branch_name || '')}`)}
@@ -3415,6 +3416,7 @@ async function printContract(r) {
   </table></div>
 </div>
 
+${String(s.contract_front_notes || '').trim() ? `<div style="border:2px solid #111;padding:6px 8px;margin-top:10px;font-weight:700;white-space:pre-wrap">${esc(String(s.contract_front_notes).trim())}</div>` : ''}
 <p style="margin-top:10px">El Cliente declara haber leído y aceptado las condiciones generales que forman parte de este contrato (página siguiente) y recibir el vehículo en el estado indicado.</p>
 <div class="sign">
   <div>${signedBy}Firma del cliente<small>Aclaración:<br>${docWord()}:</small></div>
@@ -4031,7 +4033,7 @@ on(
   async (view, estado) => {
     if (isAux()) return auxFleet(view);
     let filter = FLEET_FILTERS.some(([k]) => k === estado) ? estado : '';
-    view.innerHTML = `<div class="page-head"><h1>Autos</h1><button class="btn primary" data-new>${ICON.plus}Agregar auto</button></div>
+    view.innerHTML = `<div class="page-head"><h1>Autos</h1><div class="chips" style="margin:0 0 0 auto" role="group" aria-label="Ver como"><button type="button" class="chip" data-look="cards">Tarjetas</button><button type="button" class="chip" data-look="list">Lista</button></div><button class="btn primary" data-new>${ICON.plus}Agregar auto</button></div>
       <div class="fleet-bar"><input id="fleet-q" type="search" placeholder="Buscar por patente, marca o modelo" aria-label="Buscar auto"/>
         <div class="chips" id="fleet-chips" role="group" aria-label="Estado"></div></div>
       <div id="fleet"></div>`;
@@ -4057,15 +4059,29 @@ on(
           ${isAdmin() ? `<button class="btn icon danger" type="button" data-del aria-label="Borrar ${esc(v.plate)}" title="Borrar">${ICON.trash}</button>` : ''}
         </div>
       </article>`;
+    // Fila de la vista en lista: lo mismo que la tarjeta, en una línea (útil con muchos autos).
+    const row = (v) => `<tr class="vcard-row" data-id="${v.id}"><td><span class="plate">${esc(v.plate)}</span></td><td><b>${esc([v.brand, v.model].filter(Boolean).join(' ') || v.category_name)}</b>${v.year ? ` <small class="muted">${esc(v.year)}</small>` : ''}</td><td>${esc(v.category_code)}</td><td>${esc(v.branch_name || '')}</td><td>${badge(v.status)}</td><td class="right nowrap">${num(v.km || 0)}</td><td class="nowrap">${v.insurance_expiry ? `<span class="doc-${dueTone(v.insurance_expiry)}">${fmtD(v.insurance_expiry)}</span>` : '—'}</td><td class="nowrap right"><button class="btn small" type="button" data-hist>Historial</button> <button class="btn small" type="button" data-edit>Editar</button></td></tr>`;
+    const table = (list) =>
+      `<div class="table-wrap"><table><thead><tr><th>${plateWord()}</th><th>Auto</th><th>Categoría</th><th>Sucursal</th><th>Estado</th><th class="right">Km</th><th>Seguro vence</th><th></th></tr></thead><tbody>${list.map(row).join('')}</tbody></table></div>`;
+    let look = 'cards';
+    try {
+      look = localStorage.getItem('fleet_look') === 'list' ? 'list' : 'cards';
+    } catch {}
     let rows = [];
     const paint = () => {
+      for (const b of view.querySelectorAll('[data-look]')) {
+        b.classList.toggle('on', b.dataset.look === look);
+        b.setAttribute('aria-pressed', b.dataset.look === look);
+      }
       const counts = Object.fromEntries(FLEET_FILTERS.map(([k]) => [k, k ? rows.filter((v) => v.status === k).length : rows.length]));
       $('#fleet-chips').innerHTML = FLEET_FILTERS.filter(([k]) => !k || counts[k] || k === filter)
         .map(([k, l]) => `<button type="button" class="chip${k === filter ? ' on' : ''}" data-f="${k}" aria-pressed="${k === filter}">${l} <span class="chip-n">${counts[k]}</span></button>`)
         .join('');
       const list = filter ? rows.filter((v) => v.status === filter) : rows;
       $('#fleet').innerHTML = list.length
-        ? `<div class="fleet">${list.map(card).join('')}</div>`
+        ? look === 'list'
+          ? table(list)
+          : `<div class="fleet">${list.map(card).join('')}</div>`
         : `<div class="card muted">${rows.length ? 'No hay autos en este estado.' : 'Todavía no cargaste autos. Tocá "Agregar auto" o pasalos desde una planilla en Más → Pasar datos de una planilla.'}</div>`;
     };
     const load = async () => {
@@ -4073,6 +4089,15 @@ on(
       rows = await GET(`/vehicles${q ? `?q=${encodeURIComponent(q)}${branchQS('&')}` : branchQS()}`);
       paint();
     };
+    $('.page-head', view).addEventListener('click', (e) => {
+      const b = e.target.closest('[data-look]');
+      if (!b) return;
+      look = b.dataset.look;
+      try {
+        localStorage.setItem('fleet_look', look);
+      } catch {}
+      paint();
+    });
     $('#fleet-chips').addEventListener('click', (e) => {
       const b = e.target.closest('[data-f]');
       if (!b) return;
@@ -4085,7 +4110,7 @@ on(
       t = setTimeout(() => run(load), 250);
     });
     $('#fleet').addEventListener('click', async (e) => {
-      const box = e.target.closest('.vcard');
+      const box = e.target.closest('.vcard, .vcard-row');
       if (!box) return;
       const v = rows.find((x) => x.id === Number(box.dataset.id));
       const shopJobs = async () => (await GET(`/maintenance?q=${encodeURIComponent(v.plate)}`)).filter((m) => m.vehicle_id === v.id);
@@ -4899,6 +4924,7 @@ on(/^\/config$/, async (view) => {
       { name: 'company_tax_id', label: `${s.tax_id_label || 'CUIT'} de la empresa` },
       { name: 'company_phone', label: 'Teléfono' },
       { name: 'company_address', label: 'Dirección', full: true },
+      { name: 'contract_front_notes', label: 'Avisos de la primera hoja del contrato (salen recuadrados antes de las firmas: multas, kilometraje, devolución del depósito, teléfonos de asistencia…)', type: 'textarea', full: true, rows: 4, when: () => !choferesMode() },
       { name: 'extra_pay_methods', label: 'Otros medios de pago (uno por renglón; aparecen al registrar un cobro)', type: 'textarea', full: true, rows: 3 },
       { name: 'currency', label: 'Moneda', type: 'select', options: CURRENCIES, required: true },
       { name: 'tax_name', label: 'Nombre del impuesto (IVA, IGV, ITBIS, IGIC…)' },
@@ -4950,6 +4976,32 @@ on(/^\/config$/, async (view) => {
     for (const k of ['currency', 'tax_name', 'tax_rate', 'tax_id_label', 'locale']) if (form[k]) form[k].value = p[k];
     toast(`Datos de ${p.name} cargados: revisalos y tocá Guardar`);
   });
+  // Logo de la agencia (el mismo de la barra de arriba; sale también en el contrato): viaja con el resto al tocar Guardar.
+  const logo = document.createElement('div');
+  logo.className = 'full';
+  logo.innerHTML = `<input type="hidden" name="company_logo" value="${esc(s.company_logo || '')}">
+    <span class="muted">Logo (sale arriba en el sistema y en el contrato)</span>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:4px"><img alt="Logo" style="max-height:48px;max-width:140px;${s.company_logo ? '' : 'display:none'}" src="${esc(s.company_logo || '')}">
+    <label class="btn small">Subir imagen<input type="file" accept="image/png,image/jpeg" hidden></label>
+    <button type="button" class="btn small" data-logo-off ${s.company_logo ? '' : 'hidden'}>Quitar</button></div>`;
+  $('[name=company_address]', view).closest('label').after(logo);
+  const logoInput = $('[name=company_logo]', logo);
+  const logoImg = $('img', logo);
+  const showLogo = (src) => {
+    logoInput.value = src;
+    logoImg.src = src;
+    logoImg.style.display = src ? '' : 'none';
+    $('[data-logo-off]', logo).hidden = !src;
+  };
+  $('input[type=file]', logo).addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const src = await logoDataUrl(file).catch(() => null);
+    if (!src) return toast('No se pudo leer la imagen', true);
+    showLogo(src);
+    toast('Logo listo: tocá Guardar');
+  });
+  $('[data-logo-off]', logo).addEventListener('click', () => showLogo(''));
   // En el modo autos para trabajo, la ayuda y "Restaurar" son del contrato para choferes.
   const work = choferesMode();
   const terms = $(work ? '[name=contract_terms_choferes]' : '[name=contract_terms]', view);

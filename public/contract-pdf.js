@@ -72,9 +72,25 @@ function buildContractPdf(r, photos = []) {
   };
 
   /* ---------- Hoja 1: datos ---------- */
-  doc.setFont('helvetica', 'bold').setFontSize(15).text(company, M, 16);
-  doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(60);
-  doc.text([txt(s.company_address), [txt(s.company_phone), s.company_tax_id ? `${taxIdLabel()} ${s.company_tax_id}` : ''].filter(Boolean).join(' · ')].filter(Boolean), M, 21);
+  // Logo de la agencia (Configuración), a la izquierda del nombre: 16 mm de alto como mucho.
+  let hx = M;
+  if (/^data:image\/(png|jpeg)/.test(s.company_logo || '')) {
+    const p = doc.getImageProperties(s.company_logo);
+    const lh = 16;
+    const lw = Math.min(40, (p.width / p.height) * lh);
+    doc.addImage(s.company_logo, p.fileType, M, 8, lw, (p.height / p.width) * lw);
+    hx = M + lw + 3;
+  }
+  doc.setFont('helvetica', 'bold').setFontSize(15).text(company, hx, 14);
+  doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(60);
+  const infoW = W - M - 62 - hx; // deja libre la columna del título, a la derecha
+  const info = [txt(s.company_address), [txt(s.company_phone), s.company_tax_id ? `${taxIdLabel()} ${s.company_tax_id}` : ''].filter(Boolean).join(' · ')]
+    .filter(Boolean)
+    .flatMap((l) => doc.splitTextToSize(l, infoW))
+    .slice(0, 7);
+  doc.text(info, hx, 18.5);
+  // Con dirección y teléfonos largos, la cabecera crece y lo de abajo se corre (con dos renglones queda como siempre).
+  const headEnd = Math.max(28, 17 + info.length * 3.3);
   doc.setTextColor(17).setFont('helvetica', 'bold').setFontSize(10);
   doc.text(delivered ? 'CONTRATO DE ALQUILER DE VEHÍCULO' : 'CONTRATO DE ALQUILER DE VEHÍCULO (PRE-CONTRATO)', W - M, 15, { align: 'right' });
   doc.setFont('helvetica', 'normal').setFontSize(8.5);
@@ -84,9 +100,9 @@ function buildContractPdf(r, photos = []) {
     20,
     { align: 'right' },
   );
-  doc.setLineWidth(0.6).line(M, 28, W - M, 28);
+  doc.setLineWidth(0.6).line(M, headEnd, W - M, headEnd);
 
-  let y = section('Cliente / conductor principal', 34);
+  let y = section('Cliente / conductor principal', headEnd + 6);
   kv(y, [
     ['Nombre y apellido', txt(r.customer_name), 'Documento', r.customer_doc ? `${txt(docTypeOf(r.customer_doc_type))} ${r.customer_doc}` : ''],
     ['Domicilio', txt(r.customer_address), 'Teléfono', txt(r.customer_phone)],
@@ -131,6 +147,8 @@ function buildContractPdf(r, photos = []) {
   kv(y, [
     ['Marca y modelo', r.vehicle_plate ? `${txt(r.vehicle_brand)} ${txt(r.vehicle_model)}` : '', 'Patente', txt(r.vehicle_plate)],
     ['Color / año', r.vehicle_plate ? [r.vehicle_color, r.vehicle_year].filter(Boolean).join(' · ') : '', 'Categoría', `${r.category_code} · ${r.category_name}`],
+    // Panamá: el cliente necesita la cuenta del Panapass para recargarla (sale del auto; si cambia, se edita el auto).
+    ...(panapassOn() && r.vehicle_panapass_number ? [['Cuenta Panapass', txt(r.vehicle_panapass_number), '', '']] : []),
     ['Retiro', `${dt(r.pickup_at)} · ${txt(r.pickup_branch_name)}`, 'Devolución pactada', `${dt(r.return_at)} · ${txt(r.return_branch_name)}`],
     ['Días', txt(r.days), 'Vuelo / referencia', txt(r.flight)],
   ]);
@@ -220,6 +238,18 @@ function buildContractPdf(r, photos = []) {
     columnStyles: { 0: { fontStyle: 'bold', fillColor: [240, 240, 240] }, 1: { halign: 'right' } },
   });
   y = Math.max(leftEnd, lastY()) + 6;
+
+  // Avisos de la agencia (Configuración), recuadrados antes de las firmas.
+  const notes = String(s.contract_front_notes || '').trim();
+  if (notes) {
+    doc.setFont('helvetica', 'bold').setFontSize(8.5);
+    const lines = doc.splitTextToSize(notes, W - 2 * M - 6);
+    const bh = lines.length * 3.8 + 4;
+    y = ensure(y, bh + 2);
+    doc.setDrawColor(17).setLineWidth(0.5).rect(M, y, W - 2 * M, bh);
+    doc.setTextColor(17).text(lines, M + 3, y + 4.5);
+    y += bh + 6;
+  }
 
   // Conformidad y firmas.
   y = ensure(y, 34);
