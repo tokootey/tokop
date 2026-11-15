@@ -1,6 +1,6 @@
 'use strict';
 
-const { computeQuote, computeReturnCharges, youngDriverFee } = require('./pricing');
+const { computeQuote, computeReturnCharges, youngRules } = require('./pricing');
 const { categoryAvailability, isVehicleFree, paddedRange } = require('./availability');
 const { emit } = require('./webhooks');
 const { getSettings, proOn } = require('./db');
@@ -137,9 +137,9 @@ function assertExtrasFit(db, data) {
   }
 }
 
-/** Conductor menor (con recargo cargado): lleva sí o sí el seguro de menor franquicia de su categoría, en lugar del que tenga elegido. */
+/** Conductor menor (con recargo o tarifa propia cargados): lleva sí o sí el seguro de menor franquicia de su categoría, en lugar del que tenga elegido. */
 function withYoungInsurance(db, data) {
-  if (!youngDriverFee(db, getSettings(db), data)) return data.extras;
+  if (!youngRules(db, getSettings(db), data)) return data.extras;
   const cat = categoryOf(db, data);
   const best = db.prepare("SELECT id, categories FROM extras WHERE kind = 'seguro' AND active = 1 ORDER BY COALESCE(deductible, 0), price DESC").all().find((x) => extraFits(x, cat));
   if (!best) return data.extras;
@@ -277,10 +277,11 @@ function updateReservation(db, id, input, userId) {
       nowLocal(),
       current.id,
     );
-    if (input.extras) {
+    // Se guardan los del cálculo (data.extras): si el conductor es joven ya traen su seguro obligatorio, igual que el precio.
+    {
       db.prepare('DELETE FROM reservation_extras WHERE reservation_id = ?').run(current.id);
       const ins = db.prepare('INSERT INTO reservation_extras (reservation_id, extra_id, quantity) VALUES (?, ?, ?)');
-      for (const e of input.extras) ins.run(current.id, e.extra_id, Math.max(1, Number(e.quantity) || 1));
+      for (const e of data.extras || []) ins.run(current.id, e.extra_id, Math.max(1, Number(e.quantity) || 1));
     }
     log(db, current.id, userId, 'modificada', hasAgreed ? { precio_final: total, antes: current.total } : undefined);
   });

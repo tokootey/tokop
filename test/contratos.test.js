@@ -184,3 +184,27 @@ test('Adicionales por categoría: no se suman a un auto de otra categoría', asy
     app.close();
   }
 });
+
+test('Conductor joven con tarifa por categoría (sin recargo fijo): seguro de menor franquicia obligatorio', async () => {
+  const app = await start();
+  try {
+    const call = await app.as('admin');
+    await call('PUT', '/api/settings', { young_driver_age: '24', young_driver_fee: '0' });
+    const basico = (await call('POST', '/api/extras', { name: 'Básico', price: 5, charge_type: 'dia', kind: 'seguro', deductible: 500 })).data;
+    const total = (await call('POST', '/api/extras', { name: 'Full', price: 20, charge_type: 'dia', kind: 'seguro', deductible: 0 })).data;
+    const joven = (over) => {
+      const r = app.reserve(over);
+      app.db.prepare("UPDATE customers SET birth_date = '2006-01-01' WHERE id = ?").run(r.customer_id);
+      return (c) => c('PUT', `/api/reservations/${r.id}`, { extras: [{ extra_id: basico.id, quantity: 1 }] });
+    };
+    // Sin tarifa de joven en ninguna categoría, la agencia no le cobra distinto: elige el seguro que quiera.
+    assert.deepEqual((await joven()(call)).data.extras.map((e) => e.extra_id), [basico.id]);
+    // Con tarifa de joven cargada: 3 días a 70 + el seguro de menor franquicia (20 por día), aunque pida el básico.
+    app.db.prepare('UPDATE categories SET young_rate = 70 WHERE id = 1').run();
+    const r = (await joven({ pickup_at: at(10, 8), return_at: at(13, 8) })(call)).data;
+    assert.deepEqual(r.extras.map((e) => e.extra_id), [total.id]);
+    assert.equal(r.pricing.total, 3 * 70 + 3 * 20);
+  } finally {
+    app.close();
+  }
+});
