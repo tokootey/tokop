@@ -166,3 +166,21 @@ test('Panapass: si vuelve con menos saldo, la diferencia se cobra en la devoluci
     app.close();
   }
 });
+
+test('Adicionales por categoría: no se suman a un auto de otra categoría', async () => {
+  const app = await start();
+  try {
+    const call = await app.as('admin');
+    // Cobertura sólo para la categoría SUV; la de reserva de prueba es ECO.
+    const suv = (await call('POST', '/api/extras', { name: 'Cobertura SUV', price: 15, charge_type: 'dia', kind: 'seguro', categories: 'suv, cam' })).data;
+    const todos = (await call('POST', '/api/extras', { name: 'Silla', price: 5, charge_type: 'dia' })).data;
+    assert.throws(() => app.reserve({ extras: [{ extra_id: suv.id, quantity: 1 }] }), /no corresponde a la categoría Económico/);
+    assert.equal(app.reserve({ category_id: 2, vehicle_id: null, extras: [{ extra_id: suv.id, quantity: 1 }] }).extras.length, 1);
+    const eco = app.reserve({ extras: [{ extra_id: todos.id, quantity: 1 }] });
+    // Sumarle después el de SUV tampoco se puede; editar otra cosa sí.
+    assert.equal((await call('PUT', `/api/reservations/${eco.id}`, { extras: [{ extra_id: suv.id, quantity: 1 }] })).status, 400);
+    assert.equal((await call('PUT', `/api/reservations/${eco.id}`, { notes: 'ok' })).status, 200);
+  } finally {
+    app.close();
+  }
+});

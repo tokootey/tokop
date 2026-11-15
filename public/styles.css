@@ -336,6 +336,8 @@ pre { background: #0f172a; color: #dbe4f3; padding: 12px; border-radius: 8px; ov
 
 /* Simplificación: opciones plegadas y menú "Más acciones" */
 details.more-opts { margin-top: 14px; }
+.rec-box input[type=search] { margin: 8px 0; }
+.rec-box label[hidden], .quoter-extra[hidden] { display: none; }
 details.more-opts > summary, details.menu > summary { cursor: pointer; list-style: none; }
 details.more-opts > summary { color: var(--primary); font-weight: 600; font-size: 14px; }
 details.more-opts > summary::before { content: '▸ '; }
@@ -997,10 +999,12 @@ input[aria-invalid="true"] { border-color: #c62828 !important; box-shadow: 0 0 0
 .quoter-extra small { color: var(--muted); white-space: nowrap; }
 .quoter-extra:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
 @media (max-width: 520px) { .quoter .qr-dates { grid-template-columns: minmax(0, 1fr); } }
-.quoter .qr-total { flex-flow: row wrap; align-items: center; gap: 6px 12px; padding: 10px 14px; }
+.quoter .qr-total { flex-flow: row wrap; align-items: center; gap: 6px 10px; padding: 8px 12px; }
 .quoter .qr-total .sum { flex: 1 1 110px; flex-direction: column; align-items: flex-start; gap: 0; min-width: 0; }
-.quoter .qr-total .sum b { font-size: 22px; }
-.quoter .qr-total .btn { flex: 1 1 170px; min-height: 46px; font-size: 16px; }
+.quoter .qr-total .sum b { font-size: 18px; }
+.quoter .qr-total .sum span { font-size: 12px; line-height: 1.25; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.quoter .qr-total .btn { flex: 1 1 150px; min-height: 38px; font-size: 14px; border-radius: 10px; }
+.quoter .qr-total .btn.wa { min-height: 32px; font-size: 13px; }
 .quoter .qr-total small { flex-basis: 100%; font-size: 12px; }
 .demand-rows { display: flex; flex-direction: column; gap: 8px; }
 .demand-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; color: var(--text); text-decoration: none; }

@@ -1194,13 +1194,13 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
               `<label class="check"><input type="checkbox" name="extra_${x.id}"/> ${esc(x.name)} <small class="muted">(${money(x.price)}${x.charge_type === 'dia' ? '/día' : ''})</small></label>`,
           )
           .join('')}</div>
-        ${state.extras.some((x) => x.active && x.kind === 'recargo') ? `<h4 style="margin:14px 0 0">Recargos</h4><div class="actions" style="margin-top:8px">${state.extras
+        ${state.extras.some((x) => x.active && x.kind === 'recargo') ? recBox(state.extras
           .filter((x) => x.active && x.kind === 'recargo') // los que carga la agencia en Tarifas > Recargos
           .map(
             (x) =>
               `<label class="check"><input type="checkbox" name="extra_${x.id}"/> ${esc(x.name)} <small class="muted">(${money(x.price)}${x.charge_type === 'dia' ? '/día' : ''})</small></label>`,
           )
-          .join('')}</div>` : ''}
+          .join('')) : ''}
         ${state.categories.some((c) => c.no_deposit_fee > 0) ? `<label class="check" style="margin-top:12px"><input type="checkbox" name="no_deposit"/> Sin depósito <small class="muted">(suma el recargo por día de la categoría y deja el depósito en 0)</small></label>` : ''}
         <div class="form-grid" style="margin-top:12px">
           <label>Descuento %<input type="number" name="discount_pct" min="0" max="100" step="any" value="0"/></label>
@@ -1485,11 +1485,23 @@ document.addEventListener('change', (e) => {
 /** Seguro de una reserva ya hecha (o null) y los adicionales sin el seguro. */
 // Recargos propios de la agencia (Tarifas > Recargos): casillas para tildar en la reserva rápida y en la entrega.
 const surcharges = () => (state.extras || []).filter((x) => x.kind === 'recargo' && x.active);
+// Los recargos van en un desplegable con buscador: son muchos para mostrarlos todos de una.
+const recCount = (n) => (n ? `(${n} elegido${n > 1 ? 's' : ''})` : '');
+const recBox = (labels, n = 0) =>
+  `<details class="more-opts rec-box"${n ? ' open' : ''}><summary>Recargos <small class="muted" data-rec-count>${recCount(n)}</small></summary><input type="search" data-rec-search placeholder="Buscar recargo…" aria-label="Buscar recargo"/><div class="actions">${labels}</div></details>`;
+document.addEventListener('input', (e) => {
+  const box = e.target.closest('.rec-box');
+  if (!box) return;
+  if (e.target.matches('[data-rec-search]')) {
+    const q = e.target.value.trim().toLowerCase();
+    $$('label.check', box).forEach((l) => (l.hidden = !l.textContent.toLowerCase().includes(q)));
+  } else $('[data-rec-count]', box).textContent = recCount($$('input[type=checkbox]:checked', box).length);
+});
 const surchargeChecks = (current = []) =>
   surcharges().length
-    ? `<div class="full"><h4 style="margin:10px 0 6px">Recargos</h4>${surcharges()
+    ? `<div class="full">${recBox(surcharges()
         .map((x) => `<label class="check"><input type="checkbox" data-rec="${x.id}" ${current.some((e) => e.extra_id === x.id) ? 'checked' : ''}/> ${esc(x.name)} <small class="muted">(${money(x.price)}${x.charge_type === 'dia' ? '/día' : ''})</small></label>`)
-        .join('')}</div>`
+        .join(''), current.filter((e) => surcharges().some((x) => x.id === e.extra_id)).length)}</div>`
     : '';
 const pickedSurcharges = (form) => $$('[data-rec]:checked', form).map((x) => ({ extra_id: Number(x.dataset.rec), quantity: 1 }));
 // Entrega: si cambiaron los recargos tildados, se actualiza la reserva (y su precio) antes de entregar.
@@ -4510,6 +4522,7 @@ on(/^\/tarifas$/, async (view) => {
         { name: 'price', label: 'Precio', type: 'number', default: 0 },
         { name: 'charge_type', label: 'Se cobra', type: 'select', options: [['dia', 'Por día'], ['fijo', 'Por alquiler']], required: true, default: 'dia' },
         { name: 'max_price', label: 'Tope por alquiler (0 = sin tope)', type: 'number', default: 0 },
+        { name: 'categories', label: 'Solo para estas categorías (códigos separados por coma; vacío = todas)', full: true, attrs: 'placeholder="Ej.: SUV, CAM"' },
         { name: 'active', label: 'Activo', type: 'checkbox', default: 1 },
         { name: 'aliases', label: 'Alias (separados por coma)', full: true },
       ],
@@ -4535,6 +4548,7 @@ on(/^\/tarifas$/, async (view) => {
         { name: 'charge_type', label: 'Se cobra', type: 'select', options: [['dia', 'Por día'], ['fijo', 'Por alquiler']], required: true, default: 'dia' },
         { name: 'deductible', label: 'Franquicia (0 = sin franquicia)', type: 'number', default: 0 },
         { name: 'max_price', label: 'Tope por alquiler (0 = sin tope)', type: 'number', default: 0 },
+        { name: 'categories', label: 'Solo para estas categorías (códigos separados por coma; vacío = todas)', full: true, attrs: 'placeholder="Ej.: SUV, CAM"' },
         { name: 'code', label: 'Código (opcional)' },
         { name: 'active', label: 'Activo', type: 'checkbox', default: 1 },
       ],
@@ -6153,9 +6167,10 @@ async function bookingPage() {
         <h2><span>3</span>${L('Sumá lo que necesites', 'Add what you need')} <small class="muted">${L('opcional', 'optional')}</small></h2>
         <div class="quoter-extras">${cfg.extras
           .map(
-            (x) => `<label class="quoter-extra"><input type="checkbox" value="${esc(x.code)}" data-extra data-kind="${esc(x.kind)}"${/conductor|driver/i.test(x.name) ? ' data-driver' : ''}><span>${esc(x.name)}</span><small>${extraPrice(x)}</small></label>`,
+            (x) => `<label class="quoter-extra" data-cats="${esc(x.categories.join(','))}"><input type="checkbox" value="${esc(x.code)}" data-extra data-kind="${esc(x.kind)}"${/conductor|driver/i.test(x.name) ? ' data-driver' : ''}><span>${esc(x.name)}</span><small>${extraPrice(x)}</small></label>`,
           )
           .join('')}</div>
+        <p id="bk-extras-note" class="muted" hidden style="margin-top:10px">${L('Elegí un auto para ver sus coberturas y adicionales.', 'Choose a car to see its coverages and add-ons.')}</p>
         <p id="bk-driver" class="muted" hidden style="margin-top:10px">${L('Cuando confirmemos tu reserva te pedimos por WhatsApp los datos del conductor adicional.', 'Once we confirm your booking we will ask you on WhatsApp for the additional driver details.')}</p>
       </section>`
           : ''
@@ -6217,13 +6232,31 @@ async function bookingPage() {
     return o && isYoungDriver(form.birth_date.value, localISO(from), cfg.young_driver) ? cfg.young_driver.fee : 0;
   };
   // Conductor menor: el mejor seguro (menor franquicia) queda tildado y no se puede sacar.
+  const fitsPick = (x) => !x.categories.length || x.categories.includes(String(pick || '').toUpperCase());
   const youngInsurance = () => {
     const young = isYoungDriver(form.birth_date.value, localISO(from), cfg.young_driver);
-    const best = bestInsurance(cfg.extras.filter((x) => x.kind === 'seguro'));
+    const best = bestInsurance(cfg.extras.filter((x) => x.kind === 'seguro' && fitsPick(x)));
     $$('[data-extra][data-kind=seguro]', form).forEach((x) => {
       if (young && best) x.checked = x.value === best.code;
       x.disabled = Boolean(young && best);
     });
+  };
+  // Cada adicional se ofrece sólo para las categorías que le cargó la agencia: los de otro auto se ocultan y se destildan.
+  // Devuelve si cambió lo elegido (hay que volver a pedir los precios).
+  const fitExtras = () => {
+    const before = [...picked].sort().join();
+    $$('.quoter-extra', form).forEach((l) => {
+      l.hidden = Boolean(l.dataset.cats) && !l.dataset.cats.split(',').includes(String(pick || '').toUpperCase());
+      if (l.hidden) $('input', l).checked = false;
+    });
+    youngInsurance();
+    const note = $('#bk-extras-note', form);
+    if (note) note.hidden = Boolean(pick) || !$('.quoter-extra[hidden]', form);
+    const drv = $('#bk-driver', form);
+    if (drv) drv.hidden = !$('[data-driver]:checked', form);
+    picked.clear();
+    $$('[data-extra]:checked', form).forEach((x) => picked.add(x.value));
+    return [...picked].sort().join() !== before;
   };
   const summary = () => {
     const o = options.find((x) => x.code === pick);
@@ -6247,7 +6280,7 @@ async function bookingPage() {
   form.birth_date.addEventListener('change', () => {
     youngInsurance();
     if (isYoungDriver(form.birth_date.value, localISO(from), cfg.young_driver)) {
-      const ins = bestInsurance(cfg.extras.filter((x) => x.kind === 'seguro'));
+      const ins = bestInsurance(cfg.extras.filter((x) => x.kind === 'seguro' && fitsPick(x)));
       const y = cfg.young_driver;
       openModal(
         L(`Conductor menor de ${y.age} años`, `Driver under ${y.age}`),
@@ -6263,6 +6296,7 @@ async function bookingPage() {
   });
   const paint = () => {
     if (!options.some((o) => o.code === pick)) pick = null;
+    fitExtras();
     $('#bk-cars', form).innerHTML = options.length
       ? options
           .map((o) => {
@@ -6322,7 +6356,8 @@ async function bookingPage() {
     const c = e.target.closest('[data-cat]');
     if (c) {
       pick = c.dataset.cat;
-      paint();
+      if (fitExtras()) load();
+      else paint();
     }
   });
   form.addEventListener('change', (e) => {
