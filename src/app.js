@@ -341,9 +341,14 @@ function createApp(db, options = {}) {
     'jspdf.plugin.autotable.min.js': path.join(path.dirname(require.resolve('jspdf-autotable')), 'jspdf.plugin.autotable.min.js'),
   };
   app.get('/vendor/:file', (req, res, next) => (vendor[req.params.file] ? res.sendFile(vendor[req.params.file]) : next()));
-  app.use(express.static(path.join(__dirname, '..', 'public')));
+  // index: false para que la portada también salga por indexHtml() (con la versión en sus archivos).
+  app.use(express.static(path.join(__dirname, '..', 'public'), { index: false }));
   // Links que recibe el cliente: la vista previa de WhatsApp lee el título sin ejecutar la página, así que va el nombre de la agencia y no el de Floty.
   const indexFile = path.join(__dirname, '..', 'public', 'index.html');
+  // Los archivos propios llevan la versión en la dirección: Cloudflare hace que el navegador los guarde 4 horas
+  // y, sin esto, una versión nueva tardaba ese tiempo en verse. Cambia en cada arranque (cada publicación reinicia).
+  const assetV = Date.now().toString(36);
+  const indexHtml = () => fs.readFileSync(indexFile, 'utf8').replace(/(src|href)="\/(app\.js|i18n\.js|contract-pdf\.js|styles\.css)"/g, `$1="/$2?v=${assetV}"`);
   app.get(/^\/(firmar|fotos|devolucion|tarjeta|datos|hotel|reservar)(\/|$)/, (req, res) => {
     let name = '';
     try {
@@ -353,9 +358,9 @@ function createApp(db, options = {}) {
       // Sin nombre, queda el título neutro.
     }
     const safe = name.replace(/[<>&"]/g, (ch) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[ch]) || 'Tu alquiler';
-    res.type('html').send(fs.readFileSync(indexFile, 'utf8').replace(/<title>[^<]*<\/title>/, `<title>${safe}</title>`));
+    res.set('Cache-Control', 'no-cache').type('html').send(indexHtml().replace(/<title>[^<]*<\/title>/, `<title>${safe}</title>`));
   });
-  app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(indexFile));
+  app.get(/^\/(?!api\/).*/, (_req, res) => res.set('Cache-Control', 'no-cache').type('html').send(indexHtml()));
 
   // eslint-disable-next-line no-unused-vars
   app.use(errorHandler);

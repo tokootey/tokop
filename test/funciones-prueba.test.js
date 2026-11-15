@@ -447,6 +447,16 @@ test('links del cliente: la vista previa muestra el nombre de la agencia, no Flo
     assert.equal(await title(one, '/firmar/abc'), 'Rent &lt;Sur&gt; &amp; Co');
     assert.equal(await title(one, '/fotos/abc'), 'Rent &lt;Sur&gt; &amp; Co');
     assert.match(await title(one, '/panel'), /Floty/, 'la app de la agencia no cambia');
+    // Los archivos propios salen con su versión (si no, el navegador muestra 4 horas la versión vieja) y la página no se guarda.
+    for (const p of ['/', '/reservar', '/panel']) {
+      const res = await fetch(`http://127.0.0.1:${one.address().port}${p}`);
+      const html = await res.text();
+      assert.equal(res.headers.get('cache-control'), 'no-cache', p);
+      assert.equal((html.match(/"\/(app\.js|i18n\.js|contract-pdf\.js|styles\.css)\?v=\w+"/g) || []).length, 4, p);
+    }
+    const js = await fetch(`http://127.0.0.1:${one.address().port}/app.js?v=x`);
+    await js.arrayBuffer(); // sin leer el cuerpo, la conexión queda abierta y el servidor no cierra
+    assert.equal(js.status, 200);
   } finally {
     one.close();
   }
