@@ -153,7 +153,7 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
       amex_by_whatsapp: s.country === 'PA', // en Panamá, Amex se cobra aparte: el cliente lo pide por WhatsApp
       phone_hint: PHONE_HINT[s.country] || '+00 000 000 000',
       branches: db.prepare('SELECT code, name FROM branches WHERE active = 1 ORDER BY name').all(),
-      extras: db.prepare("SELECT code, name, price, charge_type, kind, deductible FROM extras WHERE active = 1 AND price > 0 AND code <> 'HOTEL' AND kind <> 'recargo' ORDER BY kind DESC, name").all(),
+      extras: db.prepare("SELECT code, name, price, charge_type, kind, deductible, categories FROM extras WHERE active = 1 AND price > 0 AND code <> 'HOTEL' AND kind <> 'recargo' ORDER BY kind DESC, name").all().map((x) => ({ ...x, categories: R.extraCodes(x) })),
       faq: parseFaq(s.chat_faq || FAQ_DEFAULT, s),
     });
   });
@@ -172,21 +172,22 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
     checkPickup(req, pickupCode, pickup_at);
     const branch = pickupCode ? db.prepare('SELECT id FROM branches WHERE code = ? AND active = 1').get(str(pickupCode, 20)) : null;
     const returnBranch = b.return_branch ? db.prepare('SELECT id FROM branches WHERE code = ? AND active = 1').get(str(b.return_branch, 20)) : null;
-    const pickedExtras = (Array.isArray(b.extras) ? b.extras : []).slice(0, 10).map((code) => db.prepare("SELECT id FROM extras WHERE code = ? AND active = 1 AND code <> 'HOTEL'").get(str(code, 20))).filter(Boolean);
+    const pickedExtras = (Array.isArray(b.extras) ? b.extras : []).slice(0, 10).map((code) => db.prepare("SELECT id, categories FROM extras WHERE code = ? AND active = 1 AND code <> 'HOTEL'").get(str(code, 20))).filter(Boolean);
     const range = {
       pickup_at,
       return_at,
       pickup_branch_id: branch ? branch.id : null,
       return_branch_id: returnBranch ? returnBranch.id : branch ? branch.id : null,
-      extras: withHotelExtra(db, pickedExtras.map((e) => ({ extra_id: e.id, quantity: 1 })), hotel),
     };
+    // A cada categoría se le suman sólo los adicionales que le corresponden.
+    const extrasFor = (c) => withHotelExtra(db, pickedExtras.filter((e) => R.extraFits(e, c)).map((e) => ({ extra_id: e.id, quantity: 1 })), hotel);
     const inquiry = inquiryOnly(db, pickup_at, return_at);
     const options = categoryAvailability(db, range)
       .filter((c) => c.available > 0)
       .map((c) => {
         // Sin precio: la agencia lo conversa por WhatsApp.
         if (inquiry.has(c.code)) return { code: c.code, name: c.name, description: c.description || '', seats: c.seats, transmission: c.transmission, inquiry_only: true, total: Infinity };
-        const q = computeQuote(db, { ...range, category_id: c.id });
+        const q = computeQuote(db, { ...range, extras: extrasFor(c), category_id: c.id });
         // Al público sólo se le muestra lo necesario: nunca cuántos autos quedan exactamente.
         return { code: c.code, name: c.name, description: c.description || '', seats: c.seats, transmission: c.transmission, days: q.days, total: q.total, deposit: q.deposit, few_left: c.available <= 1, high_demand: q.dynamic_pct > 0, promo: q.promo, one_way_fee: q.one_way_fee, after_hours_fee: q.after_hours_fee, branch_fee: q.branch_fee, extra_hours_fee: q.extra_hours_fee };
       })
@@ -228,7 +229,12 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
       fecha_devolucion: str(b.return_at, 20),
       lugar_retiro: pickupCode,
       lugar_devolucion: str(b.return_branch || pickupCode, 20),
-      adicionales: (Array.isArray(b.extras) ? b.extras : []).slice(0, 10).map((x) => str(x, 20)).join(','),
+      adicionales: (Array.isArray(b.extras) ? b.extras : [])
+        .slice(0, 10)
+        .map((x) => str(x, 20))
+        // Los que no corresponden al auto elegido no se suman.
+        .filter((code) => R.extraFits(db.prepare('SELECT categories FROM extras WHERE code = ?').get(code) || {}, { code: str(b.category, 20) }))
+        .join(','),
       vuelo: str(b.flight, 40),
       comentarios: ['Pedido desde el link de reservas', str(b.notes, 500)].filter(Boolean).join('. '),
     };

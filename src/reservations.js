@@ -123,10 +123,25 @@ function assertAvailability(db, data, excludeId = 0) {
   }
 }
 
-/** Conductor menor (con recargo cargado): lleva sí o sí el seguro de menor franquicia, en lugar del que tenga elegido. */
+/** Categorías para las que vale un adicional (códigos en mayúscula); vacío = todas. */
+const extraCodes = (x) => String(x.categories || '').toUpperCase().split(',').map((c) => c.trim()).filter(Boolean);
+const extraFits = (x, cat) => !extraCodes(x).length || Boolean(cat && extraCodes(x).includes(String(cat.code).toUpperCase()));
+const categoryOf = (db, data) => db.prepare('SELECT code, name FROM categories WHERE id = ?').get(data.category_id);
+
+/** Un adicional cargado sólo para otras categorías no se puede sumar a esta reserva. */
+function assertExtrasFit(db, data) {
+  const cat = categoryOf(db, data);
+  for (const e of data.extras || []) {
+    const x = db.prepare('SELECT name, categories FROM extras WHERE id = ?').get(e.extra_id);
+    if (x && cat && !extraFits(x, cat)) fail(400, `"${x.name}" no corresponde a la categoría ${cat.name}`);
+  }
+}
+
+/** Conductor menor (con recargo cargado): lleva sí o sí el seguro de menor franquicia de su categoría, en lugar del que tenga elegido. */
 function withYoungInsurance(db, data) {
   if (!youngDriverFee(db, getSettings(db), data)) return data.extras;
-  const best = db.prepare("SELECT id FROM extras WHERE kind = 'seguro' AND active = 1 ORDER BY COALESCE(deductible, 0), price DESC LIMIT 1").get();
+  const cat = categoryOf(db, data);
+  const best = db.prepare("SELECT id, categories FROM extras WHERE kind = 'seguro' AND active = 1 ORDER BY COALESCE(deductible, 0), price DESC").all().find((x) => extraFits(x, cat));
   if (!best) return data.extras;
   const insurances = new Set(db.prepare("SELECT id FROM extras WHERE kind = 'seguro'").all().map((x) => x.id));
   return [...(data.extras || []).filter((e) => !insurances.has(Number(e.extra_id))), { extra_id: best.id, quantity: 1 }];
@@ -149,6 +164,7 @@ function createReservation(db, input, userId) {
   // Entrega en hotel: se suma sola su tarifa (adicional "Entrega en hotel"), si la agencia le puso precio.
   if (normalizeHotel(data.hotel)) data.extras = withHotelExtra(db, data.extras, true);
   data.extras = withYoungInsurance(db, data);
+  assertExtrasFit(db, data);
 
   const id = tx(db, () => {
     assertAvailability(db, data);
@@ -223,6 +239,8 @@ function updateReservation(db, id, input, userId) {
   };
   const data = normalizeInput(merged);
   data.extras = withYoungInsurance(db, data);
+  // Sólo si se tocan los adicionales o la categoría: una reserva vieja se puede seguir editando.
+  if (input.extras || input.category_id) assertExtrasFit(db, data);
   tx(db, () => {
     assertAvailability(db, data, current.id);
     const sameTrip = data.pickup_at === current.pickup_at && data.return_at === current.return_at && Number(data.category_id) === current.category_id;
@@ -675,6 +693,8 @@ function publicView(r) {
 }
 
 module.exports = {
+  extraCodes,
+  extraFits,
   balanceOf,
   driverOf,
   addDriver,
