@@ -47,9 +47,9 @@ test('intervalo: no deja pegar un alquiler a la devolución del anterior, y apag
   assert.equal(isVehicleFree(db, params(at(42, 12), at(44))), true, 'a las dos horas ya está libre');
   assert.equal(isVehicleFree(db, params(at(38), at(40))), false, 'tampoco pegado antes');
   assert.ok(!availableVehicles(db, { category_id: car.category_id, pickup_at: at(42), return_at: at(44) }).some((v) => v.id === car.id));
-  // Una agencia sin las funciones activadas no se ve afectada aunque tenga el dato.
+  // Es de todas las agencias: sin las funciones en prueba también se respeta.
   setSetting(db, 'pro_features', '0');
-  assert.equal(isVehicleFree(db, params(at(42), at(44))), true);
+  assert.equal(isVehicleFree(db, params(at(42), at(44))), false);
 });
 
 test('precios por demanda: sube según la ocupación y una reserva hecha conserva su precio', () => {
@@ -149,11 +149,11 @@ test('API: apagado por defecto y la agencia no se activa sola', async () => {
     await req('POST', '/api/auth/login', { email: 'admin@rentacar.local', password: 'admin123' });
     await req('POST', '/api/auth/password', { current: 'admin123', password: 'Ushuaia2026Segura' });
     const r = book(at(80), at(82));
-    // La firma del contrato la tienen todas las agencias; la tarjeta y la pre-entrega siguen siendo de prueba.
+    // La firma, la tarjeta y la pre-entrega las tienen todas las agencias.
     assert.equal((await req('GET', `/api/reservations/${r.id}`)).data.signature, null);
     assert.equal((await req('POST', `/api/reservations/${r.id}/signature`, { terms: TERMS })).status, 200);
     assert.equal((await req('GET', `/api/reservations/${r.id}`)).data.signature.requested, true);
-    assert.equal((await req('POST', `/api/reservations/${r.id}/card-link`)).status, 403);
+    assert.equal((await req('POST', `/api/reservations/${r.id}/card-link`)).status, 200);
     await req('PUT', '/api/settings', { pro_features: '1' });
     assert.equal(getSetting(db, 'pro_features'), '0', 'la activa solo el dueño de Floty');
 
@@ -244,9 +244,9 @@ test('entrega express: el cliente ve dónde quedó el auto y sube las fotos de l
     assert.equal((await (await fetch(`${base}/api/public/entrega/devolucion/${token}`)).json()).can_upload, false);
     assert.equal((await send(token)).status, 409);
 
-    // Apagada la función, el link no responde.
+    // Es de todas las agencias: sin las funciones en prueba el link sigue (cerrado, porque ya volvió el auto).
     setSetting(db, 'pro_features', '0');
-    assert.equal((await fetch(`${base}/api/public/entrega/devolucion/${token}`)).status, 404);
+    assert.equal((await fetch(`${base}/api/public/entrega/devolucion/${token}`)).status, 200);
   } finally {
     server.close();
     db.close();

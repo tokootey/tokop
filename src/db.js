@@ -385,7 +385,7 @@ const OLD_CONTRACT_TERMS =
  * Las palabras entre llaves se completan con los datos de cada alquiler:
  * {empresa} {tolerancia} {edad_minima} {cargo_combustible} {kilometraje} {franquicia} {garantia} {jurisdiccion}
  */
-const CONTRACT_TERMS = `1. OBJETO. {empresa} (en adelante, "la Empresa") entrega en alquiler al Cliente el vehículo descripto en este contrato, en buen estado de funcionamiento y limpieza, con la documentación obligatoria, rueda de auxilio, gato, llave de rueda, matafuego y balizas.
+const CONTRACT_TERMS = `1. OBJETO. {empresa} (en adelante, "la Empresa") entrega en alquiler al Cliente el vehículo descripto en este contrato, en buen estado de funcionamiento y limpieza, con la documentación obligatoria, rueda de auxilio, gato, llave de rueda, extintor y balizas.
 
 2. PLAZO Y DEVOLUCIÓN. El Cliente devolverá el vehículo en la fecha, hora y lugar pactados. Hay una tolerancia de {tolerancia} horas; pasado ese plazo se cobrará un día adicional por cada día o fracción de demora. La devolución anticipada no da derecho a reintegro, salvo acuerdo por escrito con la Empresa.
 
@@ -393,7 +393,7 @@ const CONTRACT_TERMS = `1. OBJETO. {empresa} (en adelante, "la Empresa") entrega
 
 4. USO DEL VEHÍCULO. Queda prohibido: subalquilarlo o prestarlo; usarlo para transporte comercial de pasajeros o carga, competencias, pruebas, remolque o enseñanza de manejo; circular fuera de caminos habilitados; llevar más personas que las permitidas; fumar dentro del vehículo y llevar animales sin transportín.
 
-5. SALIDA DEL PAÍS. El vehículo no puede salir del territorio argentino, incluido el paso por Chile para llegar al continente, sin autorización previa y por escrito de la Empresa, la documentación aduanera y el seguro internacional correspondientes, con los cargos que se informen.
+5. SALIDA DEL PAÍS. El vehículo no puede salir del país sin autorización previa y por escrito de la Empresa, la documentación aduanera y el seguro internacional correspondientes, con los cargos que se informen.
 
 6. COMBUSTIBLE. El vehículo se entrega con el nivel de combustible indicado en este contrato y debe devolverse con el mismo nivel. Cada octavo faltante se cobrará {cargo_combustible}.
 
@@ -409,11 +409,9 @@ const CONTRACT_TERMS = `1. OBJETO. {empresa} (en adelante, "la Empresa") entrega
 
 12. ESTADO DEL VEHÍCULO. El Cliente declara recibir el vehículo en el estado que consta en este contrato y en las fotos tomadas en la entrega, y se compromete a devolverlo igual, salvo el desgaste normal por el uso. Los daños no registrados en la entrega se considerarán ocurridos durante el alquiler. La limpieza extraordinaria se podrá cobrar aparte.
 
-13. CONDICIONES CLIMÁTICAS. En temporada invernal el Cliente debe circular con precaución, usar cadenas cuando el estado del camino o la autoridad lo exijan y respetar los cortes de ruta.
+13. DATOS PERSONALES. El Cliente presta su conformidad para que la Empresa trate sus datos personales con el fin de gestionar este alquiler, conforme a la ley de protección de datos personales que corresponda. Puede pedir el acceso, la rectificación o la supresión de sus datos a la Empresa.
 
-14. DATOS PERSONALES. El Cliente presta su conformidad para que la Empresa trate sus datos personales con el fin de gestionar este alquiler, conforme a la ley de protección de datos personales que corresponda. Puede pedir el acceso, la rectificación o la supresión de sus datos a la Empresa.
-
-15. JURISDICCIÓN. Para cualquier diferencia que surja de este contrato, las partes se someten a los tribunales ordinarios de {jurisdiccion}.`;
+14. JURISDICCIÓN. Para cualquier diferencia que surja de este contrato, las partes se someten a los tribunales ordinarios de {jurisdiccion}.`;
 
 /** Las mismas condiciones en inglés: se usan cuando la app está en inglés (mismas {palabras}). */
 const CONTRACT_TERMS_EN = `1. PURPOSE. {empresa} (hereinafter "the Company") rents to the Customer the vehicle described in this agreement, in good working order and clean, with the mandatory documents, spare wheel, jack, wheel wrench, fire extinguisher and warning triangles.
@@ -424,7 +422,7 @@ const CONTRACT_TERMS_EN = `1. PURPOSE. {empresa} (hereinafter "the Company") ren
 
 4. USE OF THE VEHICLE. It is forbidden to: sublet or lend it; use it for commercial transport of passengers or goods, races, tests, towing or driving lessons; drive off authorized roads; carry more people than allowed; smoke inside the vehicle and carry animals without a carrier.
 
-5. LEAVING THE COUNTRY. The vehicle may not leave Argentine territory, including crossing Chile to reach the mainland, without prior written authorization from the Company, the corresponding customs documents and international insurance, with the charges informed.
+5. LEAVING THE COUNTRY. The vehicle may not leave the country without prior written authorization from the Company, the corresponding customs documents and international insurance, with the charges informed.
 
 6. FUEL. The vehicle is delivered with the fuel level stated in this agreement and must be returned with the same level. Each missing eighth will be charged {cargo_combustible}.
 
@@ -440,11 +438,9 @@ const CONTRACT_TERMS_EN = `1. PURPOSE. {empresa} (hereinafter "the Company") ren
 
 12. CONDITION OF THE VEHICLE. The Customer declares receiving the vehicle in the condition recorded in this agreement and in the photos taken at pick-up, and undertakes to return it in the same condition, except for normal wear and tear. Damage not recorded at pick-up will be considered to have occurred during the rental. Extraordinary cleaning may be charged separately.
 
-13. WEATHER CONDITIONS. In winter the Customer must drive carefully, use chains when road conditions or the authorities require it, and respect road closures.
+13. PERSONAL DATA. The Customer agrees that the Company processes their personal data in order to manage this rental, in accordance with the applicable personal data protection law. The Customer may request access to, correction or deletion of their data from the Company.
 
-14. PERSONAL DATA. The Customer agrees that the Company processes their personal data in order to manage this rental, in accordance with the applicable personal data protection law. The Customer may request access to, correction or deletion of their data from the Company.
-
-15. JURISDICTION. For any dispute arising from this agreement, the parties submit to the ordinary courts of {jurisdiccion}.`;
+14. JURISDICTION. For any dispute arising from this agreement, the parties submit to the ordinary courts of {jurisdiccion}.`;
 
 /**
  * Contrato para el modo "autos para choferes" (auto de trabajo para Uber, DiDi, Cabify, remis o reparto).
