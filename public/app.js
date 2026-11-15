@@ -1367,7 +1367,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
     // Conductor menor: lleva el seguro de menor franquicia (el servidor lo exige igual al guardar).
     if (form.insurance && isYoungDriver(c.birth_date, form.pickup_at.value, youngCfg(state.settings))) {
       form.insurance.value = bestInsurance(insurances()).id;
-      toast('Conductor menor: se suma el recargo y lleva el seguro de menor franquicia');
+      toast('Conductor menor: va con su recargo o su tarifa y lleva el seguro de menor franquicia');
     }
     refresh(); // el precio puede sumar el recargo por conductor menor
     $('#cust-selected').innerHTML = `✔ <b>${esc(c.full_name)}</b> · ${c.doc_number ? esc(docTypeOf(c.doc_type)) : ''} ${esc(c.doc_number || '')} · ${esc(c.phone || '')} · ${esc(c.email || '')}
@@ -1467,7 +1467,7 @@ const insuranceNote = (x) =>
   x ? `${x.deductible ? `Franquicia: ${money(x.deductible)} (lo que paga el cliente si hay un daño)` : 'Sin franquicia: si hay un daño, el cliente no paga nada'}${x.price ? ` · ${money(x.price)}${x.charge_type === 'dia' ? ' por día' : ' por alquiler'}` : ' · incluido en la tarifa'}${x.one_day_price > 0 && x.charge_type !== 'fijo' ? ` · ${money(x.one_day_price)} si el alquiler es de 1 día` : ''}` : '';
 // Viene elegido el más barato (normalmente el incluido en la tarifa). Abajo, la franquicia del elegido.
 // Conductor menor: edad al día del retiro, igual que src/pricing.js. Vale sólo si la agencia cargó el recargo.
-const youngCfg = (s) => (Number(s.young_driver_fee) > 0 ? { age: Number(s.young_driver_age) || 21, fee: Number(s.young_driver_fee) } : null);
+const youngCfg = (s) => (Number(s.young_driver_fee) > 0 || (state.categories || []).some((c) => c.young_rate > 0) ? { age: Number(s.young_driver_age) || 21, fee: Number(s.young_driver_fee) } : null);
 const isYoungDriver = (birth, day, y) => Boolean(y && birth && day && day.slice(0, 4) - birth.slice(0, 4) - (day.slice(5, 10) < birth.slice(5, 10) ? 1 : 0) < y.age);
 const bestInsurance = (list) => [...list].sort((a, b) => (a.deductible || 0) - (b.deductible || 0) || b.price - a.price)[0];
 const insuranceSelect = (cls = '') => {
@@ -6184,9 +6184,11 @@ async function bookingPage() {
           <label class="qr-field">${L('Documento o pasaporte N°', 'ID or passport number')}<input name="doc_number" maxlength="40" required></label>
           <label class="qr-field">${L('Fecha de nacimiento', 'Date of birth')}<input name="birth_date" type="date" autocomplete="bday" required></label>
           ${cfg.young_driver ? `<p class="muted" style="margin:0;font-size:13px">${(() => {
-            const ins = bestInsurance(cfg.extras.filter((x) => x.kind === 'seguro'));
+            // Acá todavía no hay auto elegido: sólo se nombra el seguro si vale para todos.
+            const ins = bestInsurance(cfg.extras.filter((x) => x.kind === 'seguro' && !x.categories.length));
             const y = cfg.young_driver;
-            return L(`Si tenés menos de ${y.age} años se suma un recargo de ${money(y.fee)}${ins ? ` y es obligatorio llevar el seguro ${esc(ins.name)}` : ''}. El alquiler mínimo es de 2 días.`, `If you are under ${y.age}, a ${money(y.fee)} surcharge applies${ins ? ` and the ${esc(ins.name)} insurance is mandatory` : ''}. Minimum rental is 2 days.`);
+            const pays = y.fee ? L(`se suma un recargo de ${money(y.fee)}`, `a ${money(y.fee)} surcharge applies`) : L('el alquiler tiene una tarifa propia', 'the rental has its own rate');
+            return L(`Si tenés menos de ${y.age} años ${pays}${ins ? ` y es obligatorio llevar el seguro ${esc(ins.name)}` : ' y es obligatorio llevar la cobertura completa'}. El alquiler mínimo es de 2 días.`, `If you are under ${y.age}, ${pays}${ins ? ` and the ${esc(ins.name)} insurance is mandatory` : ' and full coverage is mandatory'}. Minimum rental is 2 days.`);
           })()}</p>` : ''}
           <label class="qr-field">${L('Domicilio', 'Home address')}<input name="address" autocomplete="street-address" maxlength="200" required></label>
           <label class="qr-field">${L('Licencia de conducir N°', 'Driver license number')}<input name="license_number" maxlength="40"></label>
@@ -6226,15 +6228,12 @@ async function bookingPage() {
     $$('.chip', form).forEach((c) => c.classList.toggle('on', Number(c.dataset.days) === Math.round((to - from) / 86400000)));
   };
   const dayWord = (n) => (n === 1 ? L('día', 'day') : L('días', 'days'));
-  // Recargo por conductor menor según la fecha de nacimiento, igual que lo calcula el servidor al reservar.
-  // shortcut: si las tarifas no incluyen el impuesto, acá falta el impuesto del recargo; el total final lo calcula el servidor. Mejorar si una agencia así cobra este recargo.
-  const youngFee = (o) => {
-    return o && isYoungDriver(form.birth_date.value, localISO(from), cfg.young_driver) ? cfg.young_driver.fee : 0;
-  };
+  // Conductor menor según la fecha de nacimiento: el servidor ya manda el precio con su tarifa o su recargo.
+  const isYoung = () => isYoungDriver(form.birth_date.value, localISO(from), cfg.young_driver);
   // Conductor menor: el mejor seguro (menor franquicia) queda tildado y no se puede sacar.
   const fitsPick = (x) => !x.categories.length || x.categories.includes(String(pick || '').toUpperCase());
   const youngInsurance = () => {
-    const young = isYoungDriver(form.birth_date.value, localISO(from), cfg.young_driver);
+    const young = isYoung();
     const best = bestInsurance(cfg.extras.filter((x) => x.kind === 'seguro' && fitsPick(x)));
     $$('[data-extra][data-kind=seguro]', form).forEach((x) => {
       if (young && best) x.checked = x.value === best.code;
@@ -6260,13 +6259,14 @@ async function bookingPage() {
   };
   const summary = () => {
     const o = options.find((x) => x.code === pick);
-    const fee = youngFee(o);
+    const fee = o && isYoung() ? o.young_driver_fee || 0 : 0;
+    const youngNote = !o || !isYoung() ? '' : fee ? ` · ${L(`incluye ${money(fee)} por conductor menor de ${cfg.young_driver.age} años`, `includes ${money(fee)} for a driver under ${cfg.young_driver.age}`)}` : ` · ${L(`tarifa para menores de ${cfg.young_driver.age} años`, `rate for drivers under ${cfg.young_driver.age}`)}`;
     const late =
       (o && o.after_hours_fee ? ` · ${L(`incluye ${money(o.after_hours_fee)} por fuera de hora`, `includes ${money(o.after_hours_fee)} after-hours surcharge`)}` : '') +
       (o && o.branch_fee ? ` · ${L(`incluye ${money(o.branch_fee)} por el lugar de entrega`, `includes ${money(o.branch_fee)} location surcharge`)}` : '') +
       (o && o.extra_hours_fee ? ` · ${L(`incluye ${money(o.extra_hours_fee)} por horas adicionales`, `includes ${money(o.extra_hours_fee)} for extra hours`)}` : '');
-    $('#bk-what', form).textContent = o ? `${o.name} · ${o.days} ${dayWord(o.days)}${fee ? ` · ${L(`incluye ${money(fee)} por conductor menor de ${cfg.young_driver.age} años`, `includes ${money(fee)} for a driver under ${cfg.young_driver.age}`)}` : ''}${late}` : L('Elegí un auto', 'Choose a car');
-    $('#bk-sum', form).textContent = o ? money(o.total + fee) : '';
+    $('#bk-what', form).textContent = o ? `${o.name} · ${o.days} ${dayWord(o.days)}${youngNote}${late}` : L('Elegí un auto', 'Choose a car');
+    $('#bk-sum', form).textContent = o ? money(o.total) : '';
   };
   const licenseOk = () => {
     form.querySelector('[data-for=license_expiry]')?.remove();
@@ -6279,13 +6279,13 @@ async function bookingPage() {
   form.license_expiry.addEventListener('change', licenseOk);
   form.birth_date.addEventListener('change', () => {
     youngInsurance();
-    if (isYoungDriver(form.birth_date.value, localISO(from), cfg.young_driver)) {
+    if (isYoung()) {
       const ins = bestInsurance(cfg.extras.filter((x) => x.kind === 'seguro' && fitsPick(x)));
       const y = cfg.young_driver;
       openModal(
         L(`Conductor menor de ${y.age} años`, `Driver under ${y.age}`),
         `<p>${L(`Como tenés menos de ${y.age} años:`, `Because you are under ${y.age}:`)}</p>
-         <ul><li>${L(`Se suma un recargo de ${money(y.fee)}.`, `A ${money(y.fee)} surcharge applies.`)}</li>${ins ? `<li>${L(`Es obligatorio llevar el seguro ${esc(ins.name)}.`, `The ${esc(ins.name)} insurance is mandatory.`)}</li>` : ''}<li>${L('El alquiler mínimo es de 2 días.', 'Minimum rental is 2 days.')}</li></ul>
+         <ul><li>${y.fee ? L(`Se suma un recargo de ${money(y.fee)}.`, `A ${money(y.fee)} surcharge applies.`) : L('El alquiler tiene una tarifa propia: vas a ver el precio actualizado en cada auto.', 'The rental has its own rate: you will see the updated price on each car.')}</li>${ins ? `<li>${L(`Es obligatorio llevar el seguro ${esc(ins.name)}.`, `The ${esc(ins.name)} insurance is mandatory.`)}</li>` : ''}<li>${L('El alquiler mínimo es de 2 días.', 'Minimum rental is 2 days.')}</li></ul>
          <div class="actions"><button class="btn primary" type="button" id="young-ok">${L('Entendido', 'Got it')}</button></div>`,
       );
       $('#young-ok').addEventListener('click', closeModal);
@@ -6330,7 +6330,7 @@ async function bookingPage() {
     const mine = ++lastLoad;
     $('#bk-cars', form).classList.add('loading');
     try {
-      const found = (await call('POST', '/quote', { pickup_at: localISO(from), return_at: localISO(to), ...places(), hotel: inHotel(), extras: [...picked] })).options;
+      const found = (await call('POST', '/quote', { pickup_at: localISO(from), return_at: localISO(to), ...places(), hotel: inHotel(), extras: [...picked], birth_date: form.birth_date.value })).options;
       if (mine !== lastLoad) return;
       options = found;
       $('#bk-cars', form).classList.remove('loading');
@@ -6400,7 +6400,7 @@ async function bookingPage() {
       return toast(L('Completá el nombre y la dirección del hotel', 'Fill in the hotel name and address'), true);
     }
     if (!licenseOk()) return form.license_expiry.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    if (youngFee(o) && o.days < 2) return toast(L(`Si tenés menos de ${cfg.young_driver.age} años el alquiler mínimo es de 2 días`, `Drivers under ${cfg.young_driver.age} must rent for at least 2 days`), true);
+    if (isYoung() && o.days < 2) return toast(L(`Si tenés menos de ${cfg.young_driver.age} años el alquiler mínimo es de 2 días`, `Drivers under ${cfg.young_driver.age} must rent for at least 2 days`), true);
     const btn = form.querySelector('[type=submit]');
     btn.disabled = true;
     try {

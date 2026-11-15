@@ -2,7 +2,7 @@
 
 const express = require('express');
 const { getSettings } = require('../db');
-const { computeQuote, youngDriverFee, rentalDays } = require('../pricing');
+const { computeQuote, youngPricing, youngRules, rentalDays } = require('../pricing');
 const { categoryAvailability, OUT_OF_FLEET } = require('../availability');
 const { ingestQuote } = require('../integration');
 const { cardUrlFor, docsLink } = require('../delivery');
@@ -144,7 +144,7 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
       whatsapp: str(s.chat_whatsapp, 30).replace(/[^\d]/g, ''),
       currency: s.currency,
       locale: s.locale,
-      young_driver: Number(s.young_driver_fee) > 0 ? { age: Number(s.young_driver_age) || 21, fee: Number(s.young_driver_fee) } : null,
+      young_driver: youngPricing(db, s) ? { age: Number(s.young_driver_age) || 21, fee: Number(s.young_driver_fee) || 0 } : null,
       after_hours: Number(s.after_hours_fee) > 0 ? { fee: Number(s.after_hours_fee), from: hhmm(s.after_hours_from) || '20:00', to: hhmm(s.after_hours_to) || '23:00' } : null,
       payment_link: String(s.payment_link_url || '').trim(),
       hotel: s.chat_hotel === '1' ? { fee: (hotelExtra(db) || {}).price || 0 } : null,
@@ -178,6 +178,8 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
       return_at,
       pickup_branch_id: branch ? branch.id : null,
       return_branch_id: returnBranch ? returnBranch.id : branch ? branch.id : null,
+      // Con la fecha de nacimiento, el precio ya sale con la tarifa o el recargo de conductor joven.
+      birth_date: /^\d{4}-\d{2}-\d{2}$/.test(str(b.birth_date, 10)) ? str(b.birth_date, 10) : '',
     };
     // A cada categoría se le suman sólo los adicionales que le corresponden.
     const extrasFor = (c) => withHotelExtra(db, pickedExtras.filter((e) => R.extraFits(e, c)).map((e) => ({ extra_id: e.id, quantity: 1 })), hotel);
@@ -189,7 +191,7 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
         if (inquiry.has(c.code)) return { code: c.code, name: c.name, description: c.description || '', seats: c.seats, transmission: c.transmission, inquiry_only: true, total: Infinity };
         const q = computeQuote(db, { ...range, extras: extrasFor(c), category_id: c.id });
         // Al público sólo se le muestra lo necesario: nunca cuántos autos quedan exactamente.
-        return { code: c.code, name: c.name, description: c.description || '', seats: c.seats, transmission: c.transmission, days: q.days, total: q.total, deposit: q.deposit, few_left: c.available <= 1, high_demand: q.dynamic_pct > 0, promo: q.promo, one_way_fee: q.one_way_fee, after_hours_fee: q.after_hours_fee, branch_fee: q.branch_fee, extra_hours_fee: q.extra_hours_fee };
+        return { code: c.code, name: c.name, description: c.description || '', seats: c.seats, transmission: c.transmission, days: q.days, total: q.total, deposit: q.deposit, few_left: c.available <= 1, high_demand: q.dynamic_pct > 0, promo: q.promo, one_way_fee: q.one_way_fee, young_driver_fee: q.young_driver_fee, after_hours_fee: q.after_hours_fee, branch_fee: q.branch_fee, extra_hours_fee: q.extra_hours_fee };
       })
       .sort((a, b2) => a.total - b2.total)
       .map((o) => (o.inquiry_only ? { ...o, total: null } : o));
@@ -211,10 +213,10 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
     const pickupCode = hotel ? officeCode() : str(b.pickup_branch, 20);
     checkPickup(req, pickupCode, normDateTime(str(b.pickup_at, 20)));
     if (inquiryOnly(db, normDateTime(str(b.pickup_at, 20)), normDateTime(str(b.return_at, 20))).has(str(b.category, 20))) fail(409, 'Ese auto se reserva hablando con la agencia por WhatsApp');
-    // Conductor menor (con recargo cargado): alquila por 2 días como mínimo.
+    // Conductor menor (con recargo o tarifa propia cargados): alquila por 2 días como mínimo.
     const s = req.settings;
     const birth = str(b.birth_date, 10);
-    if (birth && youngDriverFee(db, s, { birth_date: birth, pickup_at: normDateTime(str(b.pickup_at, 20)) }) && rentalDays(normDateTime(str(b.pickup_at, 20)), normDateTime(str(b.return_at, 20)), Number(s.grace_hours) || 0) < 2) {
+    if (birth && youngRules(db, s, { birth_date: birth, pickup_at: normDateTime(str(b.pickup_at, 20)) }) && rentalDays(normDateTime(str(b.pickup_at, 20)), normDateTime(str(b.return_at, 20)), Number(s.grace_hours) || 0) < 2) {
       fail(400, `Los conductores menores de ${Number(s.young_driver_age) || 21} años alquilan por 2 días como mínimo`);
     }
     const expiry = str(b.license_expiry, 10);
@@ -273,7 +275,7 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
       if (v) db.prepare(`UPDATE customers SET ${f} = ? WHERE id = (SELECT customer_id FROM reservations WHERE code = ?) AND (${f} IS NULL OR ${f} = '')`).run(v, result.reservation.code);
     }
     // Con la fecha de nacimiento ya en la ficha, el precio se rearma por si corresponde el recargo por conductor menor.
-    if (extra.birth_date && Number(req.settings.young_driver_fee) > 0) {
+    if (extra.birth_date && youngPricing(db, req.settings)) {
       try {
         R.updateReservation(db, db.prepare('SELECT id FROM reservations WHERE code = ?').get(result.reservation.code).id, {}, null);
       } catch {

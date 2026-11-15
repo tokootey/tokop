@@ -71,6 +71,11 @@ function youngDriverFee(db, settings, input) {
   return fee > 0 && driverIsYoung(db, settings, input) ? fee : 0;
 }
 
+/** La agencia le cobra distinto al conductor joven: con un recargo fijo o con una tarifa propia en alguna categoría. */
+const youngPricing = (db, settings) => Number(settings.young_driver_fee) > 0 || Boolean(db.prepare('SELECT 1 FROM categories WHERE young_rate > 0 LIMIT 1').get());
+/** A ese conductor joven le corren sus reglas: el seguro de menor franquicia y 2 días como mínimo. */
+const youngRules = (db, settings, input) => youngPricing(db, settings) && driverIsYoung(db, settings, input);
+
 /** El conductor no llegó a la edad que cargó la agencia el día del retiro. Sin fecha de nacimiento, no. */
 function driverIsYoung(db, settings, input) {
   if (!input.pickup_at) return false;
@@ -318,4 +323,4 @@ function computeReturnCharges(db, reservation, contract, input, { byPeriods = fa
   return { km_driven: kmDriven, km_allowed: kmAllowed, km_excess: kmExcess, late_days: byPeriods ? 0 : lateDays, late_hours: lateExtraHours, fuel_missing: missingEighths, panapass_used: panapassUsed, lines, total: round2(lines.reduce((a, l) => a + l.amount, 0)) };
 }
 
-module.exports = { youngDriverFee, rentalDays, computeQuote, computeReturnCharges, parseDynamicRules };
+module.exports = { youngDriverFee, youngPricing, youngRules, rentalDays, computeQuote, computeReturnCharges, parseDynamicRules };
