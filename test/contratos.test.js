@@ -204,6 +204,10 @@ test('Conductor joven con tarifa por categoría (sin recargo fijo): seguro de me
     const r = (await joven({ pickup_at: at(10, 8), return_at: at(13, 8) })(call)).data;
     assert.deepEqual(r.extras.map((e) => e.extra_id), [total.id]);
     assert.equal(r.pricing.total, 3 * 70 + 3 * 20);
+    // En el link de reservas, con la fecha de nacimiento cada auto ya sale con su tarifa y su seguro obligatorio.
+    await call('PUT', '/api/settings', { chat_enabled: '1' });
+    const quote = async (birth_date) => (await call('POST', '/api/public/chat/quote', { pickup_at: at(20, 8), return_at: at(23, 8), birth_date })).data.options.find((o) => o.code === 'ECO').total;
+    assert.deepEqual([await quote(''), await quote('2006-01-01')], [3 * 50, 3 * 70 + 3 * 20]);
   } finally {
     app.close();
   }

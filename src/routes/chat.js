@@ -189,7 +189,8 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
       .map((c) => {
         // Sin precio: la agencia lo conversa por WhatsApp.
         if (inquiry.has(c.code)) return { code: c.code, name: c.name, description: c.description || '', seats: c.seats, transmission: c.transmission, inquiry_only: true, total: Infinity };
-        const q = computeQuote(db, { ...range, extras: extrasFor(c), category_id: c.id });
+        // Conductor joven: cada auto sale ya con su seguro obligatorio, no sólo el elegido.
+        const q = computeQuote(db, { ...range, extras: R.withYoungInsurance(db, { ...range, category_id: c.id, extras: extrasFor(c) }), category_id: c.id });
         // Al público sólo se le muestra lo necesario: nunca cuántos autos quedan exactamente.
         return { code: c.code, name: c.name, description: c.description || '', seats: c.seats, transmission: c.transmission, days: q.days, total: q.total, deposit: q.deposit, few_left: c.available <= 1, high_demand: q.dynamic_pct > 0, promo: q.promo, one_way_fee: q.one_way_fee, young_driver_fee: q.young_driver_fee, after_hours_fee: q.after_hours_fee, branch_fee: q.branch_fee, extra_hours_fee: q.extra_hours_fee };
       })
