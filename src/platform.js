@@ -139,6 +139,10 @@ function openPlatform(principalDb, principalFile) {
         business_mode: (one("SELECT value FROM settings WHERE key = 'business_mode'") || {}).value || 'turismo',
         pay_modes: (one("SELECT value FROM settings WHERE key = 'pay_modes'") || {}).value === '1' ? 1 : 0,
         pro_features: (one("SELECT value FROM settings WHERE key = 'pro_features'") || {}).value === '1' ? 1 : 0,
+        // Banco conectado (src/neopayment.js): sólo si están los tres datos. La clave no sale nunca de acá.
+        pay_gateway: one("SELECT COUNT(*) n FROM settings WHERE key IN ('neo_host', 'neo_client_id', 'neo_client_secret') AND value <> ''").n === 3 ? 1 : 0,
+        neo_host: (one("SELECT value FROM settings WHERE key = 'neo_host'") || {}).value || '',
+        neo_client_id: (one("SELECT value FROM settings WHERE key = 'neo_client_id'") || {}).value || '',
         logo: (one("SELECT value FROM settings WHERE key = 'company_logo'") || {}).value || null,
         admin_name: (one("SELECT name FROM users WHERE role = 'admin' AND active = 1 ORDER BY id LIMIT 1") || {}).name || null,
         last_login: one("SELECT MAX(at) at FROM audit_log WHERE action = 'login'").at || null,
@@ -219,9 +223,10 @@ function openPlatform(principalDb, principalFile) {
      * Datos de una agencia que cambia el dueño de Floty: nombre, tipo de negocio, logo y su administrador
      * (el primero: nombre y email). La dirección (subdominio) no cambia, para no romper los links ya mandados.
      */
-    updateProfile(id, { name, business_mode, pay_modes, pro_features, logo, admin_name, admin_email } = {}) {
+    updateProfile(id, { name, business_mode, pay_modes, pro_features, logo, admin_name, admin_email, neo_host, neo_client_id, neo_client_secret } = {}) {
       const c = platform.get(id);
       if (!c) fail(404, 'Empresa inexistente');
+      if (neo_host && !String(neo_host).trim().toLowerCase().startsWith('https://')) fail(400, 'La dirección del banco tiene que empezar con https://');
       const admin = c.db.prepare("SELECT * FROM users WHERE role = 'admin' AND active = 1 ORDER BY id LIMIT 1").get();
       if (name !== undefined) {
         name = String(name || '').trim().slice(0, 120);
@@ -251,6 +256,11 @@ function openPlatform(principalDb, principalFile) {
         }
         setSetting(c.db, 'pro_features', Number(pro_features) ? '1' : '0');
       }
+      // Banco de la agencia: la conexión es sólo de la agencia que tiene sus tres datos cargados.
+      if (neo_host !== undefined) setSetting(c.db, 'neo_host', String(neo_host || '').trim().replace(/\/+$/, ''));
+      if (neo_client_id !== undefined) setSetting(c.db, 'neo_client_id', String(neo_client_id || '').trim());
+      // La clave: vacía = dejar la que está; "-" = borrarla.
+      if (neo_client_secret) setSetting(c.db, 'neo_client_secret', neo_client_secret === '-' ? '' : String(neo_client_secret).trim());
       if (logo !== undefined) setSetting(c.db, 'company_logo', logo || '');
       if (admin && admin_name !== undefined) c.db.prepare('UPDATE users SET name = ? WHERE id = ?').run(String(admin_name || 'Administrador').trim().slice(0, 120) || 'Administrador', admin.id);
       if (admin && email && email !== admin.email) c.db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, admin.id);

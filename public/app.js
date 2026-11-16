@@ -1550,8 +1550,8 @@ const waText = (r, text) => `https://wa.me/${String(r.customer_phone || '').repl
 const contractMessage = (r, link) =>
   `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Este es el contrato de tu alquiler con ${state.settings.company_name}. Leelo y firmalo desde el celular`, `This is your rental agreement with ${state.settings.company_name}. Read and sign it from your phone`)}: ${link}`;
 // Links de pago de la agencia: primero la reserva; cuando se registra ese pago, la garantía.
-const payLinkMessage = (r) =>
-  `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Para confirmar tu reserva ${r.code} en ${state.settings.company_name} pagá ${money(r.balance.pending)} desde este link`, `To confirm your booking ${r.code} at ${state.settings.company_name}, pay ${money(r.balance.pending)} with this link`)}: ${state.settings.payment_link_url}${amexNote()}`;
+const payLinkMessage = (r, link = state.settings.payment_link_url) =>
+  `${L('Hola', 'Hi')} ${String(r.customer_name || '').split(' ')[0]}! ${L(`Para confirmar tu reserva ${r.code} en ${state.settings.company_name} pagá ${money(r.balance.pending)} desde este link`, `To confirm your booking ${r.code} at ${state.settings.company_name}, pay ${money(r.balance.pending)} with this link`)}: ${link}${amexNote()}`;
 // Panamá: el link de pago es Visa o Mastercard; con American Express el cliente coordina con la agencia.
 const amexPhone = () => (state.settings.country === 'PA' ? String(state.settings.chat_whatsapp || state.settings.company_phone || '').trim().replace(/^(?=\d)/, '+') : '');
 const amexNote = () => (amexPhone() ? `\n${L(`Si pagás con American Express, escribinos al ${amexPhone()}.`, `If you pay with American Express, message us at ${amexPhone()}.`)}` : '');
@@ -1972,7 +1972,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   // Saldo a cobrar a la vista, con el importe: un toque abre el cobro ya completado.
   if (['confirmada', 'en_curso', 'finalizada'].includes(r.status) && r.balance.pending > 0)
     actions.push(`<button class="btn ${r.status === 'finalizada' ? 'primary' : ''}" data-act="pay">${ICON.money}Cobrar ${money(r.balance.pending)}</button>`);
-  if (state.settings.payment_link_url && ['pendiente', 'confirmada'].includes(r.status) && r.balance.pending > 0) actions.push(`<button class="btn" data-act="payLink">${ICON.send}Mandar link de pago</button>`);
+  if ((state.settings.payment_link_url || state.settings.pay_gateway) && ['pendiente', 'confirmada'].includes(r.status) && r.balance.pending > 0) actions.push(`<button class="btn" data-act="payLink">${ICON.send}Mandar link de pago</button>`);
   if (['pendiente', 'confirmada'].includes(r.status) && !choferesMode()) more.push('<button data-act="docsLink">Pedirle datos y fotos del carnet</button>');
   if (depositLinkDue(r)) r.balance.pending > 0 ? more.push('<button data-act="depositLink">Mandar link de garantía</button>') : actions.push(`<button class="btn primary" data-act="depositLink">${ICON.send}Mandar link de garantía</button>`);
   if (['cancelada', 'no_show'].includes(r.status)) actions.push('<button class="btn" data-act="reopen">Reabrir</button>');
@@ -2569,8 +2569,17 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       const link = clientLink('devolucion', c.return_token);
       openModal(`Fotos de la devolución · ${r.code}`, sendStep('Link para el cliente', 'Saca las fotos desde el celular y aparecen solas en esta reserva, en Devolución. El link se cierra al registrar la devolución.', r, returnMessage(r, link), link));
     },
-    payLink: () =>
-      openModal(`Link de pago · ${r.code}`, sendStep('Pago de la reserva', 'Cuando el cliente pague, registrá el cobro: ahí mismo se abre el envío del link de garantía.', r, payLinkMessage(r), state.settings.payment_link_url)),
+    payLink: async () => {
+      // Con el banco conectado, el link es de esta reserva y por lo que falta pagar; el cobro entra solo.
+      if (!state.settings.pay_gateway)
+        return openModal(`Link de pago · ${r.code}`, sendStep('Pago de la reserva', 'Cuando el cliente pague, registrá el cobro: ahí mismo se abre el envío del link de garantía.', r, payLinkMessage(r), state.settings.payment_link_url));
+      const c = await run(() => POST(`/reservations/${r.id}/pay-link`));
+      if (c.paid) {
+        toast('El cliente ya pagó: el cobro quedó anotado.');
+        return reload();
+      }
+      openModal(`Link de pago · ${r.code}`, sendStep('Pago de la reserva', 'Cuando el cliente pague, el cobro entra solo y la reserva queda confirmada.', r, payLinkMessage(r, c.url), c.url));
+    },
     depositLink: () => openModal(`Link de garantía · ${r.code}`, sendStep('Garantía', 'El cliente ya pagó la reserva: mandale el link para dejar la garantía.', r, depositLinkMessage(r), state.settings.deposit_link_url)),
     docsLink: async () => {
       const c = await run(() => POST(`/reservations/${r.id}/docs-link`));
@@ -2857,6 +2866,7 @@ const LOG_LABEL = {
   titular_conductores: 'Titular y conductores',
   contrato_pendiente: 'Contrato pendiente de cierre',
   contrato_cerrado: 'Contrato cerrado',
+  link_de_pago: 'Link de pago del banco',
   pago: 'Pago registrado',
   devolucion: 'Devolución de dinero',
   garantia: 'Garantía recibida',
@@ -5598,8 +5608,12 @@ on(/^\/empresas$/, async (view) => {
             { name: 'pro_features', label: 'Funciones en prueba: precios por demanda, intervalo entre alquileres, firma, entrega express y tarjeta', type: 'checkbox', full: true },
             { name: 'admin_name', label: 'Nombre del administrador' },
             { name: 'admin_email', label: 'Email del administrador (con el que entra)', type: 'email', required: true, full: true },
+            // Banco de la agencia (NeoPayment): con los tres datos, su link de pago lo arma el banco y el cobro entra solo. Es sólo de esta agencia.
+            { name: 'neo_host', label: `Banco de la agencia: dirección que le dio el banco${c.pay_gateway ? ' · conectado' : ''}`, type: 'url', full: true, attrs: 'placeholder="https://" maxlength="200"' },
+            { name: 'neo_client_id', label: 'Banco: ClientID', attrs: 'maxlength="100" autocomplete="off"' },
+            { name: 'neo_client_secret', label: `Banco: SecretID${c.pay_gateway ? ' (vacío = dejar el que está; "-" = borrarlo)' : ''}`, type: 'password', attrs: 'maxlength="200" autocomplete="new-password"' },
           ],
-          { name: c.name, business_mode: c.business_mode || 'turismo', pay_modes: c.pay_modes || 0, pro_features: c.pro_features || 0, admin_name: c.admin_name || '', admin_email: c.admin_email || '' },
+          { name: c.name, business_mode: c.business_mode || 'turismo', pay_modes: c.pay_modes || 0, pro_features: c.pro_features || 0, admin_name: c.admin_name || '', admin_email: c.admin_email || '', neo_host: c.neo_host || '', neo_client_id: c.neo_client_id || '' },
           'Guardar',
         ) +
         `<div class="card" style="margin-top:14px"><b>¿El administrador no puede entrar?</b>
@@ -6126,6 +6140,20 @@ async function bookingPage() {
   }
   Object.assign(state.settings, { currency: cfg.currency, locale: cfg.locale });
   document.title = `${cfg.company} · ${L('Reservas', 'Bookings')}`;
+  // Vuelve del link de pago del banco (?pago=ok o ?pago=no): se le dice cómo salió, no se le muestra el formulario.
+  const paid = new URLSearchParams(location.search).get('pago');
+  if (paid) {
+    const wa = cfg.whatsapp ? `<a class="btn ok big" href="https://wa.me/${esc(cfg.whatsapp)}" target="_blank" rel="noopener">${WA_ICON}${L('Escribirle a la agencia', 'Message the agency')}</a>` : '';
+    publicPage(
+      paid === 'ok'
+        ? `<div class="card pub-done"><div class="pub-ok" aria-hidden="true">✓</div>
+            <h1>${L('¡Gracias! Recibimos tu pago', 'Thank you! We received your payment')}</h1>
+            <p class="muted">${L(`Apenas el banco lo confirma, tu reserva queda confirmada. ${esc(cfg.company)} te avisa por WhatsApp.`, `As soon as the bank confirms it, your booking is confirmed. ${esc(cfg.company)} will message you on WhatsApp.`)}</p>${wa}</div>`
+        : `<div class="card pub-done"><h1>${L('El pago no se completó', 'The payment was not completed')}</h1>
+            <p class="muted">${L('Podés intentarlo de nuevo con el mismo link de pago. Si te parece que se cobró igual, escribinos y lo revisamos.', 'You can try again with the same payment link. If you think you were charged anyway, message us and we will check.')}</p>${wa}</div>`,
+    );
+    return;
+  }
   const t = new Date();
   let from = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1, 10, 0);
   let to = addDays(from, 3);
@@ -6206,12 +6234,23 @@ async function bookingPage() {
           <label class="trap" aria-hidden="true">No completar<input name="_gotcha" tabindex="-1" autocomplete="off"></label>
         </div>
       </section>
+      ${
+        cfg.pay_gateway
+          ? `<section class="quoter-step">
+        <h2><span>${cfg.extras.length ? 5 : 4}</span>${L('¿Cómo querés pagar?', 'How do you want to pay?')}</h2>
+        <div class="quoter-extras">
+          <label class="quoter-extra"><input type="radio" name="pay" value="tarjeta" checked><span>${L('Con tarjeta, ahora', 'By card, now')}<br><small class="muted" style="white-space:normal">${L('Pagás en la página del banco y tu reserva queda confirmada.', 'You pay on the bank page and your booking is confirmed.')}</small></span></label>
+          <label class="quoter-extra"><input type="radio" name="pay" value="despues"><span>${L('En efectivo o por transferencia', 'Cash or bank transfer')}<br><small class="muted" style="white-space:normal">${L('Dejás el pedido y la agencia te lo confirma por WhatsApp.', 'You leave the request and the agency confirms it by WhatsApp.')}</small></span></label>
+        </div>
+      </section>`
+          : ''
+      }
       <div class="qr-total">
         <div class="sum"><span class="muted" id="bk-what">${L('Elegí un auto', 'Choose a car')}</span><b id="bk-sum"></b></div>
-        <button class="btn primary big" type="submit">${L('Pedir la reserva', 'Request booking')}</button>
+        <button class="btn primary big" type="submit" id="bk-submit">${cfg.pay_gateway ? L('Pagar y confirmar', 'Pay and confirm') : L('Pedir la reserva', 'Request booking')}</button>
         ${cfg.whatsapp ? `<a class="btn wa big" href="https://wa.me/${esc(cfg.whatsapp)}?text=${encodeURIComponent(L('Hola, tengo una consulta sobre una reserva.', 'Hi, I have a question about a booking.'))}" target="_blank" rel="noopener">${WA_ICON}${L('Consultar o pagar por transferencia', 'Ask or pay by bank transfer')}</a>` : ''}
         ${cfg.whatsapp && cfg.amex_by_whatsapp ? `<a class="btn wa big" href="https://wa.me/${esc(cfg.whatsapp)}?text=${encodeURIComponent(L('Hola, quiero pagar una reserva con American Express.', 'Hi, I would like to pay for a booking with American Express.'))}" target="_blank" rel="noopener">${WA_ICON}${L('Pagar con American Express', 'Pay with American Express')}</a>` : ''}
-        <small class="muted">${L('No pagás nada ahora. La agencia te confirma por WhatsApp.', 'You pay nothing now. The agency confirms by WhatsApp.')}</small>
+        <small class="muted" id="bk-pay-note">${cfg.pay_gateway ? L('Pagás en la página segura del banco. Al pagar, tu reserva queda confirmada.', 'You pay on the bank’s secure page. Once paid, your booking is confirmed.') : L('No pagás nada ahora. La agencia te confirma por WhatsApp.', 'You pay nothing now. The agency confirms by WhatsApp.')}</small>
       </div>
     </form>
     ${
@@ -6220,6 +6259,14 @@ async function bookingPage() {
         : ''
     }`);
   const form = $('#bk', page);
+  // Con el banco conectado el cliente elige: con tarjeta paga ahora y la reserva se confirma al pagar; si no, deja el pedido.
+  const wantCard = () => Boolean(cfg.pay_gateway && form.pay && form.pay.value === 'tarjeta');
+  const payNote = () => (wantCard() ? L('Pagás en la página segura del banco. Al pagar, tu reserva queda confirmada.', 'You pay on the bank’s secure page. Once paid, your booking is confirmed.') : L('No pagás nada ahora. La agencia te confirma por WhatsApp.', 'You pay nothing now. The agency confirms by WhatsApp.'));
+  form.addEventListener('change', (e) => {
+    if (e.target.name !== 'pay') return;
+    $('#bk-submit', form).textContent = wantCard() ? L('Pagar y confirmar', 'Pay and confirm') : L('Pedir la reserva', 'Request booking');
+    $('#bk-pay-note', form).textContent = payNote();
+  });
   const days = () => Math.max(1, Math.round((to - from) / 86400000));
   const inHotel = () => Boolean(form.branch && form.branch.value === '__hotel');
   // Con hotel el auto sale de la oficina (lo decide el servidor); si lo devuelve en el hotel, vuelve a la misma.
@@ -6431,7 +6478,11 @@ async function bookingPage() {
         license_expiry: form.license_expiry.value,
         _gotcha: form._gotcha.value,
         notes: L('', 'El cliente eligió inglés'),
+        pay: wantCard() ? 'tarjeta' : undefined,
       });
+      // Con tarjeta sigue en la página del banco: la reserva se confirma cuando el pago entra, no antes.
+      // En express se queda acá: además de pagar tiene que subir sus datos.
+      if (r.pay_url && !r.express) return void (location.href = r.pay_url);
       const when = `${dayName(localISO(from))} ${fmtDT(localISO(from)).slice(11)} → ${dayName(localISO(to))} ${fmtDT(localISO(to)).slice(11)}`;
       // Lo que la agencia necesita de un vistazo: quién, qué reserva, qué auto y si ya pagó.
       // shortcut: "ya aboné" sale de que tocó el botón de pagar, no de un pago confirmado; cuando el medio de pago avise el cobro, tomarlo de ahí.
@@ -6454,10 +6505,16 @@ async function bookingPage() {
           <div class="pub-ok" aria-hidden="true">✓</div>
           <h1>${r.express ? L('Reserva express: te faltan dos pasos', 'Express booking: two steps left') : '¡Listo! Te confirmamos por WhatsApp'}</h1>
           <p>${esc(o.name)} · ${when} · <b>${money(o.total)}</b></p>
-          <p class="muted">${L(`${esc(cfg.company)} te va a escribir para confirmar la reserva.`, `${esc(cfg.company)} will message you to confirm the booking.`)}</p>
+          <p class="muted">${
+            r.pay_url
+              ? L('Pagala ahora con tarjeta para confirmarla.', 'Pay now by card to confirm it.')
+              : wantCard()
+                ? L(`No pudimos abrir el pago con tarjeta. Tu pedido quedó guardado: ${esc(cfg.company)} te escribe para coordinar el pago.`, `We could not open the card payment. Your request is saved: ${esc(cfg.company)} will message you to arrange payment.`)
+                : L(`${esc(cfg.company)} te va a escribir para confirmar la reserva.`, `${esc(cfg.company)} will message you to confirm the booking.`)
+          }</p>
           ${r.express ? `<p class="field-warn">${ICON.alert}${L('Como retirás en menos de 24 hs y no es en la oficina, para confirmarla tenés que pagar el total y subir tus datos y la foto de tu licencia.', 'Because pick-up is in less than 24 hours and not at the office, to confirm it you must pay the total and upload your details and a photo of your license.')}</p>` : ''}
           ${r.docs_url ? `<a class="btn primary big" href="${esc(r.docs_url)}" rel="noopener">${L('Subir mis datos y fotos', 'Upload my details and photos')}</a>` : ''}
-          ${cfg.payment_link && r.code ? `<a class="btn primary big" id="done-pay" href="${esc(cfg.payment_link)}" target="_blank" rel="noopener">${ICON.money}${L('Pagar la reserva', 'Pay for the booking')}</a>` : ''}
+          ${(r.pay_url || cfg.payment_link) && r.code ? `<a class="btn primary big" id="done-pay" href="${esc(r.pay_url || cfg.payment_link)}" target="_blank" rel="noopener">${ICON.money}${L('Pagar la reserva', 'Pay for the booking')}</a>` : ''}
           ${r.card_url ? `<a class="btn primary big" href="${esc(r.card_url)}" rel="noopener">${ICON.money}${L('Dejar mi tarjeta', 'Leave my card')}</a>` : ''}
           ${cfg.whatsapp ? `<a class="btn ok big" id="done-wa" href="${esc(waHref(false))}" target="_blank" rel="noopener">${WA_ICON}Escribirle a la agencia</a>` : ''}
         </div>`,

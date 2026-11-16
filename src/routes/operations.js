@@ -13,6 +13,7 @@ const { requireAdmin } = require('../auth');
 const { chargeInsurance } = require('./catalog');
 const delivery = require('../delivery');
 const whatsapp = require('../whatsapp');
+const neopayment = require('../neopayment');
 const reminders = require('../reminders');
 const { cashDay } = require('../cash');
 const { fail, normDateTime, nowLocal, parseLocal, fmtLocal, toCsv, dmy, hm } = require('../util');
@@ -38,7 +39,7 @@ function setupSteps(db) {
 /** Sucursal elegida en el selector (?branch=3). Solo dígitos: el número va directo en las consultas. */
 const branchOf = (req) => (/^\d+$/.test(req.query.branch) ? Number(req.query.branch) : null);
 
-function operationsRoutes(db) {
+function operationsRoutes(db, { publicQuery = '' } = {}) {
   const router = express.Router();
 
   // Modo choferes: antes de mostrar reservas, el panel o el calendario se renuevan los alquileres vencidos.
@@ -198,6 +199,8 @@ function operationsRoutes(db) {
   router.post('/reservations/:id/docs-link', (req, res) => res.json(delivery.docsLink(db, req.params.id)));
   router.post('/reservations/:id/return-link', (req, res) => res.json(delivery.returnLink(db, req.params.id)));
   router.post('/reservations/:id/card-link', (req, res) => res.json(delivery.cardLink(db, req.params.id)));
+  // Link de pago del banco por lo que falta pagar; si ya lo pagó, el cobro entra en este momento.
+  router.post('/reservations/:id/pay-link', async (req, res) => res.json(await neopayment.link(db, req.params.id, req, publicQuery)));
   // Conductor adicional; con importe, queda además como cargo de la reserva.
   router.post('/reservations/:id/drivers', (req, res) => {
     const b = req.body || {};

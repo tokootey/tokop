@@ -19,6 +19,7 @@ const { backupStatus } = require('./backup');
 const { COMPANY_FIELDS } = require('./owner-book');
 const { hotelRoutes } = require('./hotel');
 const { deliveryPublicRoutes } = require('./routes/delivery-public');
+const neopayment = require('./neopayment');
 const { demandExample } = require('./demand-example');
 const { log: reservationLog } = require('./reservations');
 const { auxiliarGuard } = require('./auxiliar');
@@ -80,6 +81,12 @@ function companyApi(db, { uploadsDir, company, platform }) {
   app.use('/api/public/v1', publicRoutes(db, { publicQuery }));
   app.use('/api/public/hotel', hotelRoutes(db, reservationLog));
   app.use('/api/public/entrega', deliveryPublicRoutes(db, uploadsDir));
+  // Aviso del banco: un cliente pagó su link. Del aviso sólo se toma el código del link; lo demás se le pregunta al banco.
+  app.post('/api/public/pagos/neopayment', async (req, res) => {
+    const b = req.body || {};
+    await neopayment.settle(db, (b.metadatas && (b.metadatas.checkout_slug || b.metadatas.slug)) || b.slug);
+    res.json({ ok: true });
+  });
 
   app.post('/api/auth/login', sameOrigin, (req, res) => res.json(login(db, req, res, prefix)));
   const auth = requireUser(db);
@@ -110,7 +117,7 @@ function companyApi(db, { uploadsDir, company, platform }) {
     guarded,
     auxiliarGuard(db),
     catalogRoutes(db, { uploadsDir }),
-    operationsRoutes(db),
+    operationsRoutes(db, { publicQuery }),
     fileRoutes(db, uploadsDir),
     adminRoutes(db, { emailTaken, publicQuery }),
     importRoutes(db),

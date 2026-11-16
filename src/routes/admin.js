@@ -10,9 +10,11 @@ const { FAQ_DEFAULT } = require('./chat');
 const { fail } = require('../util');
 const { parseDynamicRules } = require('../pricing');
 const whatsapp = require('../whatsapp');
+const neopayment = require('../neopayment');
 const { ROLES } = require('../auxiliar');
 
-const SECRET_KEYS = ['api_key', 'webhook_secret', 'wa_token'];
+// Los datos del banco (neo_*) los carga sólo el dueño de Floty, por agencia (src/platform.js): acá ni se ven ni se cambian.
+const SECRET_KEYS = ['api_key', 'webhook_secret', 'wa_token', 'neo_host', 'neo_client_id', 'neo_client_secret'];
 // Sólo los cambia el dueño de Floty, desde el panel.
 const OWNER_KEYS = ['pro_features'];
 const INTEGRATION_KEYS = [
@@ -69,6 +71,7 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
   router.get('/settings', (_req, res) => {
     const s = getSettings(db);
     s.whatsapp_api = whatsapp.configured(s);
+    s.pay_gateway = neopayment.configured(s);
     for (const k of [...SECRET_KEYS, ...INTEGRATION_KEYS]) delete s[k];
     s.contract_terms_default = CONTRACT_TERMS; // para "Restaurar condiciones sugeridas"
     s.contract_terms_en_default = CONTRACT_TERMS_EN;
