@@ -8,6 +8,7 @@ const { ingestQuote } = require('../integration');
 const { cardUrlFor, docsLink } = require('../delivery');
 const { saveHotel, withHotelExtra, hotelExtra } = require('../hotel');
 const R = require('../reservations');
+const neopayment = require('../neopayment');
 const { fail, normDateTime, nowLocal } = require('../util');
 
 /**
@@ -145,6 +146,8 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
       young_driver: youngPricing(db, s) ? { age: Number(s.young_driver_age) || 21, fee: Number(s.young_driver_fee) || 0 } : null,
       after_hours: Number(s.after_hours_fee) > 0 ? { fee: Number(s.after_hours_fee), from: hhmm(s.after_hours_from) || '20:00', to: hhmm(s.after_hours_to) || '23:00' } : null,
       payment_link: String(s.payment_link_url || '').trim(),
+      pay_gateway: neopayment.configured(s), // con el banco conectado, el cliente elige pagar con tarjeta ahí mismo o dejar el pedido
+
       hotel: s.chat_hotel === '1' ? { fee: (hotelExtra(db) || {}).price || 0 } : null,
       express_places: db.prepare('SELECT code FROM branches WHERE active = 1 AND express_24h = 1').all().map((x) => x.code),
       express_before: in24h(agencyNow(s.country)),
@@ -197,7 +200,7 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
     res.json({ pickup_at, return_at, options });
   });
 
-  router.post('/book', (req, res) => {
+  router.post('/book', async (req, res) => {
     if (limited(`b:${req.ip}`, 5, 10 * 60 * 1000)) fail(429, 'Ya recibimos varias solicitudes, probá en unos minutos');
     const b = req.body || {};
     if (b._gotcha) return res.status(201).json({ ok: true }); // trampa para robots: se descarta en silencio
@@ -237,7 +240,7 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
         .filter((code) => R.extraFits(db.prepare('SELECT categories FROM extras WHERE code = ?').get(code) || {}, { code: str(b.category, 20) }))
         .join(','),
       vuelo: str(b.flight, 40),
-      comentarios: ['Pedido desde el link de reservas', str(b.notes, 500)].filter(Boolean).join('. '),
+      comentarios: ['Pedido desde el link de reservas', neopayment.configured(s) ? (b.pay === 'tarjeta' ? 'Eligió pagar con tarjeta' : 'Paga en efectivo o por transferencia') : '', str(b.notes, 500)].filter(Boolean).join('. '),
     };
     let result;
     try {
@@ -284,7 +287,15 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
     const card_url = cardUrlFor(db, result.reservation.code, req, publicQuery);
     // Express: el cliente sigue ahí mismo con sus datos y las fotos de la licencia.
     const docs_url = express ? `${req.protocol}://${req.get('host')}/datos/${docsLink(db, rid).docs_token}${publicQuery}` : null;
-    res.status(201).json({ ok: true, code: result.reservation.code, ...(card_url ? { card_url } : {}), ...(express ? { express: true, docs_url } : {}) });
+    // Eligió pagar con tarjeta: sigue en la página del banco con el link de esta reserva, que se confirma sola cuando el pago entra.
+    // Si el banco no contesta, la reserva entra igual como pedido. Quien paga en efectivo o por transferencia sólo deja el pedido.
+    const pay_url = neopayment.configured(s) && b.pay === 'tarjeta'
+      ? await neopayment
+          .link(db, rid, req, publicQuery)
+          .then((p) => p.url || null)
+          .catch(() => null)
+      : null;
+    res.status(201).json({ ok: true, code: result.reservation.code, ...(card_url ? { card_url } : {}), ...(pay_url ? { pay_url } : {}), ...(express ? { express: true, docs_url } : {}) });
   });
 
   return router;

@@ -47,6 +47,15 @@ test('datos de la agencia y contraseña nueva del administrador', () => {
   assert.throws(() => platform.updateProfile(id, { business_mode: 'otro' }), /Tipo de negocio/);
   assert.throws(() => platform.updateProfile(id, { name: '  ' }), /nombre/);
   platform.updateProfile(id, { logo: '' });
+  // El banco se conecta por agencia: la otra no cambia, y la clave no vuelve en los datos.
+  assert.throws(() => platform.updateProfile(id, { neo_host: 'http://banco.test' }), /https/);
+  const bank = platform.updateProfile(id, { neo_host: 'https://banco.test/', neo_client_id: 'cliente', neo_client_secret: 'secreto' });
+  assert.equal(bank.pay_gateway, 1);
+  assert.equal(JSON.stringify(bank).includes('secreto'), false);
+  assert.equal(getSetting(db(), 'neo_host'), 'https://banco.test');
+  assert.equal(platform.updateProfile(id, { neo_client_secret: '' }).pay_gateway, 1, 'vacía deja la clave que está');
+  assert.equal(platform.stats(platform.byEmail('beto@sur.test').id).pay_gateway, 0);
+  assert.equal(platform.updateProfile(id, { neo_client_secret: '-' }).pay_gateway, 0);
   // La modalidad de pago se activa por agencia: la otra no cambia.
   assert.equal(platform.stats(id).pay_modes, 0);
   assert.equal(platform.updateProfile(id, { pay_modes: 1 }).pay_modes, 1);

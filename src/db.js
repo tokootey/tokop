@@ -579,6 +579,10 @@ const DEFAULT_SETTINGS = {
   chat_whatsapp: '',
   payment_link_url: '', // link de pago de la agencia (su banco o pasarela) para cobrar la reserva
   deposit_link_url: '', // ídem para cobrar la garantía; se ofrece apenas se registra el pago de la reserva
+  // Pasarela del banco (NeoPayment, src/neopayment.js): con los tres datos, el link de pago lo arma el banco por reserva y el cobro entra solo.
+  neo_host: '',
+  neo_client_id: '',
+  neo_client_secret: '',
   express_requires_payment: '0', // '1': la entrega express (pre-entrega) sólo se hace con la reserva paga
   chat_hotel: '0', // '1': el link de reservas ofrece llevar el auto al hotel del cliente
   chat_faq: '',
@@ -641,6 +645,8 @@ function migrate(db) {
   // Cuándo se le mandó al cliente el recordatorio de la entrega ('error': falló el envío automático).
   if (!has('reservations', 'reminder_at')) db.exec('ALTER TABLE reservations ADD COLUMN reminder_at TEXT');
   if (!has('reservations', 'hotel_token')) db.exec('ALTER TABLE reservations ADD COLUMN hotel_token TEXT');
+  // Código del último link de pago que armó el banco para la reserva (src/neopayment.js).
+  if (!has('reservations', 'pay_slug')) db.exec('ALTER TABLE reservations ADD COLUMN pay_slug TEXT');
   // El costo de la entrega en hotel es un adicional (código HOTEL): arranca en 0 y cada agencia le pone su precio.
   db.exec("INSERT OR IGNORE INTO extras (code, name, price, charge_type, max_price) VALUES ('HOTEL', 'Entrega en hotel', 0, 'fijo', 0)");
   // Seguros: un adicional con tipo "seguro" (se elige uno por reserva) y su franquicia, que carga cada agencia.

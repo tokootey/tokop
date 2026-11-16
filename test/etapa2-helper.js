@@ -72,6 +72,7 @@ async function start() {
 
   return {
     db,
+    base,
     as,
     reserve,
     rent,
