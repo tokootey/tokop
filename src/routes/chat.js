@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const { getSettings } = require('../db');
+const { getSettings, phoneHint } = require('../db');
 const { computeQuote, youngPricing, youngRules, rentalDays } = require('../pricing');
 const { categoryAvailability, OUT_OF_FLEET } = require('../availability');
 const { ingestQuote } = require('../integration');
@@ -37,8 +37,6 @@ function parseFaq(text, settings) {
     .map(([q, ...a]) => ({ q: q.trim().slice(0, 120), a: a.join('|').trim().replace(/\{edad_minima\}/g, settings.min_driver_age || '21').slice(0, 600) }));
 }
 
-// Ejemplo de WhatsApp en el formulario, según el país de la agencia.
-const PHONE_HINT = { AR: '+54 9 2901 555123', PA: '+507 6123 4567', CL: '+56 9 1234 5678', UY: '+598 91 234 567', PE: '+51 912 345 678', CO: '+57 312 345 6789', MX: '+52 55 1234 5678', CR: '+506 8123 4567', ES: '+34 612 345 678' };
 
 /** Categorías que en esas fechas sólo tienen libres autos "de consulta": en la web se ofrecen por WhatsApp, sin reserva. */
 function inquiryOnly(db, pickup_at, return_at) {
@@ -51,7 +49,7 @@ function inquiryOnly(db, pickup_at, return_at) {
 
 // Hora de la agencia: el servidor corre en una sola zona y "después de las 20:00" tiene que ser la hora de ella.
 // shortcut: sólo países de una zona horaria; el resto usa la hora del servidor hasta que la zona sea un ajuste de cada empresa.
-const ZONES = { PA: 'America/Panama', UY: 'America/Montevideo', PY: 'America/Asuncion', BO: 'America/La_Paz', PE: 'America/Lima', CO: 'America/Bogota', CR: 'America/Costa_Rica', DO: 'America/Santo_Domingo', GT: 'America/Guatemala' };
+const ZONES = { AR: 'America/Argentina/Buenos_Aires', CL: 'America/Santiago', PA: 'America/Panama', UY: 'America/Montevideo', PY: 'America/Asuncion', BO: 'America/La_Paz', PE: 'America/Lima', CO: 'America/Bogota', CR: 'America/Costa_Rica', DO: 'America/Santo_Domingo', GT: 'America/Guatemala' };
 const agencyNow = (country, date = new Date()) => (ZONES[country] ? date.toLocaleString('sv-SE', { timeZone: ZONES[country] }).slice(0, 16).replace(' ', 'T') : nowLocal());
 /** Reserva express: se retira en menos de 24 hs en un lugar sin personal de la agencia (un hotel, o una sucursal marcada así). En la oficina nunca. */
 const in24h = (now) => new Date(Date.parse(`${now}:00Z`) + 24 * 3600 * 1000).toISOString().slice(0, 16);
@@ -151,7 +149,7 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
       express_places: db.prepare('SELECT code FROM branches WHERE active = 1 AND express_24h = 1').all().map((x) => x.code),
       express_before: in24h(agencyNow(s.country)),
       amex_by_whatsapp: s.country === 'PA', // en Panamá, Amex se cobra aparte: el cliente lo pide por WhatsApp
-      phone_hint: PHONE_HINT[s.country] || '+00 000 000 000',
+      phone_hint: phoneHint(s.country),
       branches: db.prepare('SELECT code, name FROM branches WHERE active = 1 ORDER BY name').all(),
       extras: db.prepare("SELECT code, name, price, charge_type, kind, deductible, categories FROM extras WHERE active = 1 AND price > 0 AND code <> 'HOTEL' AND kind <> 'recargo' ORDER BY kind DESC, name").all().map((x) => ({ ...x, categories: R.extraCodes(x) })),
       faq: parseFaq(s.chat_faq || FAQ_DEFAULT, s),

@@ -324,7 +324,7 @@ function assignVehicle(db, id, vehicleId, userId) {
   if (!['pendiente', 'confirmada'].includes(r.status)) fail(409, 'Sólo se asigna vehículo a reservas pendientes o confirmadas');
   const v = vehicleId ? db.prepare('SELECT plate, category_id FROM vehicles WHERE id = ?').get(vehicleId) : null;
   if (vehicleId && !v) fail(400, 'Vehículo inexistente');
-  const otherCategory = v && v.category_id !== r.category_id && proOn(db);
+  const otherCategory = v && v.category_id !== r.category_id;
   if (otherCategory) {
     if (!isVehicleFree(db, { ...r, vehicle_id: Number(vehicleId), exclude_reservation_id: r.id })) fail(409, 'El vehículo seleccionado no está disponible en esas fechas');
     // El precio se mantiene: queda como precio acordado, así una modificación posterior tampoco lo recalcula.
@@ -395,16 +395,14 @@ function moveOptions(db, id) {
       if (!swapProblem(db, r, other)) swaps.push({ ...car, reservation_id: other.id, code: other.code, customer_name: other.customer_name });
     }
   }
-  // Agencias que lo usan: también los autos libres de otras categorías (el precio de la reserva no cambia).
-  const others = proOn(db)
-    ? db
+  // También los autos libres de otras categorías (el precio de la reserva no cambia).
+  const others = db
         .prepare(
           `SELECT v.id, v.plate, v.brand, v.model, v.km, b.name AS branch_name, c.name AS category_name FROM vehicles v JOIN categories c ON c.id = v.category_id
            LEFT JOIN branches b ON b.id = v.branch_id WHERE v.category_id <> ? AND v.status NOT IN ('mantenimiento', 'fuera_servicio') ORDER BY c.daily_rate, v.plate`,
         )
         .all(r.category_id)
-        .filter((car) => !hits.all(car.id, to, from, r.id).length)
-    : [];
+        .filter((car) => !hits.all(car.id, to, from, r.id).length);
   return { free, swaps, others };
 }
 

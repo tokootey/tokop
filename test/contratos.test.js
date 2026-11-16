@@ -4,7 +4,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { start, at } = require('./etapa2-helper');
-const { setSetting } = require('../src/db');
 
 test('extender un alquiler en curso: suma los días nuevos y no pisa otra reserva del mismo auto', async () => {
   const app = await start();
@@ -71,18 +70,13 @@ test('titular distinto del conductor y hasta 5 conductores adicionales', async (
   }
 });
 
-test('cambiar a mano a un auto de otro valor mantiene el precio (solo agencias que lo usan)', async () => {
+test('cambiar a mano a un auto de otro valor mantiene el precio (todas las agencias)', async () => {
   const app = await start();
   try {
     const call = await app.as('operador');
     const r = app.reserve(); // categoría económica, 150
     const assign = (vehicle_id) => call('POST', `/api/reservations/${r.id}/assign`, { vehicle_id });
 
-    // Sin la función: como siempre, solo autos de la misma categoría.
-    assert.equal((await assign(3)).status, 400);
-    assert.deepEqual((await call('GET', `/api/reservations/${r.id}/move-options`)).data.others, []);
-
-    setSetting(app.db, 'pro_features', '1');
     assert.deepEqual((await call('GET', `/api/reservations/${r.id}/move-options`)).data.others.map((v) => v.plate), ['AA0003']);
     const moved = (await assign(3)).data;
     assert.deepEqual([moved.vehicle_plate, moved.category_code, moved.total], ['AA0003', 'SUV', 150]);

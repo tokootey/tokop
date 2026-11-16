@@ -136,10 +136,11 @@ const EN = {
   'No hay devoluciones para hoy.': 'No returns for today.',
   'Devoluciones vencidas': 'Overdue returns',
   'Clientes que no retiraron': 'Customers who did not pick up',
-  'Seguro o VTV por vencer (30 días)': 'Insurance or inspection expiring (30 days)',
+  'Seguro o inspección técnica por vencer (30 días)': 'Insurance or inspection expiring (30 days)',
   Seguro: 'Insurance',
-  VTV: 'Inspection',
-  '✔ Todo en orden: no hay devoluciones vencidas, clientes sin retirar ni seguros o VTV por vencer.':
+  'Inspección técnica': 'Technical inspection',
+  Revisado: 'Inspection',
+  '✔ Todo en orden: no hay devoluciones vencidas, clientes sin retirar ni seguros o inspección técnica por vencer.':
     '✔ All good: no overdue returns, no missed pick-ups and no insurance or inspections expiring.',
 
   // --- Reservas (listado) ---
@@ -489,8 +490,8 @@ const EN = {
   'Vencimiento licencia': 'License expiry',
   'Licencia N° / vence': 'License no. / expiry',
   'Marca y modelo': 'Make and model',
-  Patente: 'Plate',
-  patente: 'plate',
+  Placa: 'Plate',
+  placa: 'plate',
   'Color / año': 'Color / year',
   'Período del alquiler': 'Rental period',
   'Vehículo y período': 'Vehicle and period',
@@ -563,7 +564,7 @@ const EN = {
   Año: 'Year',
   'Sucursal actual': 'Current location',
   'Vencimiento seguro': 'Insurance expiry',
-  'Vencimiento VTV': 'Inspection expiry',
+  'Vencimiento inspección técnica': 'Inspection expiry',
   '+ Agregar': '+ Add',
   Editar: 'Edit',
   'Todavía no hay registros.': 'No records yet.',
@@ -575,7 +576,7 @@ const EN = {
   Flota: 'Fleet',
   Sucursal: 'Location',
   'Comb.': 'Fuel',
-  'Seguro / VTV': 'Insurance / inspection',
+  'Seguro / inspección técnica': 'Insurance / inspection',
   'Historial ·': 'History ·',
   Licencia: 'License',
   Falta: 'Missing',
@@ -1041,11 +1042,11 @@ const EN = {
 
   // --- Importar datos ---
   '1 · Flota': '1 · Fleet',
-  'Patente, marca, modelo, año, categoría, estado, km, vencimientos de seguro y VTV.': 'Plate, make, model, year, category, status, km, insurance and inspection expiry.',
+  'Placa, marca, modelo, año, categoría, estado, km, vencimientos de seguro e inspección técnica.': 'Plate, make, model, year, category, status, km, insurance and inspection expiry.',
   '2 · Clientes': '2 · Customers',
   'Nombre, documento, email, teléfono, domicilio, licencia, fecha de nacimiento.': 'Name, ID, email, phone, address, license, date of birth.',
   '3 · Reservas': '3 · Bookings',
-  'Cliente, fechas y horas de entrega y devolución, patente o categoría, estado, total y seña.': 'Customer, pick-up and return dates and times, plate or category, status, total and down payment.',
+  'Cliente, fechas y horas de entrega y devolución, placa o categoría, estado, total y seña.': 'Customer, pick-up and return dates and times, plate or category, status, total and down payment.',
   Nuevo: 'New',
   Actualizado: 'Updated',
   'Sin cambios': 'No changes',
@@ -1095,7 +1096,7 @@ const EN = {
   'Guardar las columnas que no tienen lugar en "Observaciones" (para no perder nada)': 'Save the columns that have no place in "Notes" (so nothing is lost)',
   'Las reservas que ya se importaron antes (mismo número, o mismo cliente y fechas) se saltean, así que podés volver a importar el archivo sin duplicar. Los clientes que no estén cargados se crean.':
     'Bookings already imported (same number, or same customer and dates) are skipped, so you can import the file again without duplicates. Customers not on file are created.',
-  'Los registros repetidos se detectan solos (clientes por documento, email o teléfono; autos por patente), así que podés volver a importar sin duplicar.':
+  'Los registros repetidos se detectan solos (clientes por documento, email o teléfono; autos por placa), así que podés volver a importar sin duplicar.':
     'Repeated records are detected automatically (customers by ID, email or phone; cars by plate), so you can import again without duplicates.',
   'Probar (no guarda nada)': 'Test (saves nothing)',
   Importar: 'Import',
@@ -1377,7 +1378,7 @@ const EN = {
   'Reservas en un minuto': 'Bookings in one minute',
   'Fechas, auto y cliente. El voucher y el contrato salen solos y se mandan por WhatsApp.': 'Dates, car and customer. The voucher and the contract are generated for you and sent by WhatsApp.',
   'Calendario y autos': 'Calendar and cars',
-  'Qué auto está ocupado cada día, cuáles están en el taller y qué seguro o VTV está por vencer.': 'Which car is booked each day, which ones are in the workshop, and which insurance or inspection is about to expire.',
+  'Qué auto está ocupado cada día, cuáles están en el taller y qué seguro o inspección técnica está por vencer.': 'Which car is booked each day, which ones are in the workshop, and which insurance or inspection is about to expire.',
   'Un link para Instagram y WhatsApp: el cliente elige fechas y auto, ve el precio y pide la reserva. Vos la confirmás.': 'A link for Instagram and WhatsApp: the customer picks dates and a car, sees the price and requests the booking. You confirm it.',
   'Qué hace falta para arrancar': 'What you need to start',
   'Una compu o un celular con internet.': 'A computer or a phone with internet.',

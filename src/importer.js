@@ -130,11 +130,11 @@ const KINDS = {
   flota: {
     label: 'Flota',
     fields: [
-      { key: 'plate', label: 'Patente', required: true, test: (k) => PLATE.test(k) },
+      { key: 'plate', label: 'Placa', required: true, test: (k) => PLATE.test(k) },
       { key: 'insurance_company', label: 'Aseguradora', test: (k) => /aseguradora|compania_?(de_)?seguro|insurer/.test(k) },
       { key: 'insurance_policy', label: 'Nº de póliza', test: (k) => /^(n|nro|numero)?_?(de_)?poliza$|policy/.test(k) },
       { key: 'insurance_expiry', label: 'Vencimiento del seguro', date: true, test: (k) => /seguro|poliza|insurance/.test(k) },
-      { key: 'vtv_expiry', label: 'Vencimiento VTV', date: true, test: (k) => /vtv|rto|itv|inspecc/.test(k) },
+      { key: 'vtv_expiry', label: 'Vencimiento inspección técnica', date: true, test: (k) => /vtv|rto|itv|inspecc/.test(k) },
       { key: 'year', label: 'Año', test: (k) => /^(ano|anio|year)$|ano_?(de_)?fabric|^modelo_?ano$|^ano_?modelo$/.test(k) },
       { key: 'brand', label: 'Marca', test: (k) => /marca|brand|make/.test(k) },
       { key: 'model', label: 'Modelo', test: (k) => /modelo|model|version/.test(k) },
@@ -168,7 +168,7 @@ const KINDS = {
       { key: 'customer_phone', label: 'Teléfono del cliente', test: (k) => PHONE.test(k) },
       { key: 'customer_last_name', label: 'Apellido del cliente (si está aparte)', test: (k) => /^apellidos?$|last_?name|surname/.test(k) },
       { key: 'customer_name', label: 'Cliente', required: true, test: (k) => /nombre|cliente|titular|pasajero|name|razon_social/.test(k) },
-      { key: 'plate', label: 'Patente del auto', test: (k) => PLATE.test(k) || /vehiculo|unidad|^auto$|^movil$/.test(k) },
+      { key: 'plate', label: 'Placa del auto', test: (k) => PLATE.test(k) || /vehiculo|unidad|^auto$|^movil$/.test(k) },
       { key: 'category', label: 'Categoría', test: (k) => CATEGORY.test(k) },
       { key: 'status', label: 'Estado', test: (k) => STATUS.test(k) },
       { key: 'paid', label: 'Pagado / seña', test: (k) => /pagado|abonado|sena|anticipo|cobrado|paid|a_cuenta/.test(k) },
@@ -470,7 +470,7 @@ function importVehicle(db, ctx, row) {
   const { read, mode, warn, options } = ctx;
   const plateRaw = read.get(row, 'plate');
   const plate = plateRaw.toUpperCase().replace(/\s+/g, ' ').trim();
-  if (!compactPlate(plate)) throw new RowError('Falta la patente');
+  if (!compactPlate(plate)) throw new RowError('Falta la placa');
   const existing = db
     .prepare('SELECT * FROM vehicles')
     .all()
@@ -599,11 +599,11 @@ function importReservation(db, ctx, row) {
     else warn(`Categoría "${catText}" desconocida`);
   }
   if (vehicle) {
-    if (category && category.id !== vehicle.category_id) warn(`La patente ${vehicle.plate} es de otra categoría: se usó la del auto`);
+    if (category && category.id !== vehicle.category_id) warn(`La placa ${vehicle.plate} es de otra categoría: se usó la del auto`);
     category = db.prepare('SELECT * FROM categories WHERE id = ?').get(vehicle.category_id);
   }
   if (!category && options.default_category_id) category = db.prepare('SELECT * FROM categories WHERE id = ?').get(options.default_category_id);
-  if (!category) throw new RowError('No se pudo saber la categoría (agregá la columna, la patente o elegí una categoría por defecto)');
+  if (!category) throw new RowError('No se pudo saber la categoría (agregá la columna, la placa o elegí una categoría por defecto)');
 
   // Estado: el del archivo o, si no viene, según las fechas.
   const statusText = read.get(row, 'status');

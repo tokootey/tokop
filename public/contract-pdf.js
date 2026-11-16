@@ -161,7 +161,7 @@ function buildContractPdf(r, photos = []) {
   const panapass = panapassOn() && r.vehicle_panapass_number ? txt(r.vehicle_panapass_number) : '';
   y = section('Vehículo y período', lastY() + gap);
   kv(y, [
-    ['Marca y modelo', r.vehicle_plate ? `${txt(r.vehicle_brand)} ${txt(r.vehicle_model)}` : '', 'Patente', txt(r.vehicle_plate)],
+    ['Marca y modelo', r.vehicle_plate ? `${txt(r.vehicle_brand)} ${txt(r.vehicle_model)}` : '', 'Placa', txt(r.vehicle_plate)],
     // Panamá: el cliente necesita la cuenta del Panapass para recargarla (sale del auto; si cambia, se edita el auto).
     // Va en el lugar de la categoría, que pasa al renglón de los días: así no suma un renglón.
     ['Color / año', r.vehicle_plate ? [r.vehicle_color, r.vehicle_year].filter(Boolean).join(' · ') : '', ...(panapass ? ['Cuenta Panapass', panapass] : ['Categoría', category])],
