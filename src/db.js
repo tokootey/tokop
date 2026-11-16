@@ -553,6 +553,7 @@ const DEFAULT_SETTINGS = {
   holiday_rates_on: '0', // '1': los días feriados se cobran con la tarifa de feriado de la categoría
   late_hour_fee: '0', // precio de cada hora pasada de la tolerancia (0 = pasada la tolerancia se cobra un día más)
   late_hour_max: '4', // hasta cuántas horas se cobran por hora; con más, es un día entero
+  pending_free: '0', // '1': una reserva sin confirmar no bloquea el auto; al confirmarse otra, las que se quedan sin auto se cancelan (availability.js)
   km_limit_max_days: '0', // el límite de km rige en alquileres de hasta estos días (0 = siempre)
   contract_terms_choferes: CONTRACT_TERMS_CHOFERES,
   // Integración con cotizador

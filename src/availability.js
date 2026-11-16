@@ -8,6 +8,13 @@ const BLOCKING = ['pendiente', 'confirmada', 'en_curso'];
 /** Estados de vehículo que lo sacan de la flota operativa. */
 const OUT_OF_FLEET = ['mantenimiento', 'fuera_servicio'];
 
+/**
+ * Con "Las reservas sin confirmar no bloquean el auto" (Configuración), una cotización pendiente no ocupa lugar:
+ * varias pueden pedir el mismo auto y, al confirmarse una, las que se quedan sin auto se cancelan (reservations.dropOutbid).
+ */
+const pendingFree = (db) => getSetting(db, 'pending_free') === '1';
+const blocking = (db) => (pendingFree(db) ? BLOCKING.filter((s) => s !== 'pendiente') : BLOCKING);
+
 const inList = (arr) => arr.map((s) => `'${s}'`).join(',');
 
 /**
@@ -32,7 +39,7 @@ function availableVehicles(db, { category_id, pickup_at, return_at, exclude_rese
        WHERE v.category_id = ? AND v.status NOT IN (${inList(OUT_OF_FLEET)})
          AND v.id NOT IN (
            SELECT vehicle_id FROM reservations
-           WHERE vehicle_id IS NOT NULL AND status IN (${inList(BLOCKING)})
+           WHERE vehicle_id IS NOT NULL AND status IN (${inList(blocking(db))})
              AND pickup_at < ? AND return_at > ? AND id <> ?
          )
        ORDER BY v.plate`,
@@ -48,7 +55,7 @@ function isVehicleFree(db, { vehicle_id, pickup_at, return_at, exclude_reservati
   const skip = [].concat(exclude_reservation_id); // una reserva o, para un intercambio, las dos
   const clash = db
     .prepare(
-      `SELECT 1 FROM reservations WHERE vehicle_id = ? AND status IN (${inList(BLOCKING)})
+      `SELECT 1 FROM reservations WHERE vehicle_id = ? AND status IN (${inList(blocking(db))})
        AND pickup_at < ? AND return_at > ? AND id NOT IN (${skip.map(() => '?').join(',')}) LIMIT 1`,
     )
     .get(vehicle_id, to, from, ...skip);
@@ -65,7 +72,7 @@ function categoryAvailability(db, { pickup_at, return_at, exclude_reservation_id
     .prepare(
       `SELECT c.*,
         (SELECT COUNT(*) FROM vehicles v WHERE v.category_id = c.id AND v.status NOT IN (${inList(OUT_OF_FLEET)})) AS fleet,
-        (SELECT COUNT(*) FROM reservations r WHERE r.category_id = c.id AND r.status IN (${inList(BLOCKING)})
+        (SELECT COUNT(*) FROM reservations r WHERE r.category_id = c.id AND r.status IN (${inList(blocking(db))})
            AND r.pickup_at < ? AND r.return_at > ? AND r.id <> ?) AS booked
        FROM categories c WHERE c.active = 1 ORDER BY c.daily_rate`,
     )
@@ -73,4 +80,4 @@ function categoryAvailability(db, { pickup_at, return_at, exclude_reservation_id
     .map((c) => ({ ...c, available: Math.max(0, c.fleet - c.booked) }));
 }
 
-module.exports = { BLOCKING, OUT_OF_FLEET, paddedRange, availableVehicles, isVehicleFree, categoryAvailability };
+module.exports = { BLOCKING, pendingFree, OUT_OF_FLEET, paddedRange, availableVehicles, isVehicleFree, categoryAvailability };

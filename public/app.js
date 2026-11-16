@@ -93,6 +93,10 @@ async function api(method, path, body) {
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+  // Cotizaciones que se cayeron porque esta reserva quedó firme: se avisa después del mensaje normal de la acción.
+  if (data && Array.isArray(data.dropped) && data.dropped.length) {
+    setTimeout(() => toast(`Se ${data.dropped.length === 1 ? 'canceló la cotización' : 'cancelaron las cotizaciones'} ${data.dropped.join(', ')}: pedía${data.dropped.length === 1 ? '' : 'n'} el mismo auto y fechas`, true), 3200);
+  }
   return data;
 }
 const GET = (p) => api('GET', p);
@@ -2842,6 +2846,7 @@ const LOG_LABEL = {
   no_show: 'No se presentó',
   pendiente: 'Reabierta',
   vehiculo_asignado: 'Vehículo asignado',
+  cotizaciones_canceladas: 'Cotizaciones canceladas por esta reserva',
   recordatorio_enviado: 'Recordatorio de entrega enviado',
   recordatorio_fallido: 'El recordatorio no se pudo mandar',
   vehiculo_intercambiado: 'Auto intercambiado',
@@ -4954,6 +4959,7 @@ on(/^\/config$/, async (view) => {
       { name: 'dynamic_pricing_rules', label: 'Subir precios según ocupación (ocupación:recargo, por ejemplo 70:10, 90:20)', when: () => !choferesMode() },
       { name: 'min_driver_age', label: 'Edad mínima del conductor', type: 'number' },
       { name: 'deductible_amount', label: 'Franquicia del seguro (vacío = la de la póliza)', type: 'number' },
+      { name: 'pending_free', label: 'Las reservas sin confirmar no bloquean el auto (varias cotizaciones pueden pedir el mismo auto y fechas; al confirmarse una, las que ya no tienen auto se cancelan solas)', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'jurisdiction', label: 'Jurisdicción del contrato (tribunales de...)', full: true },
       { name: 'contract_terms_choferes', label: 'Contrato para choferes (un párrafo por cláusula; {periodo}, {precio_periodo}, {recargo_atraso}, {garante} y las demás se completan solas)', type: 'textarea', full: true, rows: 16, when: () => choferesMode() },
       { name: 'contract_terms', label: 'Condiciones generales del contrato (un párrafo por cláusula, separadas por una línea en blanco)', type: 'textarea', full: true, rows: 16, when: () => !choferesMode() },

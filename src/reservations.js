@@ -1,7 +1,7 @@
 'use strict';
 
 const { computeQuote, computeReturnCharges, youngRules } = require('./pricing');
-const { categoryAvailability, isVehicleFree, paddedRange } = require('./availability');
+const { categoryAvailability, isVehicleFree, paddedRange, pendingFree } = require('./availability');
 const { emit } = require('./webhooks');
 const { getSettings, proOn } = require('./db');
 const { refundFor } = require('./refunds');
@@ -123,6 +123,32 @@ function assertAvailability(db, data, excludeId = 0) {
   }
 }
 
+/**
+ * Con "Las reservas sin confirmar no bloquean el auto": cuando `r` queda firme (confirmada o entregada),
+ * se cancelan las cotizaciones pendientes que se quedaron sin auto en esas fechas. Devuelve sus códigos.
+ * Se llama después de todo lo que deja firme una reserva o le cambia el auto o las fechas.
+ */
+function dropOutbid(db, r, userId) {
+  if (!r || !pendingFree(db) || !['confirmada', 'en_curso'].includes(r.status)) return [];
+  const [from, to] = paddedRange(db, r.pickup_at, r.return_at);
+  const rivals = db
+    .prepare("SELECT id FROM reservations WHERE status = 'pendiente' AND id <> ? AND (category_id = ? OR vehicle_id = ?) AND pickup_at < ? AND return_at > ?")
+    .all(r.id, r.category_id, r.vehicle_id || 0, to, from);
+  const dropped = [];
+  for (const { id } of rivals) {
+    const p = getReservation(db, id);
+    try {
+      assertAvailability(db, p, p.id);
+    } catch (e) {
+      if (e.status !== 409) continue; // otro problema de esa cotización: no es por esta reserva, se deja como está
+      changeStatus(db, p.id, 'cancelada', userId, `Se confirmó la reserva ${r.code} para esas fechas`);
+      dropped.push(p.code);
+    }
+  }
+  if (dropped.length) log(db, r.id, userId, 'cotizaciones_canceladas', dropped.join(', '));
+  return dropped;
+}
+
 /** Categorías para las que vale un adicional (códigos en mayúscula); vacío = todas. */
 const extraCodes = (x) => String(x.categories || '').toUpperCase().split(',').map((c) => c.trim()).filter(Boolean);
 const extraFits = (x, cat) => !extraCodes(x).length || Boolean(cat && extraCodes(x).includes(String(cat.code).toUpperCase()));
@@ -213,6 +239,7 @@ function createReservation(db, input, userId) {
     return rid;
   });
   const r = getReservation(db, id);
+  r.dropped = dropOutbid(db, r, userId);
   emit(db, 'reservation.created', publicView(r));
   return r;
 }
@@ -286,6 +313,7 @@ function updateReservation(db, id, input, userId) {
     log(db, current.id, userId, 'modificada', hasAgreed ? { precio_final: total, antes: current.total } : undefined);
   });
   const r = getReservation(db, current.id);
+  r.dropped = dropOutbid(db, r, userId);
   emit(db, 'reservation.updated', publicView(r));
   return r;
 }
@@ -302,7 +330,8 @@ function changeStatus(db, id, status, userId, detail) {
   if (!allowed[status] || !allowed[status].includes(r.status)) fail(409, `Una reserva ${STATUS_TEXT[r.status] || r.status} no puede pasar a ${STATUS_TEXT[status] || status}`);
   // "No se presentó" recién tiene sentido cuando pasó la hora de retiro; antes, es una cancelación.
   if (status === 'no_show' && r.pickup_at > nowLocal()) fail(409, 'Todavía no llegó la hora de retiro: si el cliente avisó que no viene, cancelá la reserva');
-  if (status === 'pendiente') assertAvailability(db, r, r.id);
+  // Con las cotizaciones sin bloquear, el lugar se pelea al confirmar: si ya lo tiene otra reserva firme, no se puede.
+  if (status === 'pendiente' || (status === 'confirmada' && pendingFree(db))) assertAvailability(db, r, r.id);
   db.prepare('UPDATE reservations SET status = ?, updated_at = ? WHERE id = ?').run(status, nowLocal(), r.id);
   log(db, r.id, userId, status, detail);
   // Al cancelar (o si no se presentó) queda registrado cuánto corresponde devolver según la política de la empresa.
@@ -313,6 +342,7 @@ function changeStatus(db, id, status, userId, detail) {
   }
   const updated = getReservation(db, r.id);
   if (refund) updated.refund = refund;
+  if (status === 'confirmada') updated.dropped = dropOutbid(db, updated, userId);
   const event = { confirmada: 'reservation.confirmed', cancelada: 'reservation.cancelled', no_show: 'reservation.no_show', pendiente: 'reservation.reopened' };
   emit(db, event[status], publicView(updated));
   return updated;
@@ -335,7 +365,9 @@ function assignVehicle(db, id, vehicleId, userId) {
   }
   db.prepare('UPDATE reservations SET vehicle_id = ?, updated_at = ? WHERE id = ?').run(vehicleId || null, nowLocal(), r.id);
   log(db, r.id, userId, 'vehiculo_asignado', v ? `${v.plate}${otherCategory ? ' (otra categoría, se mantiene el precio)' : ''}` : 'sin asignar');
-  return getReservation(db, r.id);
+  const out = getReservation(db, r.id);
+  out.dropped = dropOutbid(db, out, userId);
+  return out;
 }
 
 const MOVABLE = ['pendiente', 'confirmada'];
@@ -368,7 +400,10 @@ function swapVehicles(db, idA, idB, userId) {
     log(db, a.id, userId, 'vehiculo_intercambiado', `${b.vehicle_plate}, antes en ${b.code}`);
     log(db, b.id, userId, 'vehiculo_intercambiado', `${a.vehicle_plate}, antes en ${a.code}`);
   });
-  return getReservation(db, a.id);
+  dropOutbid(db, getReservation(db, b.id), userId);
+  const out = getReservation(db, a.id);
+  out.dropped = dropOutbid(db, out, userId);
+  return out;
 }
 
 /** A qué autos se puede mover una reserva: los libres en sus fechas y los ocupados por una sola reserva con la que se puede intercambiar. */
@@ -477,6 +512,7 @@ function extendReservation(db, id, input, userId) {
   db.prepare('UPDATE reservations SET return_at = ?, days = ?, total = ?, pricing = ?, updated_at = ? WHERE id = ?').run(return_at, days, total, JSON.stringify(pricing), nowLocal(), r.id);
   log(db, r.id, userId, 'extendida', { hasta: return_at, dias: days - r.days, importe: extra });
   const updated = getReservation(db, r.id);
+  updated.dropped = dropOutbid(db, updated, userId);
   emit(db, 'reservation.updated', publicView(updated));
   return updated;
 }
@@ -497,6 +533,7 @@ function checkoutCheck(db, r, input) {
   if (!vehicleId) fail(400, 'Asigná un vehículo antes de entregar');
   const vehicle = db.prepare('SELECT * FROM vehicles WHERE id = ?').get(vehicleId);
   if (!vehicle) fail(400, 'Vehículo inexistente');
+  if (r.status === 'pendiente' && pendingFree(db)) assertAvailability(db, { ...r, vehicle_id: vehicleId }, r.id); // sin confirmar no tenia el lugar guardado
   if (vehicle.status === 'alquilado') fail(409, `El vehículo ${vehicle.plate} figura como alquilado`);
   const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(r.customer_id);
   const missing = CUSTOMER_REQUIRED.filter(([f]) => !String(customer[f] || '').trim()).map(([, label]) => label);
@@ -533,6 +570,7 @@ function checkout(db, id, input, userId) {
     log(db, r.id, userId, 'entregado', { contrato: number, km: outKm, combustible: outFuel });
   });
   const updated = getReservation(db, r.id);
+  updated.dropped = dropOutbid(db, updated, userId);
   emit(db, 'reservation.checked_out', publicView(updated));
   return updated;
 }
