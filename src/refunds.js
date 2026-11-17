@@ -1,6 +1,6 @@
 'use strict';
 
-const { parseLocal } = require('./util');
+const { parseLocal, toAgency } = require('./util');
 
 /**
  * Política de devolución de dinero al cancelar (cada empresa la configura en Ajustes):
@@ -27,7 +27,7 @@ function policyOf(s) {
  */
 function refundFor(r, settings, at = new Date(), reason = 'cancelada') {
   const p = policyOf(settings);
-  const hours = Math.round(((parseLocal(r.pickup_at) - at) / 3600000) * 10) / 10;
+  const hours = Math.round(((parseLocal(r.pickup_at) - toAgency(at)) / 3600000) * 10) / 10;
   const pct = reason === 'no_show' ? 0 : hours >= p.full ? 100 : hours >= p.partial ? p.pct : 0;
   const paid = Math.max(0, (r.balance && r.balance.paid) || 0);
   // Otra forma de cobrar la cancelación (la prende la agencia): con menos de esas horas se paga 1 día de alquiler; con más, nada.

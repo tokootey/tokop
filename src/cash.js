@@ -1,6 +1,6 @@
 'use strict';
 
-const { round2, fmtLocal, parseLocal } = require('./util');
+const { round2, fmtLocal, parseLocal, toAgency, fromAgency } = require('./util');
 
 // Cómo mueve la caja cada movimiento: los pagos y las garantías entran, las devoluciones salen.
 const SIGN = { pago: 1, devolucion: -1, garantia: 1, devolucion_garantia: -1 };
@@ -27,8 +27,8 @@ function cashDay(db, date, branch) {
          ${branch ? `AND COALESCE(p.branch_id, r.pickup_branch_id) = ${Number(branch)}` : ''}
        ORDER BY p.created_at, p.id`,
     )
-    .all(utc(start), utc(end))
-    .map(({ created_at, ...p }) => ({ ...p, at: fmtLocal(new Date(`${created_at.replace(' ', 'T')}Z`)), amount: round2((SIGN[p.kind] || 1) * p.amount) }));
+    .all(utc(fromAgency(start)), utc(fromAgency(end)))
+    .map(({ created_at, ...p }) => ({ ...p, at: fmtLocal(toAgency(new Date(`${created_at.replace(' ', 'T')}Z`))), amount: round2((SIGN[p.kind] || 1) * p.amount) }));
   const byMethod = {};
   for (const p of rows) byMethod[p.method] = round2((byMethod[p.method] || 0) + p.amount);
   return {

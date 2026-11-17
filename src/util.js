@@ -48,7 +48,44 @@ function fmtLocal(date) {
   return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}T${p(date.getHours())}:${p(date.getMinutes())}`;
 }
 
-const nowLocal = () => fmtLocal(new Date());
+/**
+ * Zona horaria de la agencia (ajuste `timezone`). Vacío = la hora del servidor, como siempre: sin el ajuste nada de esto cambia un resultado.
+ * Las fechas se guardan "de pared" con el reloj del servidor (TZ en render.yaml); con el ajuste cargado, ese reloj se corre a la zona de la agencia.
+ * La zona viaja con cada pedido (ver `zoned` en db.js), no es global: varias agencias comparten el mismo proceso.
+ */
+const { AsyncLocalStorage } = require('node:async_hooks');
+const zone = new AsyncLocalStorage();
+const wall = (date, timeZone) => Date.parse(`${date.toLocaleString('sv-SE', timeZone ? { timeZone } : undefined).replace(' ', 'T')}Z`);
+function zoneShift(date) {
+  const tz = zone.getStore();
+  if (!tz) return 0;
+  try {
+    return wall(date, tz) - wall(date);
+  } catch {
+    return 0; // zona mal escrita: se sigue con la hora del servidor
+  }
+}
+/** Un instante real, llevado al reloj de la agencia (para formatearlo con fmtLocal). */
+const toAgency = (date) => {
+  const s = zoneShift(date);
+  return s ? new Date(date.getTime() + s) : date;
+};
+/** Una fecha armada con el reloj de la agencia (parseLocal), llevada al instante real. */
+const fromAgency = (date) => {
+  const s = zoneShift(date);
+  return s ? new Date(date.getTime() - s) : date;
+};
+const withZone = (tz, fn) => zone.run(String(tz || ''), fn);
+const validZone = (tz) => {
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const nowLocal = () => fmtLocal(toAgency(new Date()));
 
 const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
@@ -115,6 +152,10 @@ module.exports = {
   parseLocal,
   fmtLocal,
   nowLocal,
+  toAgency,
+  fromAgency,
+  withZone,
+  validZone,
   round2,
   sqlValue,
   pick,

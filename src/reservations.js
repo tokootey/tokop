@@ -49,8 +49,10 @@ function getReservation(db, id) {
   r.drivers = r.drivers ? JSON.parse(r.drivers) : [];
   r.hotel_missing = hotelMissing(r.hotel);
   r.extras = db
-    .prepare('SELECT re.extra_id, re.quantity, e.name, e.kind, e.deductible FROM reservation_extras re JOIN extras e ON e.id = re.extra_id WHERE re.reservation_id = ?')
+    .prepare('SELECT re.extra_id, re.quantity, e.name, e.kind, e.deductible, e.km_free FROM reservation_extras re JOIN extras e ON e.id = re.extra_id WHERE re.reservation_id = ?')
     .all(r.id);
+  // Seguro con kilometraje libre: vale también para las reservas cargadas antes de marcarlo en el seguro.
+  if (r.pricing && r.extras.some((x) => x.kind === 'seguro' && x.km_free)) r.pricing.km_included = null;
   r.contract = db.prepare('SELECT * FROM contracts WHERE reservation_id = ?').get(r.id) || null;
   if (r.contract) {
     r.contract.damages = r.contract.damages ? JSON.parse(r.contract.damages) : null;
@@ -467,7 +469,10 @@ function setParties(db, id, input, userId) {
   if (drivers.length > MAX_DRIVERS) fail(400, `Se pueden cargar hasta ${MAX_DRIVERS} conductores adicionales`);
   const expired = drivers.find((d) => d.license_expiry && d.license_expiry < r.return_at.slice(0, 10));
   if (expired) fail(400, `La licencia de ${expired.full_name} vence antes de la devolución`);
-  db.prepare('UPDATE reservations SET holder = ?, drivers = ?, updated_at = ? WHERE id = ?').run(holder && JSON.stringify(holder), drivers.length ? JSON.stringify(drivers) : null, nowLocal(), r.id);
+  // El cliente no maneja: conducen sólo los conductores cargados, así que tiene que haber al menos uno.
+  const noDrive = input.customer_no_drive ? 1 : 0;
+  if (noDrive && !drivers.length) fail(400, 'Si el cliente no maneja, cargá al menos un conductor');
+  db.prepare('UPDATE reservations SET holder = ?, drivers = ?, customer_no_drive = ?, updated_at = ? WHERE id = ?').run(holder && JSON.stringify(holder), drivers.length ? JSON.stringify(drivers) : null, noDrive, nowLocal(), r.id);
   log(db, r.id, userId, 'titular_conductores', `${holder ? `Titular: ${holder.full_name}. ` : ''}${drivers.length} conductor(es) adicional(es)`);
   return getReservation(db, r.id);
 }
@@ -536,10 +541,15 @@ function checkoutCheck(db, r, input) {
   if (r.status === 'pendiente' && pendingFree(db)) assertAvailability(db, { ...r, vehicle_id: vehicleId }, r.id); // sin confirmar no tenia el lugar guardado
   if (vehicle.status === 'alquilado') fail(409, `El vehículo ${vehicle.plate} figura como alquilado`);
   const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(r.customer_id);
-  const missing = CUSTOMER_REQUIRED.filter(([f]) => !String(customer[f] || '').trim()).map(([, label]) => label);
+  // Si el cliente no maneja, su licencia no se pide: se pide la de un conductor.
+  const noDrive = Boolean(r.customer_no_drive);
+  const missing = CUSTOMER_REQUIRED.filter(([f]) => !(noDrive && f === 'license_expiry') && !String(customer[f] || '').trim()).map(([, label]) => label);
   if (missing.length) fail(400, `Completá los datos del cliente antes de entregar. Falta: ${missing.join(', ')}`);
-  if (customer.license_expiry && customer.license_expiry < r.return_at.slice(0, 10)) {
+  if (!noDrive && customer.license_expiry && customer.license_expiry < r.return_at.slice(0, 10)) {
     fail(400, 'La licencia del cliente vence antes de la devolución');
+  }
+  if (noDrive && !(r.drivers || []).some((d) => d.license_expiry && d.license_expiry >= r.return_at.slice(0, 10))) {
+    fail(400, 'El cliente no maneja: cargá un conductor con su licencia vigente en "Titular y conductores"');
   }
 
   const outKm = input.out_km !== undefined && input.out_km !== '' ? Number(input.out_km) : vehicle.km;
@@ -629,7 +639,9 @@ function checkin(db, id, input, userId) {
     ).run(inAt, inKm, inFuel, inPanapass, input.in_notes || null, userId || null, JSON.stringify(damages), JSON.stringify(charges), finalTotal, r.contract.id);
     db.prepare("UPDATE reservations SET status = 'finalizada', return_branch_id = ?, updated_at = ? WHERE id = ?").run(returnBranch, nowLocal(), r.id);
     const nextStatus = input.send_to_maintenance ? 'mantenimiento' : 'disponible';
-    db.prepare('UPDATE vehicles SET status = ?, km = ?, fuel = ?, branch_id = ?, panapass = COALESCE(?, panapass) WHERE id = ?').run(nextStatus, inKm, inFuel, returnBranch, inPanapass, r.vehicle_id);
+    // Devuelto en un punto de entrega (aeropuerto): el auto no queda ahí, sigue en su sucursal.
+    const stays = (db.prepare('SELECT pickup_only FROM branches WHERE id = ?').get(returnBranch) || {}).pickup_only ? null : returnBranch;
+    db.prepare('UPDATE vehicles SET status = ?, km = ?, fuel = ?, branch_id = COALESCE(?, branch_id), panapass = COALESCE(?, panapass) WHERE id = ?').run(nextStatus, inKm, inFuel, stays, inPanapass, r.vehicle_id);
     if (input.send_to_maintenance) {
       db.prepare("INSERT INTO maintenance (vehicle_id, kind, description, start_date, km, status) VALUES (?, 'reparacion', ?, ?, ?, 'abierto')").run(
         r.vehicle_id,
@@ -641,12 +653,12 @@ function checkin(db, id, input, userId) {
     log(db, r.id, userId, 'devuelto', { km: inKm, combustible: inFuel, cargos: charges.total });
   });
   let updated = getReservation(db, r.id);
-  // Agencias con contratos pendientes: con saldo sin cobrar, o si el operador lo deja pendiente (daños, faltantes), el contrato no se cierra todavía.
+  // Agencias con contratos pendientes (funciones en prueba o controles estrictos): con saldo sin cobrar, o si el operador lo deja pendiente (daños, faltantes), el contrato no se cierra todavía.
   const note = String(input.pending_note || '').trim().slice(0, 300);
   // Días o km de más: queda en suspenso aunque no generen cargo (por ejemplo, sin tarifa de km excedente), hasta que la agencia lo resuelva.
   const over = [charges.late_days > 0 && 'Días de más', charges.km_excess > 0 && 'Km de más'].filter(Boolean).join(' y ');
   const why = note || (updated.balance.pending > 0.005 ? 'Saldo sin cobrar' : over);
-  const pending = proOn(db) && Boolean(why);
+  const pending = (proOn(db) || getSettings(db).strict_contract === '1') && Boolean(why);
   db.prepare('UPDATE contracts SET closed_at = ?, pending_note = ? WHERE id = ?').run(pending ? null : inAt, pending ? why : null, r.contract.id);
   if (pending) log(db, r.id, userId, 'contrato_pendiente', why);
   updated = getReservation(db, r.id);

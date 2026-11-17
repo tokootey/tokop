@@ -15,6 +15,7 @@ const { fileRoutes } = require('./routes/files');
 const { importRoutes } = require('./routes/importer');
 const { statsRoutes, computeStats } = require('./routes/stats');
 const { HttpError, fail } = require('./util');
+const { zoned } = require('./db');
 const { backupStatus } = require('./backup');
 const { COMPANY_FIELDS } = require('./owner-book');
 const { hotelRoutes } = require('./hotel');
@@ -22,7 +23,7 @@ const { deliveryPublicRoutes } = require('./routes/delivery-public');
 const neopayment = require('./neopayment');
 const { demandExample } = require('./demand-example');
 const { log: reservationLog } = require('./reservations');
-const { auxiliarGuard } = require('./auxiliar');
+const { auxiliarGuard, contableGuard } = require('./auxiliar');
 
 /** Crea el usuario administrador inicial si no hay ninguno. */
 function ensureAdmin(db) {
@@ -72,6 +73,7 @@ function companyApi(db, { uploadsDir, company, platform }) {
   const app = express();
   app.disable('x-powered-by');
   trustProxy(app);
+  app.use(zoned(db)); // zona horaria de la agencia, para todas sus rutas
   const prefix = company ? `${company.id}.` : '';
   const emailTaken = platform ? (email) => platform.emailTaken(email, company.id) : () => false;
 
@@ -116,6 +118,7 @@ function companyApi(db, { uploadsDir, company, platform }) {
     '/api',
     guarded,
     auxiliarGuard(db),
+    contableGuard(),
     catalogRoutes(db, { uploadsDir }),
     operationsRoutes(db, { publicQuery }),
     fileRoutes(db, uploadsDir),

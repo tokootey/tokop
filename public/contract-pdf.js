@@ -4,7 +4,7 @@
  * Contrato de alquiler en PDF (A4), generado en el navegador con jsPDF + jsPDF-AutoTable.
  * Tiene los mismos datos que el contrato impreso: sirve antes de entregar el auto (pre-contrato)
  * y después, con los km, el combustible y los cargos reales.
- * Usa de app.js: state, money(), num(), locale(), taxName(), taxIdLabel(), contractTermsList(), choferesMode() y baseLabel().
+ * Usa de app.js: state, money(), num(), locale(), taxName(), taxIdLabel(), contractTermsList(), choferesMode(), baseLabel(), looseCharges(), deductibleText(), companySigns(), signedDrivers() e invoiced().
  */
 /** Con la app en inglés, todo lo que se escribe en el PDF pasa por tr() (i18n.js); en español no cambia nada. */
 function localizePdf(doc) {
@@ -34,7 +34,7 @@ function buildContractPdf(r, photos = []) {
   const W = 210;
   const H = 297;
   const company = s.company_name || 'la Empresa';
-  const ref = delivered ? `Contrato N° ${c.number}` : `Reserva ${r.code}`;
+  const ref = invoiced(r) ? `Factura N° ${c.number}` : delivered ? `Contrato N° ${c.number}` : `Reserva ${r.code}`;
 
   // Texto plano para el PDF (las funciones de la pantalla devuelven HTML).
   const txt = (v) => (v === null || v === undefined ? '' : String(v));
@@ -92,7 +92,8 @@ function buildContractPdf(r, photos = []) {
   // Con dirección y teléfonos largos, la cabecera crece y lo de abajo se corre (con dos renglones queda como siempre).
   const headEnd = Math.max(28, 17 + info.length * 3.3);
   doc.setTextColor(17).setFont('helvetica', 'bold').setFontSize(10);
-  doc.text(delivered ? 'CONTRATO DE ALQUILER DE VEHÍCULO' : 'CONTRATO DE ALQUILER DE VEHÍCULO (PRE-CONTRATO)', W - M, 15, { align: 'right' });
+  // Ajuste invoice_naming: con el auto ya devuelto, el documento pasa a llamarse Factura.
+  doc.text(invoiced(r) ? 'FACTURA' : delivered ? 'CONTRATO DE ALQUILER DE VEHÍCULO' : 'CONTRATO DE ALQUILER DE VEHÍCULO (PRE-CONTRATO)', W - M, 15, { align: 'right' });
   doc.setFont('helvetica', 'normal').setFontSize(8.5);
   doc.text(
     [delivered ? `N° ${c.number}` : 'Vehículo sin entregar todavía', `Reserva ${r.code} · Emitido ${new Date().toLocaleDateString(locale())}`],
@@ -116,7 +117,7 @@ function buildContractPdf(r, photos = []) {
     bodyTop = headEnd + 2 + bh - 1;
   }
 
-  let y = section('Cliente / conductor principal', bodyTop + 6);
+  let y = section(r.customer_no_drive ? 'Cliente (titular, no conduce)' : 'Cliente / conductor principal', bodyTop + 6);
   kv(y, [
     ['Nombre y apellido', txt(r.customer_name), 'Documento', r.customer_doc ? `${txt(docTypeOf(r.customer_doc_type))} ${r.customer_doc}` : ''],
     ['Domicilio', txt(r.customer_address), 'Teléfono', txt(r.customer_phone)],
@@ -147,7 +148,7 @@ function buildContractPdf(r, photos = []) {
   } else {
     // Los conductores cargados en la reserva; si no hay, queda el renglón en blanco para completar a mano.
     const drivers = (r.drivers || []).length ? r.drivers : [{}];
-    y = section(drivers.length > 1 ? 'Conductores adicionales' : 'Conductor adicional', lastY() + gap);
+    y = section(r.customer_no_drive ? (drivers.length > 1 ? 'Conductores' : 'Conductor') : drivers.length > 1 ? 'Conductores adicionales' : 'Conductor adicional', lastY() + gap);
     kv(
       y,
       drivers.flatMap((x) => [
@@ -169,8 +170,12 @@ function buildContractPdf(r, photos = []) {
     ['Días', panapass ? `${txt(r.days)} · Cat. ${category}` : txt(r.days), 'Vuelo / referencia', txt(r.flight)],
   ]);
 
-  y = section('Entrega y devolución del vehículo', lastY() + gap);
+  // Ajuste precontract_short: antes de entregar no se sabe qué auto sale; estos dos bloques van recién en el contrato.
+  const shortPre = !delivered && String(state.settings.precontract_short) === '1';
   const back = c && c.in_at;
+  y = lastY() + gap - 2;
+  if (!shortPre) {
+  y = section('Entrega y devolución del vehículo', lastY() + gap);
   table({
     ...base,
     startY: y,
@@ -210,10 +215,12 @@ function buildContractPdf(r, photos = []) {
   if (c && c.out_notes) doc.text(doc.splitTextToSize(c.out_notes, nw - 3).slice(0, 3), nx + 1.5, y + 5.5);
   if (c && c.in_notes) doc.text(doc.splitTextToSize(c.in_notes, nw - 3).slice(0, 3), nx + 1.5, y + 24);
   y += 36;
+  }
 
   // Precio y pagos, lado a lado.
   y = ensure(section('Precio, pagos y garantía', y + 2), 50);
   const q = r.pricing || {};
+  const extra = looseCharges(r);
   const priceRows = [
     q.base !== undefined ? [`Alquiler ${baseLabel(q, r.days)}`, money(q.base)] : null,
     q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
@@ -230,9 +237,8 @@ function buildContractPdf(r, photos = []) {
     q.tax_rate ? [`${taxName()} ${q.tax_rate}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
     [{ content: 'Total del alquiler', styles: { fontStyle: 'bold' } }, { content: money(r.total), styles: { fontStyle: 'bold' } }],
     ...(c && c.charges ? c.charges.lines.map((l) => [l.concept, money(l.amount)]) : []),
-    ...(c && c.final_total !== null && c.final_total !== undefined && c.final_total !== r.total
-      ? [[{ content: 'Total final con cargos', styles: { fontStyle: 'bold' } }, { content: money(c.final_total), styles: { fontStyle: 'bold' } }]]
-      : []),
+    ...extra.lines.map((l) => [l.concept, money(l.amount)]),
+    ...(extra.final !== r.total ? [[{ content: 'Total final con cargos', styles: { fontStyle: 'bold' } }, { content: money(extra.final), styles: { fontStyle: 'bold' } }]] : []),
   ].filter(Boolean);
   const half = (W - 2 * M - 6) / 2;
   table({ ...base, startY: y, body: priceRows, margin: { left: M, right: W - M - half }, columnStyles: { 1: { halign: 'right', cellWidth: 30 } } });
@@ -248,7 +254,7 @@ function buildContractPdf(r, photos = []) {
       ['Garantía recibida', money(r.balance.deposit_held)],
       ...r.extras
         .filter((x) => x.kind === 'seguro')
-        .map((x) => ['Seguro', `${x.name} · ${x.deductible ? `franquicia ${money(x.deductible)}` : 'sin franquicia'}`]),
+        .map((x) => ['Seguro', `${x.name}${deductibleText(x)}`]),
       ['Adicionales', r.extras.filter((x) => x.kind !== 'seguro').map((x) => x.name).join(', ') || '-'],
     ],
     // Ancho fijo para la primera columna: si no, un seguro de nombre largo se parte en muchos renglones.
@@ -267,7 +273,9 @@ function buildContractPdf(r, photos = []) {
     M,
     y,
   );
-  signatures(y + 18, ['Firma del cliente', choferesMode() ? 'Garante' : 'Conductor adicional', `Por ${company}`]);
+  // Un lugar por cada conductor adicional que ya firmó; si ninguno firmó, el lugar en blanco de siempre.
+  const drvLabels = signedDrivers(r).map((d) => `Conductor: ${d.name}`.slice(0, 34));
+  signatures(y + 18, ['Firma del cliente', ...(drvLabels.length ? drvLabels : [choferesMode() ? 'Garante' : 'Conductor adicional']), ...(companySigns() ? [`Por ${company}`] : [])]);
 
   /* ---------- Hoja 2: condiciones generales ---------- */
   doc.addPage();
@@ -307,7 +315,7 @@ function buildContractPdf(r, photos = []) {
     doc.setFont('helvetica', 'normal').text(bodyLines, x, cy);
     cy += bodyLines.length * lh + 2;
   }
-  signatures(H - 26, ['Firma del cliente (conformidad)', `Por ${company}`]);
+  signatures(H - 26, ['Firma del cliente (conformidad)', ...(companySigns() ? [`Por ${company}`] : [])]);
 
   /* ---------- Anexo: documentación del cliente y fotos del auto para la entrega ---------- */
   if (photos.length) {
@@ -341,7 +349,7 @@ function buildContractPdf(r, photos = []) {
   }
 
   // Nombre de archivo sin acentos ni símbolos: algunos navegadores descartan los nombres con acentos.
-  const safeName = `${delivered ? `${L('Contrato', 'Agreement')} ${c.number}` : `${L('Pre-contrato', 'Pre-contract')} ${r.code}`} - ${r.customer_name}`
+  const safeName = `${invoiced(r) ? `${L('Factura', 'Invoice')} ${c.number}` : delivered ? `${L('Contrato', 'Agreement')} ${c.number}` : `${L('Pre-contrato', 'Pre-contract')} ${r.code}`} - ${r.customer_name}`
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\w .-]/g, '')
@@ -362,7 +370,13 @@ function buildContractPdf(r, photos = []) {
         doc.setFont('helvetica', 'normal').setFontSize(6).setTextColor(90).text(['Firma electrónica', `${sig.signed_at.slice(0, 16).replace('T', ' ')} UTC`, sig.hash.slice(0, 16)], x + 32, sy - 8);
         doc.setFontSize(7).setTextColor(17).text([sig.name, sig.doc], x + 15, sy + 9);
       }
-      doc.setFont('helvetica', 'normal').setFontSize(8).text(label, x + w / 2, sy + 4, { align: 'center' });
+      // Firma electrónica de un conductor adicional.
+      const drv = label.startsWith('Conductor: ') ? signedDrivers(r).find((d) => `Conductor: ${d.name}`.slice(0, 34) === label) : null;
+      if (drv) {
+        doc.addImage(drv.image, 'PNG', x, sy - 12, Math.min(31, w), 11.5);
+        doc.setFont('helvetica', 'normal').setFontSize(6).setTextColor(17).text([drv.doc || '', `${drv.signed_at.slice(0, 16).replace('T', ' ')} UTC`], x + 15, sy + 9);
+      }
+      doc.setFont('helvetica', 'normal').setFontSize(labels.length > 3 ? 6.5 : 8).text(label, x + w / 2, sy + 4, { align: 'center' });
       doc.setFontSize(7).setTextColor(90).text(label.startsWith('Por ') ? ['Aclaración:'] : ['Aclaración:', `${docWord()}:`], x, sy + 9);
       doc.setTextColor(17);
     });

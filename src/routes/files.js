@@ -5,6 +5,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const express = require('express');
 const { fail, nowLocal } = require('../util');
+const { zoned } = require('../db');
 const { audit } = require('../auth');
 
 /** Tipos aceptados: fotos de celular (incluidas las HEIC de iPhone) y PDF. */
@@ -16,7 +17,7 @@ const TYPES = {
   'image/heif': 'heif',
   'application/pdf': 'pdf',
 };
-const STAGES = ['entrega', 'devolucion', 'contrato', 'otro'];
+const STAGES = ['entrega', 'devolucion', 'contrato', 'firmado', 'otro']; // firmado: foto del contrato firmado en papel
 
 /** Comprueba por los primeros bytes que el archivo sea realmente del tipo que dice ser. */
 function looksLike(mime, b) {
@@ -118,7 +119,7 @@ function fileRoutes(db, uploadsDir) {
   const logAction = (reservationId, userId, action, detail) =>
     db.prepare('INSERT INTO reservation_log (reservation_id, user_id, action, detail) VALUES (?, ?, ?, ?)').run(reservationId, userId || null, action, detail);
 
-  router.post('/reservations/:id/files', express.raw({ type: () => true, limit: MAX_PDF }), (req, res) => {
+  router.post('/reservations/:id/files', express.raw({ type: () => true, limit: MAX_PDF }), zoned(db), (req, res) => {
     const r = db.prepare('SELECT id FROM reservations WHERE id = ?').get(Number(req.params.id));
     if (!r) fail(404, 'Reserva inexistente');
     const mime = uploadedType(req);
@@ -151,7 +152,7 @@ function fileRoutes(db, uploadsDir) {
 
   // Carnet, DNI o cédula y pasaporte del cliente: uno por lugar (frente y dorso); subir otro reemplaza al anterior. Los otros conductores se suman.
   const docOf = (id) => db.prepare('SELECT * FROM customer_files WHERE id = ?').get(Number(id));
-  router.post('/customers/:id/documents', express.raw({ type: () => true, limit: MAX_PDF }), (req, res) => {
+  router.post('/customers/:id/documents', express.raw({ type: () => true, limit: MAX_PDF }), zoned(db), (req, res) => {
     const c = db.prepare('SELECT id, anonymized_at FROM customers WHERE id = ?').get(Number(req.params.id));
     if (!c) fail(404, 'Cliente inexistente');
     if (c.anonymized_at) fail(409, 'El cliente está anonimizado');

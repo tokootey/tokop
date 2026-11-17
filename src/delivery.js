@@ -14,6 +14,20 @@ const OPEN = ['pendiente', 'confirmada', 'en_curso'];
 const newToken = () => crypto.randomBytes(18).toString('base64url');
 const rowOf = (db, id) => db.prepare('SELECT * FROM delivery_links WHERE reservation_id = ?').get(id);
 
+/**
+ * Conductores adicionales: cada uno tiene su link y firma el mismo contrato que el cliente (la misma copia fija).
+ * Se lo reconoce por nombre y documento: si lo sacan de la reserva, su link deja de servir.
+ */
+const driverKey = (name, doc) => `${String(name || '').trim().toLowerCase()}|${String(doc || '').trim().toLowerCase()}`;
+const driverRows = (db, id) => db.prepare('SELECT * FROM driver_signatures WHERE reservation_id = ?').all(id);
+const driverStates = (db, r) => {
+  const rows = driverRows(db, r.id);
+  return (r.drivers || []).map((d) => {
+    const s = rows.find((x) => driverKey(x.driver_name, x.driver_doc) === driverKey(d.full_name, d.doc_number));
+    return { name: d.full_name, doc: d.doc_number || '', requested: Boolean(s), signed_at: s ? s.signed_at : null, image: s && s.signed_at ? s.signed_image : null, hash: s && s.signed_at ? s.signed_hash : null };
+  });
+};
+
 function ensureRow(db, id) {
   const row = rowOf(db, id);
   if (row && row.return_token && row.docs_token) return row;
@@ -32,6 +46,9 @@ function reservationOf(db, id) {
 /** ¿Lo firmado ya no coincide con la reserva? Un auto asignado después de firmar no cuenta como cambio. */
 const changed = (snap, r) =>
   Boolean((snap.plate && snap.plate !== r.vehicle_plate) || snap.pickup_at !== r.pickup_at || snap.return_at !== r.return_at || snap.total !== r.total || snap.category_name !== r.category_name);
+
+/** Ajuste public_branding: las páginas del cliente llevan el logo de la agencia y la etiqueta "N.º de reserva". */
+const branding = (s) => (s.public_branding === '1' ? { branded: true, logo: /^data:image\/(png|jpeg);base64,/.test(s.company_logo || '') ? s.company_logo : null } : {});
 
 /** Lo que ve la agencia en la reserva. */
 function stateOf(db, r) {
@@ -52,11 +69,14 @@ function stateOf(db, r) {
     hash: row.signed_hash,
     image: row.signed_image,
     stale: Boolean(row.snapshot && changed(JSON.parse(row.snapshot), r)),
+    drivers: driverStates(db, r),
   };
 }
 
+const clause = (t) => ({ title: String((t && t.title) || '').slice(0, 300), body: String((t && t.body) || '').slice(0, 6000) });
+
 /** Deja el contrato listo para firmar. Las condiciones llegan armadas desde el panel de la agencia, con sus datos ya completos. */
-function requestSignature(db, id, terms, settings, userId) {
+function requestSignature(db, id, terms, settings, userId, termsEn) {
   const r = reservationOf(db, id);
   if (!OPEN.includes(r.status)) fail(409, 'Sólo se pide la firma de una reserva pendiente, confirmada o en curso');
   if (!Array.isArray(terms) || !terms.length || terms.length > 80) fail(400, 'Faltan las condiciones del contrato');
@@ -81,14 +101,89 @@ function requestSignature(db, id, terms, settings, userId) {
     days: r.days,
     total: r.total,
     deposit: r.deposit,
-    terms: terms.map((t) => ({ title: String(t.title || '').slice(0, 300), body: String(t.body || '').slice(0, 6000) })),
+    terms: terms.map(clause),
+    // Versión en inglés (opcional): el cliente la lee si elige English en la página de la firma.
+    ...(Array.isArray(termsEn) && termsEn.length && termsEn.length <= 80 ? { terms_en: termsEn.map(clause) } : {}),
   };
+  // La reserva cambió: lo que firmaron los conductores era otro contrato.
+  if (snap && changed(snap, r)) db.prepare('UPDATE driver_signatures SET signed_at = NULL, signed_name = NULL, signed_doc = NULL, signed_ip = NULL, signed_image = NULL, signed_hash = NULL WHERE reservation_id = ?').run(r.id);
   db.prepare(
     `UPDATE delivery_links SET snapshot = ?, signed_at = NULL, signed_name = NULL, signed_doc = NULL, signed_ip = NULL, signed_ua = NULL,
      signed_image = NULL, signed_hash = NULL WHERE reservation_id = ?`,
   ).run(JSON.stringify(snapshot), r.id);
   R.log(db, r.id, userId, row.signed_at ? 'firma_anulada' : 'firma_pedida', row.signed_at ? 'La reserva cambió después de firmar' : null);
   return stateOf(db, r);
+}
+
+/**
+ * Controles estrictos (ajuste strict_contract, apagado salvo que la agencia lo prenda): qué falta para abrir el contrato.
+ * Vale para todos los usuarios, también el administrador. Se pide en las rutas del panel, como las fotos (R.requireHandover).
+ * `form: false` deja afuera lo que se carga en la ventana de entrega; `signature: false` es la pre-entrega, que se completa al firmar.
+ */
+const given = (v) => v !== undefined && v !== null && String(v).trim() !== '';
+function openMissing(db, id, input = {}, { form = true, signature = true } = {}) {
+  const s = getSettings(db);
+  if (s.strict_contract !== '1') return [];
+  const r = reservationOf(db, id);
+  const money = (n) => `${s.currency} ${Number(n).toFixed(2)}`;
+  const docs = docPhotos(db, r.customer_id);
+  const sig = stateOf(db, r);
+  return [
+    r.customer_no_drive ? !docs.includes('conductor') && 'la foto de la licencia del conductor' : !docs.includes('carnet_frente') && 'la foto de la licencia de conducir del cliente',
+    !docs.includes('dni_frente') && !docs.includes('pasaporte') && 'la foto de la cédula o del pasaporte del cliente',
+    form && !r.files.some((f) => f.stage === 'entrega' && f.mime.startsWith('image/')) && 'las fotos del auto en la entrega',
+    form && !given(input.out_km) && 'el kilometraje de salida',
+    form && !given(input.out_fuel) && 'el combustible de salida',
+    form && s.country === 'PA' && !given(input.out_panapass) && 'el saldo de Panapass de salida',
+    r.deposit > 0 && r.balance.deposit_held < r.deposit - 0.005 && `registrar la garantía (${money(r.deposit)}; recibido ${money(r.balance.deposit_held)})`,
+    r.balance.pending > 0.005 && `cobrar el alquiler (faltan ${money(r.balance.pending)})`,
+    signature && !(sig && sig.signed_at && !sig.stale) && !r.files.some((f) => f.stage === 'firmado') && 'la firma del cliente (digital, o la foto del contrato firmado en papel)',
+  ].filter(Boolean);
+}
+function requireOpen(db, id, input, opts) {
+  const missing = openMissing(db, id, input, opts);
+  if (missing.length) fail(409, `No se puede abrir el contrato. Falta: ${missing.join('; ')}.`);
+}
+
+/** Lo mismo al recibir el auto: sin km, combustible y Panapass de devolución no se registra. El saldo sin cobrar lo frena R.checkin (el contrato queda pendiente). */
+function requireClose(db, id, input = {}) {
+  const s = getSettings(db);
+  if (s.strict_contract !== '1') return;
+  const missing = [
+    !given(input.in_km) && 'el kilometraje de devolución',
+    !given(input.in_fuel) && 'el combustible de devolución',
+    s.country === 'PA' && !given(input.in_panapass) && 'el saldo de Panapass de devolución',
+  ].filter(Boolean);
+  if (missing.length) fail(409, `No se puede registrar la devolución. Falta: ${missing.join('; ')}.`);
+}
+
+/** Link de firma de un conductor adicional (por su lugar en la lista). Primero tiene que estar pedido el contrato del cliente. */
+function driverLink(db, id, index) {
+  const r = reservationOf(db, id);
+  if (!OPEN.includes(r.status)) fail(409, 'Esta reserva ya no está abierta');
+  const d = (r.drivers || [])[Number(index)];
+  if (!d) fail(404, 'Ese conductor no está en la reserva');
+  const row = rowOf(db, r.id);
+  if (!row || !row.snapshot) fail(409, 'Primero pedí la firma del cliente: los conductores firman ese mismo contrato');
+  let s = driverRows(db, r.id).find((x) => driverKey(x.driver_name, x.driver_doc) === driverKey(d.full_name, d.doc_number));
+  if (!s) {
+    s = { token: newToken() };
+    db.prepare('INSERT INTO driver_signatures (reservation_id, token, driver_name, driver_doc) VALUES (?, ?, ?, ?)').run(r.id, s.token, d.full_name, d.doc_number || '');
+    R.log(db, r.id, null, 'firma_conductor_pedida', d.full_name);
+  }
+  return { token: s.token, name: d.full_name };
+}
+
+/** El contrato visto desde el link de un conductor (o null si el código no es de un conductor). */
+function driverContract(db, token) {
+  const drv = token && db.prepare('SELECT * FROM driver_signatures WHERE token = ?').get(String(token));
+  if (!drv) return null;
+  const row = rowOf(db, drv.reservation_id);
+  const r = R.getReservation(db, drv.reservation_id);
+  const still = r && (r.drivers || []).some((d) => driverKey(d.full_name, d.doc_number) === driverKey(drv.driver_name, drv.driver_doc));
+  if (!row || !row.snapshot || !still) fail(404, 'Este link ya no está disponible');
+  const snap = JSON.parse(row.snapshot);
+  return { drv, row, r, snap, stale: changed(snap, r) };
 }
 
 /** Link de las fotos de la entrega. */
@@ -124,7 +219,7 @@ function preDeliver(db, id, input, settings, userId) {
   const pre = { vehicle_id: vehicleId, out_km: outKm, out_fuel: outFuel, out_panapass: R.balanceOf(input.out_panapass), out_notes: String(input.out_notes || '').trim().slice(0, 2000) || null };
   db.prepare('UPDATE delivery_links SET pre_delivery = ?, left_place = ? WHERE reservation_id = ?').run(JSON.stringify(pre), place, r.id);
   R.log(db, r.id, userId, 'pre_entrega', place);
-  return requestSignature(db, r.id, input.terms, settings, userId);
+  return requestSignature(db, r.id, input.terms, settings, userId, input.terms_en);
 }
 
 /** Link para que el cliente suba las fotos al devolver el auto. Sirve mientras el alquiler está en curso. */
@@ -238,9 +333,26 @@ function conditionOf(db, id) {
 }
 
 function viewContract(db, token) {
+  const dc = driverContract(db, token);
+  if (dc) {
+    const { drv } = dc;
+    return {
+      ...dc.snap,
+      ...branding(getSettings(db)),
+      photos_token: dc.row.photos_token,
+      photos: photoFiles(db, dc.r.id).map((f) => ({ id: f.id, name: f.name })),
+      condition: conditionOf(db, dc.r.id),
+      left_place: null,
+      driver: { name: drv.driver_name, doc: drv.driver_doc },
+      can_sign: !drv.signed_at && !dc.stale && OPEN.includes(dc.r.status),
+      stale: dc.stale,
+      signed: drv.signed_at ? { at: drv.signed_at, name: drv.signed_name, doc: drv.signed_doc, hash: drv.signed_hash, image: drv.signed_image } : null,
+    };
+  }
   const { row, r, snap, stale } = publicContract(db, token);
   return {
     ...snap,
+    ...branding(getSettings(db)),
     photos_token: row.photos_token,
     photos: photoFiles(db, r.id).map((f) => ({ id: f.id, name: f.name })),
     condition: conditionOf(db, r.id),
@@ -257,18 +369,39 @@ const validImage = (image) => {
   return Boolean(m) && Buffer.from(m[1], 'base64').subarray(0, 8).toString('latin1') === '\x89PNG\r\n\x1a\n';
 };
 
-/** El cliente firma. Queda quién, cuándo, desde dónde y una huella de lo firmado. */
-function sign(db, token, body, { ip, userAgent }) {
-  const { row, r, stale } = publicContract(db, token);
-  if (row.signed_at) fail(409, 'Este contrato ya está firmado');
-  if (stale) fail(409, 'La reserva cambió: pedile a la agencia un link nuevo');
-  if (!OPEN.includes(r.status)) fail(409, 'Esta reserva ya no se puede firmar');
+/** Lo que escribe y dibuja quien firma, revisado. */
+function signatureInput(body) {
   const name = String(body.name || '').trim().slice(0, 120);
   const doc = String(body.doc || '').trim().slice(0, 40);
   if (name.length < 3) fail(400, 'Escribí tu nombre y apellido');
   if (doc.length < 5) fail(400, 'Escribí tu número de documento');
   if (body.accepted !== true) fail(400, 'Tenés que aceptar el contrato para firmarlo');
   if (!validImage(body.image)) fail(400, 'Dibujá tu firma');
+  return { name, doc };
+}
+
+/** Firma de un conductor adicional: no abre ni cambia el alquiler, sólo queda su firma sobre el mismo contrato. */
+function signDriver(db, { drv, row, r, stale }, body, ip) {
+  if (drv.signed_at) fail(409, 'Este contrato ya está firmado');
+  if (stale) fail(409, 'La reserva cambió: pedile a la agencia un link nuevo');
+  if (!OPEN.includes(r.status)) fail(409, 'Esta reserva ya no se puede firmar');
+  const { name, doc } = signatureInput(body);
+  const at = new Date().toISOString();
+  const hash = crypto.createHash('sha256').update([row.snapshot, name, doc, at, body.image].join('|')).digest('hex');
+  db.prepare('UPDATE driver_signatures SET signed_at = ?, signed_name = ?, signed_doc = ?, signed_ip = ?, signed_image = ?, signed_hash = ? WHERE id = ?').run(at, name, doc, String(ip || '').slice(0, 64), body.image, hash, drv.id);
+  R.log(db, r.id, null, 'firma_conductor', { nombre: name, documento: doc, huella: hash });
+  return { ok: true, at, hash, left_place: null };
+}
+
+/** El cliente firma. Queda quién, cuándo, desde dónde y una huella de lo firmado. */
+function sign(db, token, body, { ip, userAgent }) {
+  const dc = driverContract(db, token);
+  if (dc) return signDriver(db, dc, body, ip);
+  const { row, r, stale } = publicContract(db, token);
+  if (row.signed_at) fail(409, 'Este contrato ya está firmado');
+  if (stale) fail(409, 'La reserva cambió: pedile a la agencia un link nuevo');
+  if (!OPEN.includes(r.status)) fail(409, 'Esta reserva ya no se puede firmar');
+  const { name, doc } = signatureInput(body);
   // Con pre-entrega, firmar completa la entrega. Si no se puede, la firma no se guarda: nunca queda firmado sin alquiler abierto.
   if (row.pre_delivery && r.status === 'confirmada') {
     // Por si se devolvió un pago o se sumó un cargo después de la pre-entrega.
@@ -339,6 +472,7 @@ function viewCard(db, token) {
   const s = getSettings(db);
   return {
     company: s.company_name || '',
+    ...branding(s),
     currency: s.currency,
     locale: s.locale,
     code: r.code,
@@ -376,4 +510,4 @@ function saveCard(db, token, body, { ip }) {
   return { ok: true, card: { holder, brand, last4, exp } };
 }
 
-module.exports = { docsLink, viewDocs, saveDocs, docsUploadTarget, stateOf, requestSignature, preDeliver, photosLink, setLeftPlace, returnLink, viewReturn, returnUploadTarget, viewContract, sign, deliveryPhotos, cardLink, cardUrlFor, viewCard, saveCard };
+module.exports = { driverLink, openMissing, requireOpen, requireClose, docsLink, viewDocs, saveDocs, docsUploadTarget, stateOf, requestSignature, preDeliver, photosLink, setLeftPlace, returnLink, viewReturn, returnUploadTarget, viewContract, sign, deliveryPhotos, cardLink, cardUrlFor, viewCard, saveCard };

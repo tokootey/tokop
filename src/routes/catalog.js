@@ -146,7 +146,7 @@ function catalogRoutes(db, { uploadsDir } = {}) {
 
   router.use(
     '/branches',
-    crud(db, { table: 'branches', fields: ['code', 'name', 'address', 'phone', 'aliases', 'active', 'pickup_from', 'late_after', 'late_pickup_from', 'express_24h', 'fee', 'fee_free_days', 'fee_by_category', 'hours'], required: ['code', 'name'], order: 'name', adminWrite: true }),
+    crud(db, { table: 'branches', fields: ['code', 'name', 'address', 'phone', 'aliases', 'active', 'pickup_from', 'late_after', 'late_pickup_from', 'express_24h', 'fee', 'fee_free_days', 'fee_by_category', 'hours', 'pickup_only'], required: ['code', 'name'], order: 'pickup_only, name', adminWrite: true }), // las sucursales de verdad van primero: son la opción que viene elegida
   );
   router.use(
     '/categories',
@@ -160,7 +160,7 @@ function catalogRoutes(db, { uploadsDir } = {}) {
   );
   router.use(
     '/extras',
-    crud(db, { table: 'extras', fields: ['code', 'name', 'price', 'charge_type', 'max_price', 'aliases', 'active', 'kind', 'deductible', 'one_day_price', 'categories'], required: ['name'], order: 'name', adminWrite: true }),
+    crud(db, { table: 'extras', fields: ['code', 'name', 'price', 'charge_type', 'max_price', 'aliases', 'active', 'kind', 'deductible', 'one_day_price', 'categories', 'km_free'], required: ['name'], order: 'name', adminWrite: true }),
   );
   router.use('/seasons', (req, _res, next) => {
     const m = (req.body || {}).multiplier;

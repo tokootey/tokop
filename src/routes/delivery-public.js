@@ -2,7 +2,7 @@
 
 const path = require('node:path');
 const express = require('express');
-const { getSetting } = require('../db');
+const { getSetting, zoned } = require('../db');
 const { fail } = require('../util');
 const D = require('../delivery');
 const { sendStored, uploadedType, saveReservationFile, saveCustomerDocument, MAX_PDF } = require('./files');
@@ -28,6 +28,7 @@ function deliveryPublicRoutes(db, uploadsDir) {
       next();
     },
     express.raw({ type: () => true, limit: MAX_PDF }),
+    zoned(db),
     (req, res) => {
       const r = D.docsUploadTarget(db, req.params.token, req.query.kind);
       const mime = uploadedType(req);
@@ -45,6 +46,7 @@ function deliveryPublicRoutes(db, uploadsDir) {
       next();
     },
     express.raw({ type: () => true, limit: MAX_PDF }),
+    zoned(db),
     (req, res) => {
       const r = D.returnUploadTarget(db, req.params.token);
       const mime = uploadedType(req);

@@ -16,7 +16,7 @@ const whatsapp = require('../whatsapp');
 const neopayment = require('../neopayment');
 const reminders = require('../reminders');
 const { cashDay } = require('../cash');
-const { fail, normDateTime, nowLocal, parseLocal, fmtLocal, toCsv, dmy, hm } = require('../util');
+const { fail, normDateTime, nowLocal, parseLocal, fmtLocal, toCsv, dmy, hm, toAgency } = require('../util');
 
 /**
  * Primeros pasos para una empresa que recién empieza a usar el sistema. El Panel los muestra
@@ -179,7 +179,8 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
     res.json(R.getReservation(db, r.id));
   });
   // Firma del contrato, fotos para la entrega express y tarjeta del cliente.
-  router.post('/reservations/:id/signature', (req, res) => res.json(delivery.requestSignature(db, req.params.id, (req.body || {}).terms, getSettings(db), req.user.id)));
+  router.post('/reservations/:id/signature', (req, res) => res.json(delivery.requestSignature(db, req.params.id, (req.body || {}).terms, getSettings(db), req.user.id, (req.body || {}).terms_en)));
+  router.post('/reservations/:id/driver-link', (req, res) => res.json(delivery.driverLink(db, req.params.id, (req.body || {}).index)));
   router.post('/reservations/:id/photos-link', (req, res) => res.json(delivery.photosLink(db, req.params.id)));
   router.post('/reservations/:id/reminder', async (req, res) => res.json(await reminders.sendOne(db, req.params.id, req.user.id)));
   router.post('/reservations/:id/whatsapp', async (req, res) => {
@@ -194,7 +195,18 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
     R.requireHandover(db, req.params.id, stage);
     next();
   };
-  router.post('/reservations/:id/pre-delivery', handover('entrega'), (req, res) => res.json(delivery.preDeliver(db, req.params.id, req.body || {}, getSettings(db), req.user.id)));
+  // Controles estrictos (delivery.requireOpen / requireClose): van antes que las fotos, para avisar de una vez todo lo que falta.
+  const strictOpen = (opts) => (req, res, next) => {
+    delivery.requireOpen(db, req.params.id, req.body || {}, opts);
+    next();
+  };
+  const strictClose = (req, res, next) => {
+    delivery.requireClose(db, req.params.id, req.body || {});
+    next();
+  };
+  // Lo que falta fuera de la ventana de entrega (pagos, garantía, documentos, firma): se avisa antes de abrirla.
+  router.get('/reservations/:id/open-missing', (req, res) => res.json({ missing: delivery.openMissing(db, req.params.id, {}, { form: false, signature: req.query.firma !== '0' }) }));
+  router.post('/reservations/:id/pre-delivery', strictOpen({ signature: false }), handover('entrega'), (req, res) => res.json(delivery.preDeliver(db, req.params.id, req.body || {}, getSettings(db), req.user.id)));
   router.post('/reservations/:id/left-place', (req, res) => res.json(delivery.setLeftPlace(db, req.params.id, (req.body || {}).place, req.user.id)));
   router.post('/reservations/:id/docs-link', (req, res) => res.json(delivery.docsLink(db, req.params.id)));
   router.post('/reservations/:id/return-link', (req, res) => res.json(delivery.returnLink(db, req.params.id)));
@@ -216,8 +228,8 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
   router.get('/reservations/:id/move-options', (req, res) => res.json(R.moveOptions(db, req.params.id)));
   router.post('/reservations/:id/swap', (req, res) => res.json(R.swapVehicles(db, req.params.id, req.body.reservation_id, req.user.id)));
   router.post('/reservations/:id/assign', (req, res) => res.json(R.assignVehicle(db, req.params.id, req.body.vehicle_id, req.user.id)));
-  router.post('/reservations/:id/checkout', handover('entrega'), (req, res) => res.json(R.checkout(db, req.params.id, req.body, req.user.id)));
-  router.post('/reservations/:id/checkin', handover('devolucion'), (req, res) => res.json(R.checkin(db, req.params.id, req.body, req.user.id)));
+  router.post('/reservations/:id/checkout', strictOpen(), handover('entrega'), (req, res) => res.json(R.checkout(db, req.params.id, req.body, req.user.id)));
+  router.post('/reservations/:id/checkin', strictClose, handover('devolucion'), (req, res) => res.json(R.checkin(db, req.params.id, req.body, req.user.id)));
   router.post('/reservations/:id/checkin-preview', (req, res) => res.json(R.checkinPreview(db, req.params.id, req.body || {})));
   router.post('/reservations/:id/close-contract', (req, res) => res.json(R.closeContract(db, req.params.id, req.user.id)));
   router.post('/reservations/:id/payments', (req, res) => res.json(R.addPayment(db, req.params.id, req.body, req.user.id)));
@@ -313,6 +325,25 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
   });
 
   // --- Caja diaria: los cobros y devoluciones de un día, por sucursal ---
+  // Facturas del mes: los contratos con el auto devuelto ese mes, con su total final (cargos incluidos), lo cobrado y el saldo.
+  router.get('/closed-contracts', (req, res) => {
+    const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? req.query.month : nowLocal().slice(0, 7);
+    const branch = Number(req.query.branch) || 0;
+    const cents = (n) => Math.round(n * 100) / 100;
+    const rows = db
+      .prepare(
+        `SELECT r.id, r.code, k.number, k.in_at, k.closed_at, c.full_name AS customer_name, v.plate,
+                COALESCE(k.final_total, r.total) + (SELECT COALESCE(SUM(x.amount), 0) FROM rental_charges x WHERE x.reservation_id = r.id) AS total,
+                (SELECT COALESCE(SUM(CASE WHEN p.kind = 'pago' THEN p.amount WHEN p.kind = 'devolucion' THEN -p.amount ELSE 0 END), 0) FROM payments p WHERE p.reservation_id = r.id) AS paid
+         FROM contracts k JOIN reservations r ON r.id = k.reservation_id JOIN customers c ON c.id = r.customer_id LEFT JOIN vehicles v ON v.id = r.vehicle_id
+         WHERE substr(k.in_at, 1, 7) = ? ${branch ? 'AND COALESCE(r.return_branch_id, r.pickup_branch_id) = ?' : ''}
+         ORDER BY k.in_at, k.id`,
+      )
+      .all(...(branch ? [month, branch] : [month]))
+      .map((x) => ({ ...x, total: cents(x.total), paid: cents(x.paid), pending: cents(x.total - x.paid) }));
+    const sum = (k) => cents(rows.reduce((a, x) => a + x[k], 0));
+    res.json({ month, rows, total: sum('total'), paid: sum('paid'), pending: sum('pending') });
+  });
   router.get('/cash', (req, res) => res.json(cashDay(db, (normDateTime(req.query.date) || nowLocal()).slice(0, 10), branchOf(req))));
 
   // --- Planning (grilla vehículos x días) ---
@@ -372,7 +403,7 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
       LEFT JOIN vehicles v ON v.id = r.vehicle_id LEFT JOIN branches pb ON pb.id = r.pickup_branch_id LEFT JOIN branches rb ON rb.id = r.return_branch_id`;
     const month = today.slice(0, 7);
     const FIXED = 'NOT EXISTS (SELECT 1 FROM rental_periods rp WHERE rp.reservation_id = r.id)';
-    const t = new Date();
+    const t = toAgency(new Date());
     const tomorrow = fmtLocal(new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1)).slice(0, 10);
     res.json({
       now,
@@ -388,7 +419,7 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
       pending: db.prepare(`${baseSelect} WHERE r.status = 'pendiente'${atR} ORDER BY r.pickup_at LIMIT 50`).all(),
       unassigned_next_7d: db
         .prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE r.status IN ('pendiente','confirmada') AND r.vehicle_id IS NULL AND r.pickup_at <= ?${atR}`)
-        .get(fmtLocal(new Date(Date.now() + 7 * 86400000))).n,
+        .get(fmtLocal(toAgency(new Date(Date.now() + 7 * 86400000)))).n,
       month_revenue: db
         .prepare(`SELECT COALESCE(SUM(CASE WHEN p.kind='pago' THEN p.amount WHEN p.kind='devolucion' THEN -p.amount ELSE 0 END),0) AS n FROM payments p JOIN reservations r ON r.id = p.reservation_id WHERE substr(p.created_at,1,7) = ?${atR}`)
         .get(month).n,

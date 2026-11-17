@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
+const { withZone } = require('./util');
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -553,6 +554,15 @@ const DEFAULT_SETTINGS = {
   holiday_rates_on: '0', // '1': los días feriados se cobran con la tarifa de feriado de la categoría
   late_hour_fee: '0', // precio de cada hora pasada de la tolerancia (0 = pasada la tolerancia se cobra un día más)
   late_hour_max: '4', // hasta cuántas horas se cobran por hora; con más, es un día entero
+  invoice_naming: '0', // '1': con el auto devuelto, el documento del contrato se llama Factura, y hay una pantalla con las facturas del mes
+  timezone: '', // zona horaria de la agencia (por ejemplo America/Panama); vacío = la hora del servidor (util.js)
+  voucher_text: '', // texto propio del mensaje de confirmación por WhatsApp (vacío = el de Floty); admite {nombre}, {reserva}, {retiro} y los demás datos
+  precontract_short: '0', // '1': el precontrato sale sin entrega, devolución ni estado del vehículo (van recién en el contrato) y se puede descargar firmado al mandarlo
+  fleet_grouped: '0', // '1': la pantalla de Autos agrupa los autos por categoría, en el orden de las tarifas
+  public_branding: '0', // '1': logo de la agencia y "N.º de reserva" en el contrato para firmar, la página de la tarjeta y la pantalla de la reserva, y logo en el cierre de caja
+  hide_deductible: '0', // '1': la cobertura figura sólo con su nombre, sin la franquicia (pantalla, mensajes y contrato)
+  hide_company_signature: '0', // '1': el contrato sale sin el lugar para la firma de la empresa
+  strict_contract: '0', // '1': no se entrega ni se cierra un contrato si falta algo (delivery.js: requireOpen, requireClose)
   pending_free: '0', // '1': una reserva sin confirmar no bloquea el auto; al confirmarse otra, las que se quedan sin auto se cancelan (availability.js)
   km_limit_max_days: '0', // el límite de km rige en alquileres de hasta estos días (0 = siempre)
   contract_terms_choferes: CONTRACT_TERMS_CHOFERES,
@@ -654,6 +664,10 @@ function migrate(db) {
   if (!has('extras', 'kind')) db.exec("ALTER TABLE extras ADD COLUMN kind TEXT NOT NULL DEFAULT 'adicional'");
   if (!has('extras', 'deductible')) db.exec('ALTER TABLE extras ADD COLUMN deductible REAL NOT NULL DEFAULT 0');
   if (!has('extras', 'one_day_price')) db.exec('ALTER TABLE extras ADD COLUMN one_day_price REAL NOT NULL DEFAULT 0');
+  // Seguro con kilometraje libre (por ejemplo un full cover): con él elegido no se cuentan km incluidos ni excedentes.
+  if (!has('extras', 'km_free')) db.exec('ALTER TABLE extras ADD COLUMN km_free INTEGER NOT NULL DEFAULT 0');
+  // El cliente de la reserva no maneja: conducen sólo los conductores cargados (R.setParties).
+  if (!has('reservations', 'customer_no_drive')) db.exec('ALTER TABLE reservations ADD COLUMN customer_no_drive INTEGER NOT NULL DEFAULT 0');
   // Adicional o seguro sólo para algunas categorías: sus códigos separados por coma (vacío = todas).
   if (!has('extras', 'categories')) db.exec('ALTER TABLE extras ADD COLUMN categories TEXT');
   // Modo choferes: tarifa mensual y km por período en la categoría, datos del chofer y su garante, service cada X km.
@@ -707,6 +721,17 @@ function migrate(db) {
   }
   // Reserva express: la del link con menos de 24 hs en un lugar sin personal de la agencia (un hotel, o la sucursal marcada así).
   if (!has('branches', 'express_24h')) db.exec('ALTER TABLE branches ADD COLUMN express_24h INTEGER NOT NULL DEFAULT 0');
+  // Firma de cada conductor adicional: su link y, cuando firma, quién, cuándo, desde dónde y la huella de lo firmado.
+  db.exec(`CREATE TABLE IF NOT EXISTS driver_signatures (
+    id INTEGER PRIMARY KEY,
+    reservation_id INTEGER NOT NULL REFERENCES reservations(id) ON DELETE CASCADE,
+    token TEXT NOT NULL UNIQUE,
+    driver_name TEXT NOT NULL,
+    driver_doc TEXT,
+    signed_at TEXT, signed_name TEXT, signed_doc TEXT, signed_ip TEXT, signed_image TEXT, signed_hash TEXT
+  )`);
+  // Punto de entrega o devolución (un aeropuerto): se elige en las reservas, pero no guarda autos ni figura como sucursal.
+  if (!has('branches', 'pickup_only')) db.exec('ALTER TABLE branches ADD COLUMN pickup_only INTEGER NOT NULL DEFAULT 0');
   if (!has('reservations', 'express')) db.exec('ALTER TABLE reservations ADD COLUMN express INTEGER NOT NULL DEFAULT 0');
   // Saldo del Panapass (peajes de Panamá): el del auto, y con cuánto salió y volvió en cada contrato.
   if (!has('vehicles', 'panapass')) db.exec('ALTER TABLE vehicles ADD COLUMN panapass REAL');
@@ -746,6 +771,9 @@ function getSettings(db) {
 
 const proOn = (db) => getSetting(db, 'pro_features') === '1';
 
+/** Los pedidos de esta agencia corren con su zona horaria. Va después de leer el cuerpo del pedido: antes, el dato se pierde. */
+const zoned = (db) => (_req, _res, next) => withZone(getSetting(db, 'timezone'), next);
+
 function setSetting(db, key, value) {
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(
     key,
@@ -753,4 +781,4 @@ function setSetting(db, key, value) {
   );
 }
 
-module.exports = { COUNTRY_PRESETS, phoneHint, openDb, proOn, getSetting, getSettings, setSetting, newApiKey, DEFAULT_MAPPING, WEBFORM_MAPPING, DEFAULT_SETTINGS, CONTRACT_TERMS, CONTRACT_TERMS_EN, CONTRACT_TERMS_CHOFERES };
+module.exports = { COUNTRY_PRESETS, phoneHint, openDb, proOn, zoned, getSetting, getSettings, setSetting, newApiKey, DEFAULT_MAPPING, WEBFORM_MAPPING, DEFAULT_SETTINGS, CONTRACT_TERMS, CONTRACT_TERMS_EN, CONTRACT_TERMS_CHOFERES };

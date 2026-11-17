@@ -2,7 +2,7 @@
 
 const { getSettings } = require('./db');
 const { addMonths } = require('./owner-book');
-const { fail, fmtLocal, nowLocal, parseLocal, round2, tx } = require('./util');
+const { fail, fmtLocal, nowLocal, parseLocal, round2, tx, toAgency } = require('./util');
 
 /**
  * Modo "autos para choferes" (Configuración → Tipo de negocio): el auto se alquila por día, semana o mes
@@ -80,7 +80,7 @@ function lateFee(periods, payments, settings, now = nowLocal()) {
 }
 
 /** Los pagos traen la hora del servidor en UTC ("2026-11-02 15:00:00"): se pasa a la hora local, como los períodos. */
-const paymentsLocal = (payments) => payments.map((p) => ({ ...p, at: fmtLocal(new Date(`${String(p.created_at).replace(' ', 'T')}Z`)) }));
+const paymentsLocal = (payments) => payments.map((p) => ({ ...p, at: fmtLocal(toAgency(new Date(`${String(p.created_at).replace(' ', 'T')}Z`))) }));
 
 /** Períodos, cargos (multas, km extra) y recargo por atraso de una reserva: los usa getReservation. */
 function rentalExtras(db, r) {

@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('node:path');
-const { openDb } = require('./db');
+const { openDb, getSetting } = require('./db');
 const { createApp, ensureAdmin } = require('./app');
 const { openPlatform } = require('./platform');
 const { seedDemo } = require('./seed');
@@ -22,8 +22,9 @@ const server = createApp(db, { platform }).listen(port, () => {
 
 // Recordatorios de entrega: cada 10 minutos, en todas las agencias que lo tengan activado.
 const { sendDue } = require('./reminders');
+const { withZone } = require('./util');
 setInterval(() => {
-  for (const { db: agency } of platform.databases()) sendDue(agency).catch((e) => console.error('Recordatorios:', e.message));
+  for (const { db: agency } of platform.databases()) withZone(getSetting(agency, 'timezone'), () => sendDue(agency)).catch((e) => console.error('Recordatorios:', e.message));
 }, 10 * 60 * 1000).unref();
 
 server.on('error', (err) => {
