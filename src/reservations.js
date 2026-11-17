@@ -629,7 +629,9 @@ function checkin(db, id, input, userId) {
     ).run(inAt, inKm, inFuel, inPanapass, input.in_notes || null, userId || null, JSON.stringify(damages), JSON.stringify(charges), finalTotal, r.contract.id);
     db.prepare("UPDATE reservations SET status = 'finalizada', return_branch_id = ?, updated_at = ? WHERE id = ?").run(returnBranch, nowLocal(), r.id);
     const nextStatus = input.send_to_maintenance ? 'mantenimiento' : 'disponible';
-    db.prepare('UPDATE vehicles SET status = ?, km = ?, fuel = ?, branch_id = ?, panapass = COALESCE(?, panapass) WHERE id = ?').run(nextStatus, inKm, inFuel, returnBranch, inPanapass, r.vehicle_id);
+    // Devuelto en un punto de entrega (aeropuerto): el auto no queda ahí, sigue en su sucursal.
+    const stays = (db.prepare('SELECT pickup_only FROM branches WHERE id = ?').get(returnBranch) || {}).pickup_only ? null : returnBranch;
+    db.prepare('UPDATE vehicles SET status = ?, km = ?, fuel = ?, branch_id = COALESCE(?, branch_id), panapass = COALESCE(?, panapass) WHERE id = ?').run(nextStatus, inKm, inFuel, stays, inPanapass, r.vehicle_id);
     if (input.send_to_maintenance) {
       db.prepare("INSERT INTO maintenance (vehicle_id, kind, description, start_date, km, status) VALUES (?, 'reparacion', ?, ?, ?, 'abierto')").run(
         r.vehicle_id,
@@ -641,12 +643,12 @@ function checkin(db, id, input, userId) {
     log(db, r.id, userId, 'devuelto', { km: inKm, combustible: inFuel, cargos: charges.total });
   });
   let updated = getReservation(db, r.id);
-  // Agencias con contratos pendientes: con saldo sin cobrar, o si el operador lo deja pendiente (daños, faltantes), el contrato no se cierra todavía.
+  // Agencias con contratos pendientes (funciones en prueba o controles estrictos): con saldo sin cobrar, o si el operador lo deja pendiente (daños, faltantes), el contrato no se cierra todavía.
   const note = String(input.pending_note || '').trim().slice(0, 300);
   // Días o km de más: queda en suspenso aunque no generen cargo (por ejemplo, sin tarifa de km excedente), hasta que la agencia lo resuelva.
   const over = [charges.late_days > 0 && 'Días de más', charges.km_excess > 0 && 'Km de más'].filter(Boolean).join(' y ');
   const why = note || (updated.balance.pending > 0.005 ? 'Saldo sin cobrar' : over);
-  const pending = proOn(db) && Boolean(why);
+  const pending = (proOn(db) || getSettings(db).strict_contract === '1') && Boolean(why);
   db.prepare('UPDATE contracts SET closed_at = ?, pending_note = ? WHERE id = ?').run(pending ? null : inAt, pending ? why : null, r.contract.id);
   if (pending) log(db, r.id, userId, 'contrato_pendiente', why);
   updated = getReservation(db, r.id);

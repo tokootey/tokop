@@ -17,7 +17,9 @@ const pad2 = (n) => String(n).padStart(2, '0');
 
 function statsRoutes(db) {
   const router = express.Router();
-  router.get('/stats', requireAdmin, (req, res) => res.json(computeStats(db, req.query)));
+  // Las ven el administrador y contabilidad.
+  const canSee = (req, res, next) => (req.user && req.user.role === 'contable' ? next() : requireAdmin(req, res, next));
+  router.get('/stats', canSee, (req, res) => res.json(computeStats(db, req.query)));
   return router;
 }
 

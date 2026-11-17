@@ -179,7 +179,8 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
     res.json(R.getReservation(db, r.id));
   });
   // Firma del contrato, fotos para la entrega express y tarjeta del cliente.
-  router.post('/reservations/:id/signature', (req, res) => res.json(delivery.requestSignature(db, req.params.id, (req.body || {}).terms, getSettings(db), req.user.id)));
+  router.post('/reservations/:id/signature', (req, res) => res.json(delivery.requestSignature(db, req.params.id, (req.body || {}).terms, getSettings(db), req.user.id, (req.body || {}).terms_en)));
+  router.post('/reservations/:id/driver-link', (req, res) => res.json(delivery.driverLink(db, req.params.id, (req.body || {}).index)));
   router.post('/reservations/:id/photos-link', (req, res) => res.json(delivery.photosLink(db, req.params.id)));
   router.post('/reservations/:id/reminder', async (req, res) => res.json(await reminders.sendOne(db, req.params.id, req.user.id)));
   router.post('/reservations/:id/whatsapp', async (req, res) => {
@@ -194,7 +195,18 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
     R.requireHandover(db, req.params.id, stage);
     next();
   };
-  router.post('/reservations/:id/pre-delivery', handover('entrega'), (req, res) => res.json(delivery.preDeliver(db, req.params.id, req.body || {}, getSettings(db), req.user.id)));
+  // Controles estrictos (delivery.requireOpen / requireClose): van antes que las fotos, para avisar de una vez todo lo que falta.
+  const strictOpen = (opts) => (req, res, next) => {
+    delivery.requireOpen(db, req.params.id, req.body || {}, opts);
+    next();
+  };
+  const strictClose = (req, res, next) => {
+    delivery.requireClose(db, req.params.id, req.body || {});
+    next();
+  };
+  // Lo que falta fuera de la ventana de entrega (pagos, garantía, documentos, firma): se avisa antes de abrirla.
+  router.get('/reservations/:id/open-missing', (req, res) => res.json({ missing: delivery.openMissing(db, req.params.id, {}, { form: false, signature: req.query.firma !== '0' }) }));
+  router.post('/reservations/:id/pre-delivery', strictOpen({ signature: false }), handover('entrega'), (req, res) => res.json(delivery.preDeliver(db, req.params.id, req.body || {}, getSettings(db), req.user.id)));
   router.post('/reservations/:id/left-place', (req, res) => res.json(delivery.setLeftPlace(db, req.params.id, (req.body || {}).place, req.user.id)));
   router.post('/reservations/:id/docs-link', (req, res) => res.json(delivery.docsLink(db, req.params.id)));
   router.post('/reservations/:id/return-link', (req, res) => res.json(delivery.returnLink(db, req.params.id)));
@@ -216,8 +228,8 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
   router.get('/reservations/:id/move-options', (req, res) => res.json(R.moveOptions(db, req.params.id)));
   router.post('/reservations/:id/swap', (req, res) => res.json(R.swapVehicles(db, req.params.id, req.body.reservation_id, req.user.id)));
   router.post('/reservations/:id/assign', (req, res) => res.json(R.assignVehicle(db, req.params.id, req.body.vehicle_id, req.user.id)));
-  router.post('/reservations/:id/checkout', handover('entrega'), (req, res) => res.json(R.checkout(db, req.params.id, req.body, req.user.id)));
-  router.post('/reservations/:id/checkin', handover('devolucion'), (req, res) => res.json(R.checkin(db, req.params.id, req.body, req.user.id)));
+  router.post('/reservations/:id/checkout', strictOpen(), handover('entrega'), (req, res) => res.json(R.checkout(db, req.params.id, req.body, req.user.id)));
+  router.post('/reservations/:id/checkin', strictClose, handover('devolucion'), (req, res) => res.json(R.checkin(db, req.params.id, req.body, req.user.id)));
   router.post('/reservations/:id/checkin-preview', (req, res) => res.json(R.checkinPreview(db, req.params.id, req.body || {})));
   router.post('/reservations/:id/close-contract', (req, res) => res.json(R.closeContract(db, req.params.id, req.user.id)));
   router.post('/reservations/:id/payments', (req, res) => res.json(R.addPayment(db, req.params.id, req.body, req.user.id)));

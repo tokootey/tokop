@@ -553,6 +553,12 @@ const DEFAULT_SETTINGS = {
   holiday_rates_on: '0', // '1': los días feriados se cobran con la tarifa de feriado de la categoría
   late_hour_fee: '0', // precio de cada hora pasada de la tolerancia (0 = pasada la tolerancia se cobra un día más)
   late_hour_max: '4', // hasta cuántas horas se cobran por hora; con más, es un día entero
+  precontract_short: '0', // '1': el precontrato sale sin entrega, devolución ni estado del vehículo (van recién en el contrato) y se puede descargar firmado al mandarlo
+  fleet_grouped: '0', // '1': la pantalla de Autos agrupa los autos por categoría, en el orden de las tarifas
+  public_branding: '0', // '1': logo de la agencia y "N.º de reserva" en el contrato para firmar y en la página de la tarjeta, y logo en el cierre de caja
+  hide_deductible: '0', // '1': la cobertura figura sólo con su nombre, sin la franquicia (pantalla, mensajes y contrato)
+  hide_company_signature: '0', // '1': el contrato sale sin el lugar para la firma de la empresa
+  strict_contract: '0', // '1': no se entrega ni se cierra un contrato si falta algo (delivery.js: requireOpen, requireClose)
   pending_free: '0', // '1': una reserva sin confirmar no bloquea el auto; al confirmarse otra, las que se quedan sin auto se cancelan (availability.js)
   km_limit_max_days: '0', // el límite de km rige en alquileres de hasta estos días (0 = siempre)
   contract_terms_choferes: CONTRACT_TERMS_CHOFERES,
@@ -707,6 +713,17 @@ function migrate(db) {
   }
   // Reserva express: la del link con menos de 24 hs en un lugar sin personal de la agencia (un hotel, o la sucursal marcada así).
   if (!has('branches', 'express_24h')) db.exec('ALTER TABLE branches ADD COLUMN express_24h INTEGER NOT NULL DEFAULT 0');
+  // Firma de cada conductor adicional: su link y, cuando firma, quién, cuándo, desde dónde y la huella de lo firmado.
+  db.exec(`CREATE TABLE IF NOT EXISTS driver_signatures (
+    id INTEGER PRIMARY KEY,
+    reservation_id INTEGER NOT NULL REFERENCES reservations(id) ON DELETE CASCADE,
+    token TEXT NOT NULL UNIQUE,
+    driver_name TEXT NOT NULL,
+    driver_doc TEXT,
+    signed_at TEXT, signed_name TEXT, signed_doc TEXT, signed_ip TEXT, signed_image TEXT, signed_hash TEXT
+  )`);
+  // Punto de entrega o devolución (un aeropuerto): se elige en las reservas, pero no guarda autos ni figura como sucursal.
+  if (!has('branches', 'pickup_only')) db.exec('ALTER TABLE branches ADD COLUMN pickup_only INTEGER NOT NULL DEFAULT 0');
   if (!has('reservations', 'express')) db.exec('ALTER TABLE reservations ADD COLUMN express INTEGER NOT NULL DEFAULT 0');
   // Saldo del Panapass (peajes de Panamá): el del auto, y con cuánto salió y volvió en cada contrato.
   if (!has('vehicles', 'panapass')) db.exec('ALTER TABLE vehicles ADD COLUMN panapass REAL');

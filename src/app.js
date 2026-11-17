@@ -22,7 +22,7 @@ const { deliveryPublicRoutes } = require('./routes/delivery-public');
 const neopayment = require('./neopayment');
 const { demandExample } = require('./demand-example');
 const { log: reservationLog } = require('./reservations');
-const { auxiliarGuard } = require('./auxiliar');
+const { auxiliarGuard, contableGuard } = require('./auxiliar');
 
 /** Crea el usuario administrador inicial si no hay ninguno. */
 function ensureAdmin(db) {
@@ -116,6 +116,7 @@ function companyApi(db, { uploadsDir, company, platform }) {
     '/api',
     guarded,
     auxiliarGuard(db),
+    contableGuard(),
     catalogRoutes(db, { uploadsDir }),
     operationsRoutes(db, { publicQuery }),
     fileRoutes(db, uploadsDir),

@@ -2,7 +2,7 @@
 
 const { HttpError, pick } = require('./util');
 
-const ROLES = ['admin', 'operador', 'auxiliar'];
+const ROLES = ['admin', 'operador', 'auxiliar', 'contable'];
 
 /**
  * Auxiliar de flota: saca las fotos de entrega y devolución, carga km y combustible, mueve autos de sucursal
@@ -46,4 +46,21 @@ function auxiliarGuard(db) {
   };
 }
 
-module.exports = { auxiliarGuard, ROLES };
+/**
+ * Contabilidad: consulta todo lo que ve un operador más las estadísticas (caja, pagos, contratos, autos, gastos),
+ * y lo único que carga son gastos de los autos. No crea ni cambia reservas, contratos, autos ni clientes.
+ * Lista cerrada, como la del auxiliar: lo que no está acá, no lo puede hacer.
+ */
+const CONTABLE_WRITE = [
+  ['POST', /^\/expenses$/],
+  ['PUT', /^\/expenses\/\d+$/],
+];
+function contableGuard() {
+  return (req, _res, next) => {
+    if (!req.user || req.user.role !== 'contable') return next();
+    if (req.method === 'GET' || CONTABLE_WRITE.some(([method, p]) => method === req.method && p.test(req.path))) return next();
+    next(new HttpError(403, 'Tu usuario es de consulta: lo único que puede cargar son gastos de los autos'));
+  };
+}
+
+module.exports = { auxiliarGuard, contableGuard, ROLES };
