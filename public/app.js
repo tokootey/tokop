@@ -510,7 +510,7 @@ async function route() {
       const key = group || r.navKey;
       const menu = key in NAV_MENU ? NAV_MENU[key] : group || r.navKey;
       if (menu !== null) $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === menu));
-      $('#fab').classList.toggle('hidden', isAux() || ['nueva', 'completa'].includes(r.navKey));
+      $('#fab').classList.toggle('hidden', isAux() || isContable() || ['nueva', 'completa'].includes(r.navKey));
       renderSubnav(group, r.navKey);
       closeModal(); // un cartel abierto no queda encima de otra pantalla
       const view = $('#view');
@@ -1956,7 +1956,7 @@ on(/^\/mas$/, async (view) => {
       ${tile('#/alquileres', 'Alquileres activos', 'Los autos que están en la calle, con planilla para Excel', ICON.list, 'green')}
       ${tile('#/caja', 'Caja diaria', 'Los cobros del día por sucursal, con el PDF del cierre', ICON.money, 'green')}
       ${invoiceNaming() ? tile('#/facturas', 'Facturas del mes', 'Los contratos con el auto ya devuelto, con su total, lo cobrado y el saldo', ICON.list, 'green') : ''}
-      ${tile('#/reservas/completa', 'Reserva con más opciones', 'Adicionales, descuento, vuelo, otro lugar de devolución', ICON.plus)}
+      ${isContable() ? '' : tile('#/reservas/completa', 'Reserva con más opciones', 'Adicionales, descuento, vuelo, otro lugar de devolución', ICON.plus)}
       ${tile('#/clientes', 'Clientes', 'Datos, licencia y sus reservas', ICON.user)}
       ${tile('#/flota?estado=mantenimiento', 'Taller', 'Autos en el taller: mandar, sacar y su historial', ICON.wrench, 'warm')}
       ${tile('#/gastos', 'Gastos de los autos', 'Peajes, combustible, lavado, repuestos: se cargan sin mandar el auto al taller', ICON.money, 'warm')}
