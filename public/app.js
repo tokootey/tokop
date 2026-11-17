@@ -2906,6 +2906,8 @@ const LOG_LABEL = {
   firma_pedida: 'Firma pedida al cliente',
   firma_cliente: 'El cliente firmó el contrato',
   firma_anulada: 'Firma anulada: la reserva cambió',
+  firma_conductor_pedida: 'Link de firma para un conductor adicional',
+  firma_conductor: 'Un conductor adicional firmó el contrato',
   tarjeta_dejada: 'El cliente dejó su tarjeta',
   creada: 'Reserva creada',
   modificada: 'Reserva modificada',
