@@ -277,7 +277,7 @@ function computeReturnCharges(db, reservation, contract, input, { byPeriods = fa
   const kmDriven = Math.max(0, Number(input.in_km) - Number(contract.out_km));
   // Km de más y combustible faltante: se avisan siempre, tengan o no un cargo configurado.
   // Con un seguro de kilometraje libre no hay km incluidos ni excedentes.
-  const kmFree = Boolean(db.prepare("SELECT 1 FROM reservation_extras re JOIN extras e ON e.id = re.extra_id WHERE re.reservation_id = ? AND e.kind = 'seguro' AND e.km_free = 1").get(reservation.id));
+  const kmFree = (reservation.extras || []).some((x) => x.kind === 'seguro' && x.km_free); // los trae R.getReservation
   const kmAllowed = category.km_per_day > 0 && !byPeriods && !kmFree && kmLimited(settings, reservation.days) ? category.km_per_day * reservation.days : null;
   const kmExcess = kmAllowed === null ? 0 : Math.max(0, kmDriven - kmAllowed);
   // Por períodos (choferes) los km y la demora ya se cobraron con la renovación y la lectura de km.
