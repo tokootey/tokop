@@ -129,7 +129,7 @@ function openMissing(db, id, input = {}, { form = true, signature = true } = {})
   const docs = docPhotos(db, r.customer_id);
   const sig = stateOf(db, r);
   return [
-    !docs.includes('carnet_frente') && 'la foto de la licencia de conducir del cliente',
+    r.customer_no_drive ? !docs.includes('conductor') && 'la foto de la licencia del conductor' : !docs.includes('carnet_frente') && 'la foto de la licencia de conducir del cliente',
     !docs.includes('dni_frente') && !docs.includes('pasaporte') && 'la foto de la cédula o del pasaporte del cliente',
     form && !r.files.some((f) => f.stage === 'entrega' && f.mime.startsWith('image/')) && 'las fotos del auto en la entrega',
     form && !given(input.out_km) && 'el kilometraje de salida',

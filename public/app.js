@@ -2150,7 +2150,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         r.holder || (r.drivers || []).length
           ? `<div class="card"><h2>Titular y conductores</h2><dl class="info">
           ${r.holder ? `<dt>Titular del contrato</dt><dd>${esc(r.holder.full_name)} · ${esc([r.holder.doc_type, r.holder.doc_number].filter(Boolean).join(' '))}</dd>` : ''}
-          ${(r.drivers || []).map((x, i) => `<dt>Conductor adicional ${i + 1}</dt><dd>${esc(x.full_name)} · ${esc([x.doc_type, x.doc_number].filter(Boolean).join(' '))}${x.license_number ? ` · licencia ${esc(x.license_number)}` : ''}</dd>`).join('')}
+          ${r.customer_no_drive ? '<dt>Cliente</dt><dd>No maneja: es el titular de la reserva</dd>' : ''}
+          ${(r.drivers || []).map((x, i) => `<dt>${r.customer_no_drive ? 'Conductor' : 'Conductor adicional'} ${i + 1}</dt><dd>${esc(x.full_name)} · ${esc([x.doc_type, x.doc_number].filter(Boolean).join(' '))}${x.license_number ? ` · licencia ${esc(x.license_number)}` : ''}</dd>`).join('')}
         </dl></div>`
           : ''
       }
@@ -2451,6 +2452,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       const h = r.holder || {};
       const docOpts = () => docTypes().map((x) => [x, x]);
       const fields = [
+        { name: 'customer_no_drive', label: 'El cliente no maneja: conducen sólo los conductores cargados abajo', type: 'checkbox', full: true },
         { name: 'h_full_name', label: 'Titular del contrato, si no es el cliente (nombre o razón social)', full: true },
         { name: 'h_doc_type', label: 'Tipo doc. del titular', type: 'select', options: docOpts },
         { name: 'h_doc_number', label: 'Documento del titular' },
@@ -2465,12 +2467,13 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
         ]),
       ];
       const values = Object.fromEntries([
+        ['customer_no_drive', r.customer_no_drive],
         ...Object.entries(h).map(([k, v]) => [`h_${k}`, v]),
         ...(r.drivers || []).flatMap((x, i) => Object.entries(x).map(([k, v]) => [`d${i}_${k}`, v])),
       ]);
       openModal(`Titular y conductores · ${r.code}`, formHtml(fields, values), async (d) => {
         const part = (prefix) => Object.fromEntries(Object.entries(d).filter(([k]) => k.startsWith(prefix)).map(([k, v]) => [k.slice(prefix.length), v]));
-        await POST(`/reservations/${r.id}/parties`, { holder: part('h_'), drivers: [0, 1, 2, 3, 4].map((i) => part(`d${i}_`)) });
+        await POST(`/reservations/${r.id}/parties`, { holder: part('h_'), drivers: [0, 1, 2, 3, 4].map((i) => part(`d${i}_`)), customer_no_drive: d.customer_no_drive });
         toast('Titular y conductores guardados');
         reload();
       });
@@ -2820,13 +2823,15 @@ function voucherLines(r) {
   const sections = [
     { title: 'Reserva', rows: [['Código', r.code], ['Estado', STATUS_LABEL[r.status] || r.status]] },
     {
-      title: 'Cliente y conductor',
+      title: r.customer_no_drive ? 'Cliente (titular)' : 'Cliente y conductor',
       rows: [
         ['Nombre', r.customer_name],
         r.customer_doc ? ['Documento', `${docTypeOf(r.customer_doc_type)} ${r.customer_doc}`] : null,
         r.customer_phone ? ['Teléfono', r.customer_phone] : null,
         r.customer_email ? ['Email', r.customer_email] : null,
-        ['Conductor', r.customer_license ? `El titular · licencia ${r.customer_license}${r.customer_license_expiry ? ` (vence ${d(r.customer_license_expiry)})` : ''}` : 'El titular · traer la licencia al retirar'],
+        r.customer_no_drive
+          ? ['Conductor', (r.drivers || []).map((x) => `${x.full_name}${x.license_number ? ` · licencia ${x.license_number}` : ''}`).join('; ') || 'A confirmar']
+          : ['Conductor', r.customer_license ? `El titular · licencia ${r.customer_license}${r.customer_license_expiry ? ` (vence ${d(r.customer_license_expiry)})` : ''}` : 'El titular · traer la licencia al retirar'],
       ].filter(Boolean),
     },
     {
@@ -3513,7 +3518,7 @@ async function printContract(r) {
 ${String(s.contract_front_notes || '').trim() ? `<div style="border:2px solid #111;padding:4px 8px;margin-top:6px;font-weight:700;font-size:10px;white-space:pre-wrap">${esc(String(s.contract_front_notes).trim())}</div>` : ''}
 
 <div class="grid">
-  <div><h2>Cliente / conductor principal</h2><table>
+  <div><h2>${r.customer_no_drive ? 'Cliente (titular, no conduce)' : 'Cliente / conductor principal'}</h2><table>
     ${line('Nombre y apellido', esc(r.customer_name))}
     ${line('Documento', r.customer_doc ? `${esc(docTypeOf(r.customer_doc_type))} ${esc(r.customer_doc)}` : '')}
     ${line('Domicilio', esc(r.customer_address || ''))}${r.customer_workplace ? line('Lugar de trabajo', esc(r.customer_workplace)) : ''}${r.customer_alt_contact ? line('Contacto alternativo', esc(r.customer_alt_contact)) : ''}
@@ -3534,7 +3539,7 @@ ${String(s.contract_front_notes || '').trim() ? `<div style="border:2px solid #1
         (r.drivers || []).length
           ? r.drivers
               .map(
-                (x, i) => `<h2>Conductor adicional${r.drivers.length > 1 ? ` ${i + 1}` : ''}</h2><table>
+                (x, i) => `<h2>${r.customer_no_drive ? 'Conductor' : 'Conductor adicional'}${r.drivers.length > 1 ? ` ${i + 1}` : ''}</h2><table>
     ${line('Nombre y apellido', esc(x.full_name))}${line('Documento', esc([x.doc_type, x.doc_number].filter(Boolean).join(' ')))}${line('Licencia N° / vence', esc([x.license_number, x.license_expiry && fmtD(x.license_expiry)].filter(Boolean).join(' · ')))}
   </table>`,
               )
@@ -3979,8 +3984,8 @@ const DELIVERY_CUSTOMER = [
 function licenseFields(r) {
   return [
     ...DELIVERY_CUSTOMER.filter(([, key]) => !r[key]).map(([name, , f]) => ({ name, required: name !== 'email', ...f })), // el email es opcional
-    { name: 'license_number', label: 'Licencia del cliente N°' },
-    { name: 'license_expiry', label: 'Vencimiento de la licencia', type: 'date', required: true },
+    // Si el cliente no maneja, su licencia no se pide: la de los conductores está en "Titular y conductores".
+    ...(r.customer_no_drive ? [] : [{ name: 'license_number', label: 'Licencia del cliente N°' }, { name: 'license_expiry', label: 'Vencimiento de la licencia', type: 'date', required: true }]),
   ];
 }
 const licenseValues = (r) => ({ license_number: r.customer_license || '', license_expiry: r.customer_license_expiry || '' });
@@ -3990,6 +3995,10 @@ async function saveLicense(r, d, form) {
   const { license_number, license_expiry, ...rest } = d;
   const extra = {};
   for (const [name, key] of DELIVERY_CUSTOMER) if (!r[key] && name in rest) { extra[name] = rest[name]; delete rest[name]; }
+  if (r.customer_no_drive) {
+    if (Object.keys(extra).length) await PUT(`/customers/${r.customer_id}`, extra);
+    return rest;
+  }
   const input = form.license_expiry;
   form.querySelector('.field-error[data-for=license_expiry]')?.remove();
   input.removeAttribute('aria-invalid');
@@ -4723,6 +4732,7 @@ on(/^\/tarifas$/, async (view) => {
         { name: 'name', label: 'Nombre del seguro', required: true, full: true, attrs: 'placeholder="Ej.: Cobertura total (sin franquicia)"' },
         { name: 'price', label: 'Precio (0 = incluido en la tarifa)', type: 'number', default: 0 },
         { name: 'one_day_price', label: 'Precio si el alquiler es de 1 día (0 = el mismo)', type: 'number', default: 0 },
+        { name: 'km_free', label: 'Con esta cobertura el kilometraje es libre (no se cuentan km incluidos ni excedentes)', type: 'checkbox', full: true, when: () => proOn() },
         { name: 'charge_type', label: 'Se cobra', type: 'select', options: [['dia', 'Por día'], ['fijo', 'Por alquiler']], required: true, default: 'dia' },
         { name: 'deductible', label: 'Franquicia (0 = sin franquicia)', type: 'number', default: 0 },
         { name: 'max_price', label: 'Tope por alquiler (0 = sin tope)', type: 'number', default: 0 },

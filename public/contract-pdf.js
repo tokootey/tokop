@@ -117,7 +117,7 @@ function buildContractPdf(r, photos = []) {
     bodyTop = headEnd + 2 + bh - 1;
   }
 
-  let y = section('Cliente / conductor principal', bodyTop + 6);
+  let y = section(r.customer_no_drive ? 'Cliente (titular, no conduce)' : 'Cliente / conductor principal', bodyTop + 6);
   kv(y, [
     ['Nombre y apellido', txt(r.customer_name), 'Documento', r.customer_doc ? `${txt(docTypeOf(r.customer_doc_type))} ${r.customer_doc}` : ''],
     ['Domicilio', txt(r.customer_address), 'Teléfono', txt(r.customer_phone)],
@@ -148,7 +148,7 @@ function buildContractPdf(r, photos = []) {
   } else {
     // Los conductores cargados en la reserva; si no hay, queda el renglón en blanco para completar a mano.
     const drivers = (r.drivers || []).length ? r.drivers : [{}];
-    y = section(drivers.length > 1 ? 'Conductores adicionales' : 'Conductor adicional', lastY() + gap);
+    y = section(r.customer_no_drive ? (drivers.length > 1 ? 'Conductores' : 'Conductor') : drivers.length > 1 ? 'Conductores adicionales' : 'Conductor adicional', lastY() + gap);
     kv(
       y,
       drivers.flatMap((x) => [

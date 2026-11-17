@@ -180,6 +180,7 @@ function computeQuote(db, input) {
   }
 
   const extrasLines = [];
+  let kmFree = false; // un seguro con kilometraje libre (extras.km_free)
   for (const item of input.extras || []) {
     const extra = db.prepare('SELECT * FROM extras WHERE id = ?').get(item.extra_id);
     if (!extra) fail(400, `Adicional inexistente (${item.extra_id})`);
@@ -189,6 +190,7 @@ function computeQuote(db, input) {
     let amount = extra.charge_type === 'fijo' ? extra.price * qty : perDay * days * qty;
     if (extra.max_price > 0) amount = Math.min(amount, extra.max_price * qty);
     extrasLines.push({ extra_id: extra.id, name: extra.name, quantity: qty, amount: round2(amount), kind: extra.kind || 'adicional', deductible: extra.deductible || 0 });
+    if (extra.kind === 'seguro' && extra.km_free) kmFree = true;
   }
   if (extrasLines.filter((l) => l.kind === 'seguro').length > 1) fail(400, 'Elegí un solo seguro para la reserva');
   const extrasTotal = extrasLines.reduce((a, l) => a + l.amount, 0);
@@ -258,7 +260,7 @@ function computeQuote(db, input) {
     tax: round2(tax),
     total: round2(total),
     deposit: noDeposit > 0 ? 0 : round2(category.deposit),
-    km_included: choferes ? (category.km_per_period > 0 ? category.km_per_period * periods : null) : category.km_per_day > 0 && kmLimited(settings, days) ? category.km_per_day * days : null,
+    km_included: choferes ? (category.km_per_period > 0 ? category.km_per_period * periods : null) : category.km_per_day > 0 && kmLimited(settings, days) && !kmFree ? category.km_per_day * days : null,
     ...(choferes ? { period, periods } : {}),
     currency: settings.currency,
   };
@@ -274,7 +276,9 @@ function computeReturnCharges(db, reservation, contract, input, { byPeriods = fa
 
   const kmDriven = Math.max(0, Number(input.in_km) - Number(contract.out_km));
   // Km de más y combustible faltante: se avisan siempre, tengan o no un cargo configurado.
-  const kmAllowed = category.km_per_day > 0 && !byPeriods && kmLimited(settings, reservation.days) ? category.km_per_day * reservation.days : null;
+  // Con un seguro de kilometraje libre no hay km incluidos ni excedentes.
+  const kmFree = Boolean(db.prepare("SELECT 1 FROM reservation_extras re JOIN extras e ON e.id = re.extra_id WHERE re.reservation_id = ? AND e.kind = 'seguro' AND e.km_free = 1").get(reservation.id));
+  const kmAllowed = category.km_per_day > 0 && !byPeriods && !kmFree && kmLimited(settings, reservation.days) ? category.km_per_day * reservation.days : null;
   const kmExcess = kmAllowed === null ? 0 : Math.max(0, kmDriven - kmAllowed);
   // Por períodos (choferes) los km y la demora ya se cobraron con la renovación y la lectura de km.
   if (kmExcess > 0 && category.extra_km_rate > 0) lines.push({ concept: `Km excedentes (${kmExcess} km)`, amount: round2(kmExcess * category.extra_km_rate) });

@@ -160,7 +160,7 @@ function catalogRoutes(db, { uploadsDir } = {}) {
   );
   router.use(
     '/extras',
-    crud(db, { table: 'extras', fields: ['code', 'name', 'price', 'charge_type', 'max_price', 'aliases', 'active', 'kind', 'deductible', 'one_day_price', 'categories'], required: ['name'], order: 'name', adminWrite: true }),
+    crud(db, { table: 'extras', fields: ['code', 'name', 'price', 'charge_type', 'max_price', 'aliases', 'active', 'kind', 'deductible', 'one_day_price', 'categories', 'km_free'], required: ['name'], order: 'name', adminWrite: true }),
   );
   router.use('/seasons', (req, _res, next) => {
     const m = (req.body || {}).multiplier;

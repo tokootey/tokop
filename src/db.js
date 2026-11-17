@@ -664,6 +664,10 @@ function migrate(db) {
   if (!has('extras', 'kind')) db.exec("ALTER TABLE extras ADD COLUMN kind TEXT NOT NULL DEFAULT 'adicional'");
   if (!has('extras', 'deductible')) db.exec('ALTER TABLE extras ADD COLUMN deductible REAL NOT NULL DEFAULT 0');
   if (!has('extras', 'one_day_price')) db.exec('ALTER TABLE extras ADD COLUMN one_day_price REAL NOT NULL DEFAULT 0');
+  // Seguro con kilometraje libre (por ejemplo un full cover): con él elegido no se cuentan km incluidos ni excedentes.
+  if (!has('extras', 'km_free')) db.exec('ALTER TABLE extras ADD COLUMN km_free INTEGER NOT NULL DEFAULT 0');
+  // El cliente de la reserva no maneja: conducen sólo los conductores cargados (R.setParties).
+  if (!has('reservations', 'customer_no_drive')) db.exec('ALTER TABLE reservations ADD COLUMN customer_no_drive INTEGER NOT NULL DEFAULT 0');
   // Adicional o seguro sólo para algunas categorías: sus códigos separados por coma (vacío = todas).
   if (!has('extras', 'categories')) db.exec('ALTER TABLE extras ADD COLUMN categories TEXT');
   // Modo choferes: tarifa mensual y km por período en la categoría, datos del chofer y su garante, service cada X km.
