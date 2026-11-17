@@ -2036,7 +2036,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
 
   view.innerHTML = `
     <div class="page-head">
-      <div><h1>${esc(r.code)} ${badge(r.status)}${sourceBadge(r.source)}</h1>
+      <div><h1>${String(state.settings.public_branding) === '1' ? '<small class="muted" style="font-size:.55em;font-weight:600;display:block">N.º de reserva</small>' : ''}${esc(r.code)} ${badge(r.status)}${sourceBadge(r.source)}</h1>
       ${r.external_id ? `<small class="muted">Id en cotizador: ${esc(r.external_id)}</small>` : ''}</div>
       <div class="actions no-print">${actions.join('')}</div>
     </div>
@@ -2833,6 +2833,27 @@ function voucherWhatsapp(r) {
   const v = voucherLines(r);
   const get = (title, key) => (v.sections.find((x) => x.title === title).rows.find(([k]) => k === key) || [])[1];
   const p = refundPolicyText({ ...state.settings, refund_terms: '' }).replace(/^Si se cancela con /, 'con ');
+  // Texto propio de la agencia (Configuración): reemplaza al mensaje de Floty; lo que va entre llaves se completa con los datos de la reserva.
+  const own = String(state.settings.voucher_text || '').trim();
+  if (own) {
+    const data = {
+      nombre: String(r.customer_name || '').split(' ')[0],
+      reserva: r.code,
+      estado: get('Reserva', 'Estado'),
+      retiro: get('Alquiler', 'Retiro'),
+      devolucion: `${get('Alquiler', 'Devolución')} (${get('Alquiler', 'Duración')})`,
+      auto: `${r.category_name}${r.vehicle_plate ? ` · ${[r.vehicle_brand, r.vehicle_model].filter(Boolean).join(' ')}` : ''}`,
+      seguro: resInsurance(r) ? get('Alquiler', 'Seguro') : '',
+      total: money(r.balance.due),
+      pagado: money(r.balance.paid),
+      saldo: money(r.balance.pending),
+      garantia: money(r.deposit),
+      empresa: state.settings.company_name || '',
+      telefono: state.settings.company_phone || '',
+      cancelacion: p,
+    };
+    return own.replace(/\{(\w+)\}/g, (m, k) => (k in data ? String(data[k] ?? '') : m)).trim();
+  }
   return [
     voucherIntro(r),
     '',
@@ -5071,9 +5092,10 @@ on(/^\/config$/, async (view) => {
       { name: 'min_driver_age', label: 'Edad mínima del conductor', type: 'number' },
       { name: 'deductible_amount', label: 'Franquicia del seguro (vacío = la de la póliza)', type: 'number' },
       { name: 'pending_free', label: 'Las reservas sin confirmar no bloquean el auto (varias cotizaciones pueden pedir el mismo auto y fechas; al confirmarse una, las que ya no tienen auto se cancelan solas)', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'voucher_text', label: 'Texto propio del mensaje de confirmación por WhatsApp (vacío = el de Floty). Se completan solos: {nombre} {reserva} {estado} {retiro} {devolucion} {auto} {seguro} {total} {pagado} {saldo} {garantia} {empresa} {telefono} {cancelacion}', type: 'textarea', full: true, rows: 8, when: () => !choferesMode() },
       { name: 'precontract_short', label: 'Precontrato sin los bloques de entrega, devolución y estado del vehículo (salen recién en el contrato), con botón para descargarlo firmado al mandar el contrato', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'fleet_grouped', label: 'Pantalla de Autos agrupada por categoría (un título por categoría y debajo sus autos)', type: 'checkbox', full: true, when: () => !choferesMode() },
-      { name: 'public_branding', label: 'Logo de la agencia y "N.º de reserva" en las páginas que ve el cliente (contrato para firmar y tarjeta), y logo en el cierre de caja', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'public_branding', label: 'Logo de la agencia y "N.º de reserva" en las páginas que ve el cliente (contrato para firmar y tarjeta) y en la pantalla de la reserva, y logo en el cierre de caja', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'hide_deductible', label: 'No mostrar la franquicia del seguro: la cobertura figura sólo con su nombre en la reserva, los mensajes al cliente y el contrato', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'hide_company_signature', label: 'Contrato sin el lugar para la firma de la empresa (firma sólo el cliente)', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'strict_contract', label: 'Controles estrictos del contrato: no se entrega el auto sin las fotos de la licencia y del documento, km, combustible, garantía y alquiler cobrados y la firma del cliente; y el contrato no se cierra mientras quede saldo sin cobrar', type: 'checkbox', full: true, when: () => !choferesMode() },

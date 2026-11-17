@@ -553,9 +553,10 @@ const DEFAULT_SETTINGS = {
   holiday_rates_on: '0', // '1': los días feriados se cobran con la tarifa de feriado de la categoría
   late_hour_fee: '0', // precio de cada hora pasada de la tolerancia (0 = pasada la tolerancia se cobra un día más)
   late_hour_max: '4', // hasta cuántas horas se cobran por hora; con más, es un día entero
+  voucher_text: '', // texto propio del mensaje de confirmación por WhatsApp (vacío = el de Floty); admite {nombre}, {reserva}, {retiro} y los demás datos
   precontract_short: '0', // '1': el precontrato sale sin entrega, devolución ni estado del vehículo (van recién en el contrato) y se puede descargar firmado al mandarlo
   fleet_grouped: '0', // '1': la pantalla de Autos agrupa los autos por categoría, en el orden de las tarifas
-  public_branding: '0', // '1': logo de la agencia y "N.º de reserva" en el contrato para firmar y en la página de la tarjeta, y logo en el cierre de caja
+  public_branding: '0', // '1': logo de la agencia y "N.º de reserva" en el contrato para firmar, la página de la tarjeta y la pantalla de la reserva, y logo en el cierre de caja
   hide_deductible: '0', // '1': la cobertura figura sólo con su nombre, sin la franquicia (pantalla, mensajes y contrato)
   hide_company_signature: '0', // '1': el contrato sale sin el lugar para la firma de la empresa
   strict_contract: '0', // '1': no se entrega ni se cierra un contrato si falta algo (delivery.js: requireOpen, requireClose)
