@@ -325,6 +325,25 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
   });
 
   // --- Caja diaria: los cobros y devoluciones de un día, por sucursal ---
+  // Facturas del mes: los contratos con el auto devuelto ese mes, con su total final (cargos incluidos), lo cobrado y el saldo.
+  router.get('/closed-contracts', (req, res) => {
+    const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? req.query.month : nowLocal().slice(0, 7);
+    const branch = Number(req.query.branch) || 0;
+    const cents = (n) => Math.round(n * 100) / 100;
+    const rows = db
+      .prepare(
+        `SELECT r.id, r.code, k.number, k.in_at, k.closed_at, c.full_name AS customer_name, v.plate,
+                COALESCE(k.final_total, r.total) + (SELECT COALESCE(SUM(x.amount), 0) FROM rental_charges x WHERE x.reservation_id = r.id) AS total,
+                (SELECT COALESCE(SUM(CASE WHEN p.kind = 'pago' THEN p.amount WHEN p.kind = 'devolucion' THEN -p.amount ELSE 0 END), 0) FROM payments p WHERE p.reservation_id = r.id) AS paid
+         FROM contracts k JOIN reservations r ON r.id = k.reservation_id JOIN customers c ON c.id = r.customer_id LEFT JOIN vehicles v ON v.id = r.vehicle_id
+         WHERE substr(k.in_at, 1, 7) = ? ${branch ? 'AND COALESCE(r.return_branch_id, r.pickup_branch_id) = ?' : ''}
+         ORDER BY k.in_at, k.id`,
+      )
+      .all(...(branch ? [month, branch] : [month]))
+      .map((x) => ({ ...x, total: cents(x.total), paid: cents(x.paid), pending: cents(x.total - x.paid) }));
+    const sum = (k) => cents(rows.reduce((a, x) => a + x[k], 0));
+    res.json({ month, rows, total: sum('total'), paid: sum('paid'), pending: sum('pending') });
+  });
   router.get('/cash', (req, res) => res.json(cashDay(db, (normDateTime(req.query.date) || nowLocal()).slice(0, 10), branchOf(req))));
 
   // --- Planning (grilla vehículos x días) ---

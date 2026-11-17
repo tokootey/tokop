@@ -554,6 +554,7 @@ const DEFAULT_SETTINGS = {
   holiday_rates_on: '0', // '1': los días feriados se cobran con la tarifa de feriado de la categoría
   late_hour_fee: '0', // precio de cada hora pasada de la tolerancia (0 = pasada la tolerancia se cobra un día más)
   late_hour_max: '4', // hasta cuántas horas se cobran por hora; con más, es un día entero
+  invoice_naming: '0', // '1': con el auto devuelto, el documento del contrato se llama Factura, y hay una pantalla con las facturas del mes
   timezone: '', // zona horaria de la agencia (por ejemplo America/Panama); vacío = la hora del servidor (util.js)
   voucher_text: '', // texto propio del mensaje de confirmación por WhatsApp (vacío = el de Floty); admite {nombre}, {reserva}, {retiro} y los demás datos
   precontract_short: '0', // '1': el precontrato sale sin entrega, devolución ni estado del vehículo (van recién en el contrato) y se puede descargar firmado al mandarlo

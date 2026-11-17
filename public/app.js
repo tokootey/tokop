@@ -81,6 +81,9 @@ const deductibleText = (x) => (String(state.settings.hide_deductible) === '1' ? 
 // Páginas del cliente con la marca de la agencia (ajuste public_branding): el servidor manda `branded` y el logo.
 const pubLogo = (d) => (d.logo ? `<img src="${esc(d.logo)}" alt="${esc(d.company)}" style="max-height:64px;max-width:200px;display:block;margin:0 auto 10px">` : '');
 const pubCode = (d) => `${d.branded ? L('N.º de reserva ', 'Booking no. ') : ''}${esc(d.code)}`;
+// Ajuste invoice_naming: con el auto ya devuelto, el documento del contrato se llama Factura.
+const invoiceNaming = () => String(state.settings.invoice_naming) === '1';
+const invoiced = (r) => invoiceNaming() && Boolean(r.contract && r.contract.in_at);
 const companySigns = () => String(state.settings.hide_company_signature) !== '1';
 const PERIOD_LABEL = { dia: ['día', 'días'], semana: ['semana', 'semanas'], mes: ['mes', 'meses'] };
 const periodWord = (n = 1) => (PERIOD_LABEL[state.settings.rent_period] || PERIOD_LABEL.semana)[Number(n) === 1 ? 0 : 1];
@@ -1111,6 +1114,38 @@ function buildCashPdf(c, branchName) {
   doc.setFontSize(8).setTextColor(120).text(`Emitido el ${new Date().toLocaleString(locale())} por ${state.user.name}.`, M, 290);
   return { doc, filename: `caja-${c.date}.pdf` };
 }
+/** Facturas del mes (ajuste invoice_naming): un renglón por contrato con el auto devuelto ese mes. */
+on(/^\/facturas$/, async (view) => {
+  let month = ymd(new Date()).slice(0, 7);
+  const load = async () => {
+    const f = await GET(`/closed-contracts?month=${month}${branchQS('&')}`);
+    view.innerHTML = `
+      <div class="page-head"><h1>Facturas del mes</h1></div>
+      <div class="toolbar"><label>Mes<input type="month" id="inv-month" value="${month}" max="${ymd(new Date()).slice(0, 7)}"/></label></div>
+      <div class="chips"><span class="chip">Facturas: <b>${f.rows.length}</b></span><span class="chip on">Total: <b>${money(f.total)}</b></span><span class="chip">Cobrado: <b>${money(f.paid)}</b></span><span class="chip">Saldo: <b>${money(f.pending)}</b></span></div>
+      ${
+        f.rows.length
+          ? `<div class="table-wrap"><table><thead><tr><th>Devolución</th><th>Factura</th><th>Cliente</th><th>Auto</th><th>Estado</th><th class="right">Total</th><th class="right">Cobrado</th><th class="right">Saldo</th></tr></thead><tbody>
+          ${f.rows
+            .map(
+              (x) => `<tr class="click" data-href="#/reservas/${x.id}">
+                <td class="nowrap">${fmtDT(x.in_at)}</td><td class="nowrap"><b>${esc(x.number)}</b><br><small class="muted">${esc(x.code)}</small></td>
+                <td>${esc(x.customer_name)}</td><td><span class="plate">${esc(x.plate || '—')}</span></td>
+                <td>${x.closed_at ? '<span class="badge b-confirmada">Cerrada</span>' : '<span class="badge b-pendiente">Pendiente de cierre</span>'}</td>
+                <td class="right nowrap">${money(x.total)}</td><td class="right nowrap">${money(x.paid)}</td><td class="right nowrap">${x.pending > 0.005 ? `<b class="error">${money(x.pending)}</b>` : money(x.pending)}</td></tr>`,
+            )
+            .join('')}</tbody></table></div>`
+          : '<div class="card muted">No hay autos devueltos en ese mes.</div>'
+      }
+      <p class="muted">Entra cada contrato en el mes en que se devolvió el auto. El total incluye los cargos de la devolución y los cargos sueltos.</p>`;
+    $('#inv-month').addEventListener('change', (e) => {
+      month = e.target.value || month;
+      run(load);
+    });
+  };
+  await load();
+}, 'reservas');
+
 on(/^\/caja$/, async (view) => {
   let date = ymd(new Date());
   let cash;
@@ -1920,6 +1955,7 @@ on(/^\/mas$/, async (view) => {
       ${tile('#/reservas', 'Todas las reservas', 'Buscar, filtrar y ver las anteriores', ICON.list)}
       ${tile('#/alquileres', 'Alquileres activos', 'Los autos que están en la calle, con planilla para Excel', ICON.list, 'green')}
       ${tile('#/caja', 'Caja diaria', 'Los cobros del día por sucursal, con el PDF del cierre', ICON.money, 'green')}
+      ${invoiceNaming() ? tile('#/facturas', 'Facturas del mes', 'Los contratos con el auto ya devuelto, con su total, lo cobrado y el saldo', ICON.list, 'green') : ''}
       ${tile('#/reservas/completa', 'Reserva con más opciones', 'Adicionales, descuento, vuelo, otro lugar de devolución', ICON.plus)}
       ${tile('#/clientes', 'Clientes', 'Datos, licencia y sus reservas', ICON.user)}
       ${tile('#/flota?estado=mantenimiento', 'Taller', 'Autos en el taller: mandar, sacar y su historial', ICON.wrench, 'warm')}
@@ -3439,9 +3475,9 @@ async function printContract(r) {
   const charges = [...(c && c.charges && c.charges.lines.length ? c.charges.lines : []), ...extra.lines];
   const outKm = delivered ? c.out_km : r.vehicle_km;
   const outFuel = delivered ? c.out_fuel : r.vehicle_fuel;
-  const title = delivered ? 'CONTRATO DE ALQUILER DE VEHÍCULO' : 'CONTRATO DE ALQUILER DE VEHÍCULO (PRE-CONTRATO)';
+  const title = invoiced(r) ? 'FACTURA' : delivered ? 'CONTRATO DE ALQUILER DE VEHÍCULO' : 'CONTRATO DE ALQUILER DE VEHÍCULO (PRE-CONTRATO)';
 
-  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${delivered ? 'Contrato ' + esc(c.number) : 'Pre-contrato ' + esc(r.code)}</title>
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${invoiced(r) ? 'Factura ' + esc(c.number) : delivered ? 'Contrato ' + esc(c.number) : 'Pre-contrato ' + esc(r.code)}</title>
 <style>
   @page { size: A4; margin: 12mm; }
   * { box-sizing: border-box; }
@@ -3567,7 +3603,7 @@ ${String(s.contract_front_notes || '').trim() ? `<div style="border:2px solid #1
 </div>
 
 <div class="page2">
-  <div class="head"><div><b>${esc(s.company_name || '')}</b></div><div class="right">Condiciones generales · ${delivered ? 'Contrato N° ' + esc(c.number) : 'Reserva ' + esc(r.code)}</div></div>
+  <div class="head"><div><b>${esc(s.company_name || '')}</b></div><div class="right">Condiciones generales · ${invoiced(r) ? 'Factura N° ' + esc(c.number) : delivered ? 'Contrato N° ' + esc(c.number) : 'Reserva ' + esc(r.code)}</div></div>
   <h2>Condiciones generales del alquiler</h2>
   <div class="terms">${contractTerms(r)}</div>
   <div class="sign" style="grid-template-columns:1fr 1fr">
@@ -5093,6 +5129,7 @@ on(/^\/config$/, async (view) => {
       { name: 'min_driver_age', label: 'Edad mínima del conductor', type: 'number' },
       { name: 'deductible_amount', label: 'Franquicia del seguro (vacío = la de la póliza)', type: 'number' },
       { name: 'pending_free', label: 'Las reservas sin confirmar no bloquean el auto (varias cotizaciones pueden pedir el mismo auto y fechas; al confirmarse una, las que ya no tienen auto se cancelan solas)', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'invoice_naming', label: 'Con el auto devuelto, el documento del contrato se llama "Factura", y se suma la pantalla "Facturas del mes" en Más', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'voucher_text', label: 'Texto propio del mensaje de confirmación por WhatsApp (vacío = el de Floty). Se completan solos: {nombre} {reserva} {estado} {retiro} {devolucion} {auto} {seguro} {total} {pagado} {saldo} {garantia} {empresa} {telefono} {cancelacion}', type: 'textarea', full: true, rows: 8, when: () => !choferesMode() },
       { name: 'precontract_short', label: 'Precontrato sin los bloques de entrega, devolución y estado del vehículo (salen recién en el contrato), con botón para descargarlo firmado al mandar el contrato', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'fleet_grouped', label: 'Pantalla de Autos agrupada por categoría (un título por categoría y debajo sus autos)', type: 'checkbox', full: true, when: () => !choferesMode() },

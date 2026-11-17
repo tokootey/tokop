@@ -181,3 +181,24 @@ test('firma de cada conductor adicional: su propio link, sobre el mismo contrato
     app.close();
   }
 });
+
+test('facturas del mes: cada contrato entra en el mes en que se devolvió el auto, con total, cobrado y saldo', async () => {
+  const app = await start();
+  try {
+    const call = await app.as('admin');
+    const r = app.rent(); // 3 días a 50: total 150
+    await call('POST', `/api/reservations/${r.id}/payments`, { amount: 100, kind: 'pago' });
+    await call('POST', `/api/reservations/${r.id}/drivers`, { full_name: 'Pedro Prueba', doc_number: '8-1-1', amount: 10 });
+    const month = at(3, 8).slice(0, 7);
+    const list = async (m) => (await call('GET', `/api/closed-contracts?month=${m}`)).data;
+    // Mientras el auto no vuelve, no hay factura.
+    assert.deepEqual((await list(month)).rows, []);
+    await call('POST', `/api/reservations/${r.id}/checkin`, { in_km: 1100, in_fuel: 8, in_at: at(3, 8) });
+    const f = await list(month);
+    assert.deepEqual(f.rows.map((x) => [x.code, x.total, x.paid, x.pending]), [[r.code, 160, 100, 60]]);
+    assert.deepEqual([f.total, f.paid, f.pending], [160, 100, 60]);
+    assert.deepEqual((await list('2020-01')).rows, []);
+  } finally {
+    app.close();
+  }
+});

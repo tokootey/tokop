@@ -4,7 +4,7 @@
  * Contrato de alquiler en PDF (A4), generado en el navegador con jsPDF + jsPDF-AutoTable.
  * Tiene los mismos datos que el contrato impreso: sirve antes de entregar el auto (pre-contrato)
  * y después, con los km, el combustible y los cargos reales.
- * Usa de app.js: state, money(), num(), locale(), taxName(), taxIdLabel(), contractTermsList(), choferesMode(), baseLabel(), looseCharges(), deductibleText(), companySigns() y signedDrivers().
+ * Usa de app.js: state, money(), num(), locale(), taxName(), taxIdLabel(), contractTermsList(), choferesMode(), baseLabel(), looseCharges(), deductibleText(), companySigns(), signedDrivers() e invoiced().
  */
 /** Con la app en inglés, todo lo que se escribe en el PDF pasa por tr() (i18n.js); en español no cambia nada. */
 function localizePdf(doc) {
@@ -34,7 +34,7 @@ function buildContractPdf(r, photos = []) {
   const W = 210;
   const H = 297;
   const company = s.company_name || 'la Empresa';
-  const ref = delivered ? `Contrato N° ${c.number}` : `Reserva ${r.code}`;
+  const ref = invoiced(r) ? `Factura N° ${c.number}` : delivered ? `Contrato N° ${c.number}` : `Reserva ${r.code}`;
 
   // Texto plano para el PDF (las funciones de la pantalla devuelven HTML).
   const txt = (v) => (v === null || v === undefined ? '' : String(v));
@@ -92,7 +92,8 @@ function buildContractPdf(r, photos = []) {
   // Con dirección y teléfonos largos, la cabecera crece y lo de abajo se corre (con dos renglones queda como siempre).
   const headEnd = Math.max(28, 17 + info.length * 3.3);
   doc.setTextColor(17).setFont('helvetica', 'bold').setFontSize(10);
-  doc.text(delivered ? 'CONTRATO DE ALQUILER DE VEHÍCULO' : 'CONTRATO DE ALQUILER DE VEHÍCULO (PRE-CONTRATO)', W - M, 15, { align: 'right' });
+  // Ajuste invoice_naming: con el auto ya devuelto, el documento pasa a llamarse Factura.
+  doc.text(invoiced(r) ? 'FACTURA' : delivered ? 'CONTRATO DE ALQUILER DE VEHÍCULO' : 'CONTRATO DE ALQUILER DE VEHÍCULO (PRE-CONTRATO)', W - M, 15, { align: 'right' });
   doc.setFont('helvetica', 'normal').setFontSize(8.5);
   doc.text(
     [delivered ? `N° ${c.number}` : 'Vehículo sin entregar todavía', `Reserva ${r.code} · Emitido ${new Date().toLocaleDateString(locale())}`],
@@ -348,7 +349,7 @@ function buildContractPdf(r, photos = []) {
   }
 
   // Nombre de archivo sin acentos ni símbolos: algunos navegadores descartan los nombres con acentos.
-  const safeName = `${delivered ? `${L('Contrato', 'Agreement')} ${c.number}` : `${L('Pre-contrato', 'Pre-contract')} ${r.code}`} - ${r.customer_name}`
+  const safeName = `${invoiced(r) ? `${L('Factura', 'Invoice')} ${c.number}` : delivered ? `${L('Contrato', 'Agreement')} ${c.number}` : `${L('Pre-contrato', 'Pre-contract')} ${r.code}`} - ${r.customer_name}`
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\w .-]/g, '')
