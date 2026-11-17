@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
+const { withZone } = require('./util');
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -553,6 +554,7 @@ const DEFAULT_SETTINGS = {
   holiday_rates_on: '0', // '1': los días feriados se cobran con la tarifa de feriado de la categoría
   late_hour_fee: '0', // precio de cada hora pasada de la tolerancia (0 = pasada la tolerancia se cobra un día más)
   late_hour_max: '4', // hasta cuántas horas se cobran por hora; con más, es un día entero
+  timezone: '', // zona horaria de la agencia (por ejemplo America/Panama); vacío = la hora del servidor (util.js)
   voucher_text: '', // texto propio del mensaje de confirmación por WhatsApp (vacío = el de Floty); admite {nombre}, {reserva}, {retiro} y los demás datos
   precontract_short: '0', // '1': el precontrato sale sin entrega, devolución ni estado del vehículo (van recién en el contrato) y se puede descargar firmado al mandarlo
   fleet_grouped: '0', // '1': la pantalla de Autos agrupa los autos por categoría, en el orden de las tarifas
@@ -764,6 +766,9 @@ function getSettings(db) {
 
 const proOn = (db) => getSetting(db, 'pro_features') === '1';
 
+/** Los pedidos de esta agencia corren con su zona horaria. Va después de leer el cuerpo del pedido: antes, el dato se pierde. */
+const zoned = (db) => (_req, _res, next) => withZone(getSetting(db, 'timezone'), next);
+
 function setSetting(db, key, value) {
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(
     key,
@@ -771,4 +776,4 @@ function setSetting(db, key, value) {
   );
 }
 
-module.exports = { COUNTRY_PRESETS, phoneHint, openDb, proOn, getSetting, getSettings, setSetting, newApiKey, DEFAULT_MAPPING, WEBFORM_MAPPING, DEFAULT_SETTINGS, CONTRACT_TERMS, CONTRACT_TERMS_EN, CONTRACT_TERMS_CHOFERES };
+module.exports = { COUNTRY_PRESETS, phoneHint, openDb, proOn, zoned, getSetting, getSettings, setSetting, newApiKey, DEFAULT_MAPPING, WEBFORM_MAPPING, DEFAULT_SETTINGS, CONTRACT_TERMS, CONTRACT_TERMS_EN, CONTRACT_TERMS_CHOFERES };

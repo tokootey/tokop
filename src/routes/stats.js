@@ -2,7 +2,7 @@
 
 const express = require('express');
 const { requireAdmin } = require('../auth');
-const { normDate } = require('../util');
+const { normDate, toAgency } = require('../util');
 
 /**
  * Estadísticas de la agencia en un período (por fecha de retiro): qué autos y categorías se piden más,
@@ -26,7 +26,7 @@ function statsRoutes(db) {
 /** Las estadísticas de una base: cada agencia ve las suyas y el dueño de Floty, las de cada agencia. */
 function computeStats(db, query = {}) {
   // Por defecto: el mes en curso (un período cerrado, sin mezclar lo pasado con lo que viene).
-  const now = new Date();
+  const now = toAgency(new Date());
   const to = normDate(query.to) || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())}`;
   const from = normDate(query.from) || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
   const periodDays = Math.max(1, Math.round((new Date(`${to}T12:00`) - new Date(`${from}T12:00`)) / 86400000) + 1);

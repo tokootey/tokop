@@ -16,7 +16,7 @@ const whatsapp = require('../whatsapp');
 const neopayment = require('../neopayment');
 const reminders = require('../reminders');
 const { cashDay } = require('../cash');
-const { fail, normDateTime, nowLocal, parseLocal, fmtLocal, toCsv, dmy, hm } = require('../util');
+const { fail, normDateTime, nowLocal, parseLocal, fmtLocal, toCsv, dmy, hm, toAgency } = require('../util');
 
 /**
  * Primeros pasos para una empresa que recién empieza a usar el sistema. El Panel los muestra
@@ -384,7 +384,7 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
       LEFT JOIN vehicles v ON v.id = r.vehicle_id LEFT JOIN branches pb ON pb.id = r.pickup_branch_id LEFT JOIN branches rb ON rb.id = r.return_branch_id`;
     const month = today.slice(0, 7);
     const FIXED = 'NOT EXISTS (SELECT 1 FROM rental_periods rp WHERE rp.reservation_id = r.id)';
-    const t = new Date();
+    const t = toAgency(new Date());
     const tomorrow = fmtLocal(new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1)).slice(0, 10);
     res.json({
       now,
@@ -400,7 +400,7 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
       pending: db.prepare(`${baseSelect} WHERE r.status = 'pendiente'${atR} ORDER BY r.pickup_at LIMIT 50`).all(),
       unassigned_next_7d: db
         .prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE r.status IN ('pendiente','confirmada') AND r.vehicle_id IS NULL AND r.pickup_at <= ?${atR}`)
-        .get(fmtLocal(new Date(Date.now() + 7 * 86400000))).n,
+        .get(fmtLocal(toAgency(new Date(Date.now() + 7 * 86400000)))).n,
       month_revenue: db
         .prepare(`SELECT COALESCE(SUM(CASE WHEN p.kind='pago' THEN p.amount WHEN p.kind='devolucion' THEN -p.amount ELSE 0 END),0) AS n FROM payments p JOIN reservations r ON r.id = p.reservation_id WHERE substr(p.created_at,1,7) = ?${atR}`)
         .get(month).n,

@@ -7,7 +7,7 @@ const { hashPassword, requireAdmin, assertPassword, audit } = require('../auth')
 const { getMapping, getWebformMapping, interpret, ingestQuote, reprocessInbox } = require('../integration');
 const { emit } = require('../webhooks');
 const { FAQ_DEFAULT } = require('./chat');
-const { fail } = require('../util');
+const { fail, validZone } = require('../util');
 const { parseDynamicRules } = require('../pricing');
 const whatsapp = require('../whatsapp');
 const neopayment = require('../neopayment');
@@ -94,6 +94,7 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
     // El logo va dentro del contrato: solo una imagen chica en base64 (nada de links ni otros formatos).
     if (body.company_logo && !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(body.company_logo)) fail(400, 'El logo tiene que ser una imagen PNG o JPG');
     if (body.company_logo && body.company_logo.length > 300000) fail(400, 'El logo es muy pesado: probá con una imagen más chica');
+    if (body.timezone !== undefined && body.timezone !== '' && body.timezone !== null && !validZone(String(body.timezone))) fail(400, 'Esa zona horaria no existe');
     if (body.voucher_text !== undefined) body.voucher_text = String(body.voucher_text ?? '').slice(0, 2000);
     if (body.contract_front_notes !== undefined) body.contract_front_notes = String(body.contract_front_notes ?? '').slice(0, 1500);
     if (body.extra_pay_methods !== undefined) body.extra_pay_methods = String(body.extra_pay_methods).slice(0, 500);

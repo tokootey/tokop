@@ -5087,6 +5087,7 @@ on(/^\/config$/, async (view) => {
       { name: 'prices_include_tax', label: 'Las tarifas incluyen el impuesto', type: 'checkbox' },
       { name: 'tax_id_label', label: 'Nombre de la identificación fiscal (CUIT, RUT, RFC, NIF…)' },
       { name: 'locale', label: 'Formato de números y fechas', type: 'select', options: LOCALES },
+      { name: 'timezone', label: 'Zona horaria de la agencia (para el día de la caja y los horarios que anota el sistema)', type: 'select', options: [['', 'La del servidor (como siempre)'], ['America/Panama', 'Panamá'], ['America/Argentina/Buenos_Aires', 'Argentina'], ['America/Santiago', 'Chile'], ['America/Montevideo', 'Uruguay'], ['America/Bogota', 'Colombia'], ['America/Lima', 'Perú'], ['America/Mexico_City', 'México (centro)'], ['America/Costa_Rica', 'Costa Rica']] },
       { name: 'turnaround_minutes', label: 'Minutos libres entre la devolución de un auto y su próximo alquiler', type: 'number', attrs: 'min="0"' },
       { name: 'dynamic_pricing_rules', label: 'Subir precios según ocupación (ocupación:recargo, por ejemplo 70:10, 90:20)', when: () => !choferesMode() },
       { name: 'min_driver_age', label: 'Edad mínima del conductor', type: 'number' },

@@ -4,11 +4,12 @@ const express = require('express');
 const { requireAdmin, audit } = require('../auth');
 const { analyze, runImport } = require('../importer');
 const { fail } = require('../util');
+const { zoned } = require('../db');
 
 /** Importación de datos de sistemas anteriores. Sólo administradores: maneja datos personales en bloque. */
 function importRoutes(db) {
   const router = express.Router();
-  router.use('/import', express.json({ limit: '12mb' }));
+  router.use('/import', express.json({ limit: '12mb' }), zoned(db));
 
   router.post('/import/analyze', requireAdmin, (req, res) => {
     const { kind, text } = req.body || {};
