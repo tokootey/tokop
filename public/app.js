@@ -1264,6 +1264,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
           )
           .join('')) : ''}
         ${state.categories.some((c) => c.no_deposit_fee > 0) ? `<label class="check" style="margin-top:12px"><input type="checkbox" name="no_deposit"/> Sin depósito <small class="muted">(suma el recargo por día de la categoría y deja el depósito en 0)</small></label>` : ''}
+        ${choferesMode() ? '' : '<label class="check" style="margin-top:12px"><input type="checkbox" name="express"/> Entrega no presencial <small class="muted">(el cliente retira sin nadie de la agencia: suma la pre-entrega con sus datos y las fotos del auto)</small></label>'}
         <div class="form-grid" style="margin-top:12px">
           <label>Descuento %<input type="number" name="discount_pct" min="0" max="100" step="any" value="0"/></label>
           <label>Descuento en $ <small class="muted">(para redondear, ej. 10.000)</small><input type="number" name="discount_amount" min="0" step="any" value="0"/></label>
@@ -1492,6 +1493,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       discount_pct: f.discount_pct || 0,
       discount_amount: f.discount_amount || 0,
       no_deposit: !!f.no_deposit,
+      express: !!f.express,
       flight: f.flight,
       notes: f.notes,
       extras: f.extras.map((id) => ({ extra_id: id, quantity: 1 })),
@@ -2044,7 +2046,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   const hotelOpen = ['pendiente', 'confirmada', 'en_curso'].includes(r.status);
   if (hotelOpen && !r.hotel && !choferesMode()) more.push('<button data-act="hotel">Entregar o retirar en un hotel</button>');
   if (r.status === 'en_curso') actions.push(`<button class="btn ok" data-act="checkin">${ICON.in}Registrar devolución</button>`);
-  if (!choferesMode() && r.status === 'confirmada') {
+  // La pre-entrega es sólo para la entrega no presencial (o si ya se hizo una).
+  if (!choferesMode() && r.status === 'confirmada' && (r.express || (r.signature && r.signature.pre_delivery))) {
     actions.push(`<button class="btn" data-act="preDelivery">${ICON.key}${r.signature && r.signature.pre_delivery ? 'Cambiar la pre-entrega' : 'Pre-entrega'}</button>`);
     if (r.signature && r.signature.pre_delivery) actions.push(`<button class="btn" data-act="express">${ICON.send}Mandar link de firma</button>`);
   }
@@ -2541,6 +2544,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'price_override', label: `Precio final acordado (opcional; ahora ${money(r.total)})`, type: 'number' },
             { name: 'flight', label: 'Vuelo / referencia', when: () => !choferesMode() },
             { name: 'notes', label: 'Notas', type: 'textarea', full: true },
+            ...(choferesMode() ? [] : [{ name: 'express', label: 'Entrega no presencial (el cliente retira sin nadie de la agencia: suma la pre-entrega con sus datos y las fotos del auto)', type: 'checkbox', full: true }]),
             ...(r.pricing && r.pricing.calculated_total !== undefined
               ? [{ name: 'recalculate', label: 'Recalcular el precio con las tarifas del sistema (descarta el precio del cotizador)', type: 'checkbox', full: true }]
               : []),
@@ -2548,7 +2552,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           { ...r, no_deposit: r.pricing && r.pricing.no_deposit ? 1 : 0 },
         ),
         async (d) => {
-          const body = { ...d, category_id: Number(d.category_id), recalculate: !!d.recalculate, ...(d.no_deposit !== undefined ? { no_deposit: !!d.no_deposit } : {}) };
+          const body = { ...d, category_id: Number(d.category_id), recalculate: !!d.recalculate, ...(d.no_deposit !== undefined ? { no_deposit: !!d.no_deposit } : {}), ...(d.express !== undefined ? { express: !!d.express } : {}) };
           if (body.category_id !== r.category_id) body.vehicle_id = null;
           await PUT(`/reservations/${r.id}`, body);
           toast('Reserva modificada');
@@ -2727,6 +2731,21 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           reload();
         },
       ),
+  };
+  // Documentación: se elige la etapa y se abre la ventana de siempre.
+  handlers.docs = () => {
+    openModal(
+      `Documentación · ${r.code}`,
+      `<p>¿Para qué es la documentación?</p><div class="actions" style="flex-direction:column;align-items:stretch">${docOptions(r)
+        .map(([act, stage, text]) => `<button class="btn" type="button" data-doc-opt="${act}" style="justify-content:flex-start;text-align:left"><b>${stage}</b>&nbsp;· ${esc(text)}</button>`)
+        .join('')}</div>`,
+    );
+    $$('[data-doc-opt]').forEach((b) =>
+      b.addEventListener('click', () => {
+        closeModal();
+        handlers[b.dataset.docOpt]();
+      }),
+    );
   };
   $$('[data-act]', view).forEach((b) => b.addEventListener('click', () => handlers[b.dataset.act]()));
   // Link de firma de un conductor adicional.
@@ -3151,8 +3170,43 @@ function filesCardHtml(r) {
         }</div>`;
     })
     .join('');
-  return `<div class="card"><h2>Fotos y documentación</h2>${groups}
-    <div class="actions no-print" style="margin-top:12px"><button class="btn" data-act="photos">+ Agregar fotos o documentos</button></div></div>`;
+  return `<div class="card"><h2>Documentación</h2>${docStagesHtml(r)}${groups}
+    <div class="actions no-print" style="margin-top:12px"><button class="btn" data-act="docs">+ Documentación</button></div></div>`;
+}
+
+/** Etapas de la documentación del alquiler. La pre-entrega aparece sólo con entrega no presencial (express). */
+function docStages(r) {
+  const c = r.contract;
+  const pre = r.signature && r.signature.pre_delivery;
+  const stages = [];
+  if (r.express && !choferesMode())
+    stages.push({ label: 'Pre entrega', done: Boolean(r.customer_license && pre), state: [r.customer_license ? '' : 'faltan los datos del cliente', pre ? '' : 'faltan las fotos del auto'].filter(Boolean).join(' y ') });
+  stages.push({ label: 'Entrega', done: Boolean(c), state: c ? 'hecha' : 'pendiente' });
+  stages.push({ label: 'Devolución', done: Boolean(c && c.in_at), state: c && c.in_at ? 'hecha' : 'pendiente' });
+  return stages;
+}
+
+function docStagesHtml(r) {
+  return `<dl class="info">${docStages(r)
+    .map((s) => `<dt>${s.label}</dt><dd>${s.done ? `${ICON.check}${s.label === 'Pre entrega' ? 'completa' : s.state}` : `<span class="${s.label === 'Pre entrega' ? 'error' : 'muted'}">${esc(s.state.charAt(0).toUpperCase() + s.state.slice(1))}</span>`}</dd>`)
+    .join('')}</dl>`;
+}
+
+/** Lo que se puede cargar ahora, según la etapa: cada opción abre la ventana que ya existe para eso. */
+function docOptions(r) {
+  const opts = [];
+  const open = ['pendiente', 'confirmada'].includes(r.status);
+  if (r.express && !choferesMode() && open) {
+    opts.push(['docsLink', 'Pre entrega', 'Pedirle al cliente sus datos y las fotos del carnet']);
+    if (r.status === 'confirmada') opts.push(['preDelivery', 'Pre entrega', 'Fotos y estado del auto donde queda']);
+  }
+  if (open) opts.push(['checkout', 'Entrega', 'Entregar el vehículo: fotos, km y combustible']);
+  if (r.status === 'en_curso') {
+    opts.push(['checkin', 'Devolución', 'Registrar la devolución: fotos, km, combustible y daños']);
+    if (!choferesMode()) opts.push(['returnPhotos', 'Devolución', 'Mandarle al cliente el link para las fotos']);
+  }
+  opts.push(['photos', 'Otros', 'Subir fotos o documentos sueltos']);
+  return opts;
 }
 
 function wireFiles(view, r, reload) {

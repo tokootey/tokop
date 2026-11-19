@@ -236,6 +236,7 @@ function createReservation(db, input, userId) {
     const rid = Number(res.lastInsertRowid);
     const insExtra = db.prepare('INSERT INTO reservation_extras (reservation_id, extra_id, quantity) VALUES (?, ?, ?)');
     for (const e of data.extras || []) insExtra.run(rid, e.extra_id, Math.max(1, Number(e.quantity) || 1));
+    if (input.express) db.prepare('UPDATE reservations SET express = 1 WHERE id = ?').run(rid); // entrega no presencial
     log(db, rid, userId, 'creada', { status, source: data.source || 'manual' });
     if (data.hotel) saveHotel(db, rid, data.hotel, userId, log);
     return rid;
@@ -312,6 +313,8 @@ function updateReservation(db, id, input, userId) {
       const ins = db.prepare('INSERT INTO reservation_extras (reservation_id, extra_id, quantity) VALUES (?, ?, ?)');
       for (const e of data.extras || []) ins.run(current.id, e.extra_id, Math.max(1, Number(e.quantity) || 1));
     }
+    // Entrega no presencial (express): con ella aparece la pre-entrega en Documentación.
+    if (input.express !== undefined) db.prepare('UPDATE reservations SET express = ? WHERE id = ?').run(input.express ? 1 : 0, current.id);
     log(db, current.id, userId, 'modificada', hasAgreed ? { precio_final: total, antes: current.total } : undefined);
   });
   const r = getReservation(db, current.id);
