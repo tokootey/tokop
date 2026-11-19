@@ -1714,6 +1714,8 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   let from = dayAt10(pre.get('desde')) || addDays(start, 1);
   let to = dayAt10(pre.get('hasta')) || addDays(from, choferesMode() ? 7 : 3);
   const sel = { vehicle: Number(pre.get('vehiculo')) || null };
+  // Ajuste reserve_by_category: una fila por categoría y la reserva queda sin auto. Si desde el calendario llega un auto puntual, se sigue eligiendo por auto.
+  const byCat = String(state.settings.reserve_by_category) === '1' && !sel.vehicle;
   let cars = [];
   const branches = state.branches.filter((b) => b.active);
   const QUICK = choferesMode()
@@ -1802,7 +1804,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   $('[data-more]', form).addEventListener('click', (e) => {
     e.preventDefault();
     const q = new URLSearchParams({ desde: localISO(from), hasta: localISO(to), lugar: form.place.value });
-    if (sel.vehicle) q.set('vehiculo', sel.vehicle);
+    if (sel.vehicle && !byCat) q.set('vehiculo', sel.vehicle);
     if (form.name.value.trim()) q.set('nombre', form.name.value.trim());
     if (form.phone.value.trim()) q.set('tel', form.phone.value.trim());
     location.hash = `#/reservas/completa?${q}`;
@@ -1832,7 +1834,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
       ? cars
           .map(
             (c) => `<button type="button" class="car${c.id === sel.vehicle ? ' on' : ''}" data-car="${c.id}" aria-pressed="${c.id === sel.vehicle}">
-              <span><b>${esc([c.brand, c.model].filter(Boolean).join(' ') || c.plate)}</b><small>${esc(c.category_name)} · ${esc(c.plate)}</small></span>
+              <span><b>${esc([c.brand, c.model].filter(Boolean).join(' ') || c.plate)}</b><small>${byCat ? plural(c.free, 'libre', 'libres') : `${esc(c.category_name)} · ${esc(c.plate)}`}</small></span>
               <span class="price">${money(Math.round(c.quote.total / Math.max(1, c.quote.days)))} <small class="muted">/día</small></span>
             </button>`,
           )
@@ -1849,8 +1851,11 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
     }
     const q = `pickup_at=${encodeURIComponent(localISO(from))}&return_at=${encodeURIComponent(localISO(to))}`;
     const cats = (await GET(`/availability?${q}`)).filter((c) => c.available > 0);
-    const lists = await Promise.all(cats.map((c) => GET(`/available-vehicles?${q}&category_id=${c.id}`)));
-    cars = lists.flatMap((vs, i) => vs.map((v) => ({ ...v, category_name: cats[i].name, quote: cats[i].quote })));
+    if (byCat) cars = cats.map((c) => ({ id: c.id, category_id: c.id, brand: c.name, free: c.available, quote: c.quote }));
+    else {
+      const lists = await Promise.all(cats.map((c) => GET(`/available-vehicles?${q}&category_id=${c.id}`)));
+      cars = lists.flatMap((vs, i) => vs.map((v) => ({ ...v, category_name: cats[i].name, quote: cats[i].quote })));
+    }
     paint();
   };
   form.addEventListener('click', (e) => {
@@ -1920,7 +1925,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
       return POST('/reservations', {
         customer_id: customer.id,
         category_id: c.category_id,
-        vehicle_id: c.id,
+        vehicle_id: byCat ? null : c.id,
         pickup_branch_id: branch || null,
         return_branch_id: branch || null,
         pickup_at: localISO(from),
@@ -5143,6 +5148,7 @@ on(/^\/config$/, async (view) => {
       { name: 'voucher_text', label: 'Texto propio del mensaje de confirmación por WhatsApp (vacío = el de Floty). Se completan solos: {nombre} {reserva} {estado} {retiro} {devolucion} {auto} {seguro} {total} {pagado} {saldo} {garantia} {empresa} {telefono} {cancelacion}', type: 'textarea', full: true, rows: 8, when: () => !choferesMode() },
       { name: 'precontract_short', label: 'Precontrato sin los bloques de entrega, devolución y estado del vehículo (salen recién en el contrato), con botón para descargarlo firmado al mandar el contrato', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'fleet_grouped', label: 'Pantalla de Autos agrupada por categoría (un título por categoría y debajo sus autos)', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'reserve_by_category', label: 'En "Nueva reserva" se elige la categoría y no la patente (el auto se asigna después, al entregar)', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'public_branding', label: 'Logo de la agencia y "N.º de reserva" en las páginas que ve el cliente (contrato para firmar y tarjeta) y en la pantalla de la reserva, y logo en el cierre de caja', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'hide_deductible', label: 'No mostrar la franquicia del seguro: la cobertura figura sólo con su nombre en la reserva, los mensajes al cliente y el contrato', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'hide_company_signature', label: 'Contrato sin el lugar para la firma de la empresa (firma sólo el cliente)', type: 'checkbox', full: true, when: () => !choferesMode() },
