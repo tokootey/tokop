@@ -262,7 +262,17 @@
   express.static = passthrough;
 
   /* ---------- Cargador de módulos (CommonJS) ---------- */
-  const builtins = { 'node:sqlite': { DatabaseSync }, 'node:crypto': nodeCrypto, 'node:fs': nodeFs, 'node:path': nodePath, express };
+  // shortcut: guarda la zona del último pedido, no una por pedido; alcanza porque la demo tiene una sola agencia.
+  class AsyncLocalStorage {
+    run(store, fn) {
+      this.store = store;
+      return fn();
+    }
+    getStore() {
+      return this.store;
+    }
+  }
+  const builtins = { 'node:sqlite': { DatabaseSync }, 'node:crypto': nodeCrypto, 'node:fs': nodeFs, 'node:path': nodePath, 'node:async_hooks': { AsyncLocalStorage }, express };
   const cache = {};
   function resolve(from, name) {
     const parts = from.split('/').slice(0, -1);
