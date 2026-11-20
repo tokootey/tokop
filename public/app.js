@@ -2115,6 +2115,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   if (depositLinkDue(r)) r.balance.pending > 0 ? more.push('<button data-act="depositLink">Mandar link de garantía</button>') : actions.push(`<button class="btn primary" data-act="depositLink">${ICON.send}Mandar link de garantía</button>`);
   if (['cancelada', 'no_show'].includes(r.status)) actions.push('<button class="btn" data-act="reopen">Reabrir</button>');
   if (!['cancelada', 'no_show'].includes(r.status)) {
+    actions.push(`<button class="btn" data-act="docs">${ICON.doc}Documentación</button>`);
     if (r.status !== 'finalizada' && !choferesMode()) actions.push(`<button class="btn" data-act="voucher">${ICON.send}Enviar voucher</button>`);
     actions.push(`<button class="btn" data-act="pdf">${ICON.doc}Contrato PDF</button>`);
     more.push('<button data-act="print">Imprimir contrato</button>');
@@ -2845,7 +2846,11 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       `Documentación · ${r.code}`,
       `<p>¿Para qué es la documentación?</p><div class="actions" style="flex-direction:column;align-items:stretch">${docOptions(r)
         .map(([act, stage, text]) => `<button class="btn" type="button" data-doc-opt="${act}" style="justify-content:flex-start;text-align:left"><b>${stage}</b>&nbsp;· ${esc(text)}</button>`)
-        .join('')}</div>`,
+        .join('')}</div>${
+        !r.express && !choferesMode() && ['pendiente', 'confirmada'].includes(r.status)
+          ? '<p class="muted" style="margin-top:10px">La pre entrega aparece solo si la entrega es no presencial. Se marca en Más acciones → Modificar fechas o datos.</p>'
+          : ''
+      }`,
     );
     $$('[data-doc-opt]').forEach((b) =>
       b.addEventListener('click', () => {
@@ -3309,15 +3314,15 @@ function docOptions(r) {
   const opts = [];
   const open = ['pendiente', 'confirmada'].includes(r.status);
   if (r.express && !choferesMode() && open) {
-    opts.push(['docsLink', 'Pre entrega', 'Pedirle al cliente sus datos y las fotos del carnet']);
-    if (r.status === 'confirmada') opts.push(['preDelivery', 'Pre entrega', 'Fotos y estado del auto donde queda']);
+    opts.push(['docsLink', 'Pre entrega', 'Entrega no presencial: le mandás al cliente un link para que cargue sus datos y las fotos del carnet']);
+    if (r.status === 'confirmada') opts.push(['preDelivery', 'Pre entrega', 'Entrega no presencial: fotos y estado del auto en el lugar donde lo dejás']);
   }
-  if (open) opts.push(['checkout', 'Entrega', 'Entregar el vehículo: fotos, km y combustible']);
+  if (open) opts.push(['checkout', 'Entrega', 'Entrega presencial: le das el auto al cliente en mano y cargás fotos, km y combustible']);
   if (r.status === 'en_curso') {
-    opts.push(['checkin', 'Devolución', 'Registrar la devolución: fotos, km, combustible y daños']);
-    if (!choferesMode()) opts.push(['returnPhotos', 'Devolución', 'Mandarle al cliente el link para las fotos']);
+    opts.push(['checkin', 'Devolución', 'Cuando el cliente trae el auto y vos estás: fotos, km, combustible y daños']);
+    if (!choferesMode()) opts.push(['returnPhotos', 'Devolución', 'Si no vas a estar cuando lo devuelve: le mandás un link para que saque las fotos']);
   }
-  opts.push(['photos', 'Otros', 'Subir fotos o documentos sueltos']);
+  opts.push(['photos', 'Otros', 'Cualquier otro papel o foto: multas, siniestros, comprobantes']);
   return opts;
 }
 
