@@ -564,6 +564,8 @@ const DEFAULT_SETTINGS = {
   deposit_terms: '', // texto propio de la garantía en el voucher (vacío = el de Floty); con texto propio el voucher deja de pedir tarjeta de crédito
   fleet_search: '0', // '1': buscador por placa y modelo en el calendario y en Autos del auxiliar, rango de fechas en el calendario y elegir el día en Hoy del auxiliar
   tax_breakdown: '0', // '1': reserva, contrato y factura muestran el importe gravable y el impuesto por separado, antes del total
+  agreed_price: '0', // '1': el precio final acordado también se carga al crear la reserva, y con precio acordado el voucher y el contrato muestran un solo renglón (sin la tarifa)
+  payment_tools: '0', // '1': un pago repartido entre alquiler y garantía, descontar cargos de la garantía y anular movimientos del día (sólo administradores)
   reserve_by_category: '0', // '1': en "Nueva reserva" se elige la categoría y no un auto puntual; la reserva queda sin auto y se asigna después
   public_branding: '0', // '1': logo de la agencia y "N.º de reserva" en el contrato para firmar, la página de la tarjeta y la pantalla de la reserva, y logo en el cierre de caja
   hide_deductible: '0', // '1': la cobertura figura sólo con su nombre, sin la franquicia (pantalla, mensajes y contrato)
@@ -639,6 +641,10 @@ function openDb(file = process.env.DB_FILE || path.join(__dirname, '..', 'data',
 /** Columnas agregadas después de la primera versión (las bases existentes se actualizan solas). */
 function migrate(db) {
   const has = (table, col) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
+  // Movimientos anulados (ajuste payment_tools): la fila sale de payments, así ninguna cuenta la suma, y queda acá con quién la anuló y por qué.
+  db.exec(`CREATE TABLE IF NOT EXISTS payments_voided (id INTEGER PRIMARY KEY, payment_id INTEGER, reservation_id INTEGER NOT NULL REFERENCES reservations(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL, method TEXT, amount REAL NOT NULL, reference TEXT, notes TEXT, branch_id INTEGER, created_by INTEGER, created_at TEXT,
+    voided_by INTEGER, voided_at TEXT DEFAULT CURRENT_TIMESTAMP, reason TEXT)`);
   // Otros conductores: un cliente puede tener varias licencias "conductor"; el resto de los documentos sigue siendo uno por tipo.
   const filesSql = (db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'customer_files'").get() || {}).sql || '';
   if (filesSql.includes('UNIQUE (customer_id, kind)')) {

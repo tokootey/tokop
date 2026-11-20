@@ -233,6 +233,9 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
   router.post('/reservations/:id/checkin-preview', (req, res) => res.json(R.checkinPreview(db, req.params.id, req.body || {})));
   router.post('/reservations/:id/close-contract', (req, res) => res.json(R.closeContract(db, req.params.id, req.user.id)));
   router.post('/reservations/:id/payments', (req, res) => res.json(R.addPayment(db, req.params.id, req.body, req.user.id)));
+  // Ajuste payment_tools: descontar un cargo de la garantía retenida y anular un movimiento del día (esto último, sólo administradores).
+  router.post('/reservations/:id/deposit-charge', (req, res) => res.json(R.chargeDeposit(db, req.params.id, req.body || {}, req.user.id)));
+  router.post('/reservations/:id/payments/:payment/void', requireAdmin, (req, res) => res.json(R.voidPayment(db, req.params.id, req.params.payment, req.body || {}, req.user.id)));
 
   // Choferes: multas u otros cargos a cuenta del chofer, y lectura de km (cobra los km extra del período).
   const rentalOf = (id) => {

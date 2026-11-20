@@ -222,6 +222,7 @@ function buildContractPdf(r, photos = []) {
   const q = r.pricing || {};
   const extra = looseCharges(r);
   const priceRows = [
+    ...(agreedRows(r) || [
     q.base !== undefined ? [`Alquiler ${baseLabel(q, r.days)}`, money(q.base)] : null,
     q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
     q.promo_discount ? [`Promoción: ${q.promo.name}`, '−' + money(q.promo_discount)] : null,
@@ -235,6 +236,7 @@ function buildContractPdf(r, photos = []) {
     q.extra_hours_fee ? [`Horas adicionales (${q.extra_hours})`, money(q.extra_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct}%` : ''}`, `- ${money(q.discount)}`] : null,
     ...taxRows(q),
+    ]),
     [{ content: 'Total del alquiler', styles: { fontStyle: 'bold' } }, { content: money(r.total), styles: { fontStyle: 'bold' } }],
     ...(c && c.charges ? c.charges.lines.map((l) => [l.concept, money(l.amount)]) : []),
     ...extra.lines.map((l) => [l.concept, money(l.amount)]),

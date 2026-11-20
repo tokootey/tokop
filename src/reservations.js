@@ -5,7 +5,7 @@ const { categoryAvailability, isVehicleFree, paddedRange, pendingFree } = requir
 const { emit } = require('./webhooks');
 const { getSettings, proOn } = require('./db');
 const { refundFor } = require('./refunds');
-const { fail, normDateTime, nowLocal, round2, tx, parseLocal, fmtLocal } = require('./util');
+const { fail, normDateTime, nowLocal, round2, tx, parseLocal, fmtLocal, toAgency } = require('./util');
 const { placeSql, saveHotel, hotelMissing, normalizeHotel, withHotelExtra } = require('./hotel');
 const choferes = require('./choferes');
 
@@ -59,6 +59,7 @@ function getReservation(db, id) {
     r.contract.charges = r.contract.charges ? JSON.parse(r.contract.charges) : null;
   }
   r.payments = db.prepare('SELECT * FROM payments WHERE reservation_id = ? ORDER BY created_at, id').all(r.id);
+  r.voided_payments = db.prepare('SELECT v.*, u.name AS voided_by_name FROM payments_voided v LEFT JOIN users u ON u.id = v.voided_by WHERE v.reservation_id = ? ORDER BY v.id').all(r.id);
   r.files = db
     .prepare(
       `SELECT f.id, f.stage, f.name, f.mime, f.size, f.created_at, u.name AS user_name
@@ -201,7 +202,7 @@ function createReservation(db, input, userId) {
     let total = quote.total;
     if (data.price_override !== undefined && data.price_override !== null && data.price_override !== '') {
       total = round2(data.price_override);
-      pricing = { ...quote, source: data.source || 'externo', calculated_total: quote.total, total };
+      pricing = { ...quote, source: data.source && data.source !== 'manual' ? data.source : 'acordado', calculated_total: quote.total, total };
     }
     const code = nextCode(db, 'R');
     const res = db
@@ -697,42 +698,110 @@ function addPayment(db, id, input, userId) {
   if (!(amount > 0)) fail(400, 'Importe inválido');
   const kind = ['pago', 'devolucion', 'garantia', 'devolucion_garantia'].includes(input.kind) ? input.kind : 'pago';
   const notes = input.notes ? String(input.notes).trim().slice(0, 500) : null;
-  db.prepare('INSERT INTO payments (reservation_id, kind, method, amount, reference, created_by, notes, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
-    r.id,
-    kind,
-    input.method || 'efectivo',
-    round2(amount),
-    input.reference || null,
-    userId || null,
-    notes,
-    Number(input.branch_id) || r.pickup_branch_id || null,
-  );
-  // Recargo de PayPal: se anota aparte, entra a caja y no descuenta de la deuda.
-  const pct = Number(getSettings(db).paypal_surcharge_pct) || 0;
-  if (kind === 'pago' && input.method === 'paypal' && pct > 0) {
-    db.prepare("INSERT INTO payments (reservation_id, kind, method, amount, created_by, notes, branch_id) VALUES (?, 'recargo', 'paypal', ?, ?, ?, ?)").run(
-      r.id,
-      round2((amount * pct) / 100),
-      userId || null,
-      `Recargo PayPal ${pct}%`,
-      Number(input.branch_id) || r.pickup_branch_id || null,
-    );
-  }
-  // Pagó con un repuesto o un arreglo del auto: cuenta como pago y también como gasto del auto (la plata no entró a caja).
-  if (kind === 'pago' && input.method === 'repuesto' && r.vehicle_id) {
-    db.prepare("INSERT INTO expenses (vehicle_id, date, kind, description, amount) VALUES (?, ?, 'repuestos', ?, ?)").run(
-      r.vehicle_id,
-      nowLocal().slice(0, 10),
-      `${notes || 'Repuesto o arreglo'} (lo pagó el chofer, ${r.code})`,
-      round2(amount),
-    );
-  }
-  log(db, r.id, userId, kind, `${input.method || 'efectivo'} ${round2(amount)}`);
+  const method = input.method || 'efectivo';
+  const branch = Number(input.branch_id) || r.pickup_branch_id || null;
+  // Pago repartido (ajuste payment_tools): de un solo cobro, una parte es garantía. Quedan dos movimientos con el mismo medio y comprobante.
+  const given = input.deposit_part !== undefined && input.deposit_part !== null && input.deposit_part !== '';
+  const part = kind === 'pago' && given && paymentTools(db) ? Number(input.deposit_part) : 0;
+  if (!(part >= 0) || part > amount + 0.005) fail(400, 'La parte de garantía tiene que ser un importe entre 0 y el total cobrado');
+  const rent = round2(amount - part);
+  const put = (k, a) =>
+    db
+      .prepare('INSERT INTO payments (reservation_id, kind, method, amount, reference, created_by, notes, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(r.id, k, method, a, input.reference || null, userId || null, [notes, part > 0 ? `Parte de un cobro de ${round2(amount)}` : null].filter(Boolean).join(' · ') || null, branch);
+  tx(db, () => {
+    if (rent > 0) put(kind, rent);
+    if (part > 0) put('garantia', round2(part));
+    // Recargo de PayPal: se anota aparte, entra a caja y no descuenta de la deuda.
+    const pct = Number(getSettings(db).paypal_surcharge_pct) || 0;
+    if (kind === 'pago' && rent > 0 && input.method === 'paypal' && pct > 0) {
+      db.prepare("INSERT INTO payments (reservation_id, kind, method, amount, created_by, notes, branch_id) VALUES (?, 'recargo', 'paypal', ?, ?, ?, ?)").run(
+        r.id,
+        round2((rent * pct) / 100),
+        userId || null,
+        `Recargo PayPal ${pct}%`,
+        branch,
+      );
+    }
+    // Pagó con un repuesto o un arreglo del auto: cuenta como pago y también como gasto del auto (la plata no entró a caja).
+    if (kind === 'pago' && rent > 0 && input.method === 'repuesto' && r.vehicle_id) {
+      db.prepare("INSERT INTO expenses (vehicle_id, date, kind, description, amount) VALUES (?, ?, 'repuestos', ?, ?)").run(
+        r.vehicle_id,
+        nowLocal().slice(0, 10),
+        `${notes || 'Repuesto o arreglo'} (lo pagó el chofer, ${r.code})`,
+        rent,
+      );
+    }
+    if (rent > 0) log(db, r.id, userId, kind, `${method} ${rent}`);
+    if (part > 0) log(db, r.id, userId, 'garantia', `${method} ${round2(part)}`);
+  });
   let updated = getReservation(db, r.id);
   emit(db, 'reservation.payment', publicView(updated));
   // Reserva pendiente que queda paga entera: se confirma sola. Una seña o la garantía no alcanzan.
   if (updated.status === 'pendiente' && kind === 'pago' && updated.balance.pending <= 0.005) updated = changeStatus(db, r.id, 'confirmada', userId, 'pago completo');
   return updated;
+}
+
+const paymentTools = (db) => getSettings(db).payment_tools === '1';
+
+/**
+ * Descuenta un cargo de la garantía retenida (ajuste payment_tools): Panapass, daños, gastos legales...
+ * Son dos movimientos con medio "garantía": baja la garantía retenida y entra como pago (no pasan por la caja: esa plata ya se contó al recibirla).
+ * `existing`: el cargo ya figura en el saldo de la reserva y no se vuelve a sumar, así no se cuenta dos veces.
+ */
+function chargeDeposit(db, id, input, userId) {
+  if (!paymentTools(db)) fail(403, 'Esta agencia no tiene activado el descuento de la garantía');
+  const r = getReservation(db, id);
+  if (!r) fail(404, 'Reserva inexistente');
+  const amount = round2(Number(input.amount));
+  if (!(amount > 0)) fail(400, 'Importe inválido');
+  const concept = [input.concept, input.detail]
+    .map((s) => String(s || '').trim())
+    .filter(Boolean)
+    .join(': ')
+    .slice(0, 200);
+  if (!concept) fail(400, 'Indicá el concepto del descuento');
+  if (amount > r.balance.deposit_held + 0.005) fail(400, `La garantía retenida es ${r.balance.deposit_held}: no alcanza para descontar ${amount}`);
+  const existing = input.existing === true || input.existing === 1 || input.existing === '1';
+  if (existing && amount > r.balance.pending + 0.005) fail(400, `El saldo que figura en la reserva es ${r.balance.pending}: es menor que ese importe`);
+  tx(db, () => {
+    if (!existing) choferes.addCharge(db, r, { kind: 'otro', description: concept, amount }, userId);
+    const put = db.prepare("INSERT INTO payments (reservation_id, kind, method, amount, created_by, notes, branch_id) VALUES (?, ?, 'garantía', ?, ?, ?, ?)");
+    for (const kind of ['devolucion_garantia', 'pago']) put.run(r.id, kind, amount, userId || null, `Descontado de la garantía: ${concept}`, Number(input.branch_id) || r.pickup_branch_id || null);
+    log(db, r.id, userId, 'garantia_descontada', `${concept} ${amount}`);
+  });
+  return getReservation(db, r.id);
+}
+
+/** Anula un movimiento mal cargado (ajuste payment_tools, sólo administradores): sale de payments y queda en payments_voided con el motivo. */
+function voidPayment(db, id, paymentId, input, userId) {
+  if (!paymentTools(db)) fail(403, 'Esta agencia no tiene activado anular movimientos');
+  const p = db.prepare('SELECT * FROM payments WHERE id = ? AND reservation_id = ?').get(Number(paymentId), Number(id));
+  if (!p) fail(404, 'Movimiento inexistente');
+  const reason = String((input && input.reason) || '').trim().slice(0, 300);
+  if (!reason) fail(400, 'Escribí el motivo de la anulación');
+  // El cierre de caja no queda guardado: anular un movimiento viejo cambiaría una caja ya impresa. Los de otros días se corrigen con un movimiento contrario.
+  const day = fmtLocal(toAgency(new Date(`${String(p.created_at).replace(' ', 'T')}Z`))).slice(0, 10);
+  if (day !== nowLocal().slice(0, 10)) fail(409, 'Sólo se anulan movimientos de hoy. Los de días anteriores se corrigen con un movimiento contrario (por ejemplo, una devolución de dinero).');
+  // Lo que anotó el banco no se anula: al consultar el link, el cobro volvería a entrar (neopayment.js).
+  if (/^neopayment /.test(p.reference || '')) fail(409, 'Ese cobro lo anotó el banco: no se anula desde acá');
+  // Un descuento de la garantía son dos movimientos gemelos (baja la garantía y entra como pago): se anulan juntos. El cargo, si se había sumado, queda en la reserva.
+  const twin =
+    p.method === 'garantía' && /^Descontado de la garantía: /.test(p.notes || '')
+      ? db
+          .prepare("SELECT * FROM payments WHERE reservation_id = ? AND id <> ? AND method = 'garantía' AND notes = ? AND amount = ? AND kind <> ? ORDER BY ABS(id - ?) LIMIT 1")
+          .all(p.reservation_id, p.id, p.notes, p.amount, p.kind, p.id)
+      : [];
+  tx(db, () => {
+    for (const x of [p, ...twin]) {
+      db.prepare(
+        'INSERT INTO payments_voided (payment_id, reservation_id, kind, method, amount, reference, notes, branch_id, created_by, created_at, voided_by, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(x.id, x.reservation_id, x.kind, x.method, x.amount, x.reference, x.notes, x.branch_id, x.created_by, x.created_at, userId || null, reason);
+      db.prepare('DELETE FROM payments WHERE id = ?').run(x.id);
+    }
+    log(db, p.reservation_id, userId, 'pago_anulado', `${p.kind} ${p.method || 'efectivo'} ${p.amount}: ${reason}`);
+  });
+  return getReservation(db, p.reservation_id);
 }
 
 /** Vista reducida que se expone a sistemas externos (cotizador / webhooks). */
@@ -781,6 +850,8 @@ module.exports = {
   checkinPreview,
   closeContract,
   addPayment,
+  chargeDeposit,
+  voidPayment,
   publicView,
   nextCode,
   log,
