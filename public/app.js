@@ -970,7 +970,7 @@ async function auxFleet(view) {
               : `<select data-move style="min-width:150px" aria-label="Sucursal de ${esc(v.plate)}">${v.branch_id ? '' : '<option value=""></option>'}${branches.map(([id, name]) => `<option value="${id}"${id === v.branch_id ? ' selected' : ''}>${esc(name)}</option>`).join('')}</select>`
           }</td>
           <td class="right">${num(v.km || 0)}</td><td>${fuel(v.fuel) || '—'}</td>
-          <td><div class="dayrow docs" style="grid-template-columns:repeat(${dueList(v).length},minmax(0,1fr));padding:0;border:0">${dueDocs(v)}</div></td>
+          <td><div class="dayrow docs" style="grid-template-columns:repeat(${dueList(v).length},minmax(84px,1fr));padding:0;border:0">${dueDocs(v)}</div></td>
           <td><button class="btn small" type="button" data-reading>Km y combustible</button></td></tr>`,
       )
       .join('')}</tbody></table></div>`;
