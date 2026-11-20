@@ -146,6 +146,7 @@ function chatRoutes(db, { publicQuery = '' } = {}) {
       young_driver: youngPricing(db, s) ? { age: Number(s.young_driver_age) || 21, fee: Number(s.young_driver_fee) || 0 } : null,
       after_hours: Number(s.after_hours_fee) > 0 ? { fee: Number(s.after_hours_fee), from: hhmm(s.after_hours_from) || '20:00', to: hhmm(s.after_hours_to) || '23:00' } : null,
       payment_link: String(s.payment_link_url || '').trim(),
+      hide_email: s.hide_customer_email === '1',
       pay_gateway: neopayment.configured(s), // con el banco conectado, el cliente elige pagar con tarjeta ahí mismo o dejar el pedido
 
       hotel: s.chat_hotel === '1' ? { fee: (hotelExtra(db) || {}).price || 0 } : null,

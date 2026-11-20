@@ -74,6 +74,15 @@ const choferesMode = () => state.settings.business_mode === 'choferes';
 const payModes = () => choferesMode() && state.settings.rent_period === 'dia' && String(state.settings.pay_modes) === '1';
 // Funciones en prueba: las activa el dueño de Floty por agencia, desde el panel.
 const proOn = () => String(state.settings.pro_features) === '1';
+const hideEmail = () => String(state.settings.hide_customer_email) === '1';
+// Ajuste reserve_now: el retiro de una reserva nueva arranca ahora, en la hora de la agencia (ajuste timezone) y no en la de la computadora.
+const reserveNow = () => {
+  if (String(state.settings.reserve_now) !== '1') return null;
+  const tz = state.settings.timezone;
+  const d = tz ? new Date(new Date().toLocaleString('sv-SE', { timeZone: tz }).replace(' ', 'T')) : new Date();
+  d.setSeconds(0, 0);
+  return d;
+};
 // Controles estrictos del contrato (los prende cada agencia en Configuración).
 const strictOn = () => String(state.settings.strict_contract) === '1';
 // Documentos a gusto de la agencia (Configuración): la cobertura sin su franquicia y el contrato sin la firma de la empresa.
@@ -1197,8 +1206,8 @@ const placeOptions = () => [...branchOptions(), ...(choferesMode() ? [] : [['hot
 on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
   const now = new Date();
   now.setMinutes(0, 0, 0);
-  let p0 = addDays(now, 1);
-  p0.setHours(10);
+  let p0 = reserveNow() || addDays(now, 1);
+  if (!reserveNow()) p0.setHours(10);
   let r0 = addDays(p0, 3);
   const sel = { category_id: null, customer_id: null };
   // Datos que llegan al arrastrar sobre el Planning: ?vehiculo=ID&desde=AAAA-MM-DD&hasta=AAAA-MM-DD
@@ -1713,7 +1722,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   const dayAt10 = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(s || '') ? new Date(`${s}T10:00`) : null);
   const start = new Date();
   start.setHours(10, 0, 0, 0);
-  let from = dayAt10(pre.get('desde')) || addDays(start, 1);
+  let from = dayAt10(pre.get('desde')) || reserveNow() || addDays(start, 1);
   let to = dayAt10(pre.get('hasta')) || addDays(from, choferesMode() ? 7 : 3);
   const sel = { vehicle: Number(pre.get('vehiculo')) || null };
   // Ajuste reserve_by_category: una fila por categoría y la reserva queda sin auto. Si desde el calendario llega un auto puntual, se sigue eligiendo por auto.
@@ -2875,12 +2884,13 @@ function voucherLines(r) {
       ].filter(Boolean),
     },
     { title: 'Precio', rows: price },
-    ...(Number(r.deposit) > 0 ? [{ title: 'Garantía', rows: [['Depósito', `${money(r.deposit)} (se toma al retirar el auto y se devuelve al entregarlo en las mismas condiciones)`]] }] : []),
+    ...(Number(r.deposit) > 0 ? [{ title: 'Garantía', rows: [['Depósito', s.deposit_terms ? `${money(r.deposit)}. ${s.deposit_terms}` : `${money(r.deposit)} (se toma al retirar el auto y se devuelve al entregarlo en las mismas condiciones)`]] }] : []),
   ];
   return {
     sections,
     statusLine: r.status === 'pendiente' ? 'Pendiente de confirmación' : r.status === 'en_curso' ? 'Alquiler en curso' : 'Reserva confirmada',
-    requirements: `Licencia de conducir vigente, documento o pasaporte y tarjeta de crédito para la garantía. Edad mínima: ${Number(s.min_driver_age) || 21} años.`,
+    // Con texto propio de garantía (deposit_terms) la agencia dice cómo la toma: no se pide tarjeta de crédito.
+    requirements: `Licencia de conducir vigente${s.deposit_terms ? ' y documento o pasaporte' : ', documento o pasaporte y tarjeta de crédito para la garantía'}. Edad mínima: ${Number(s.min_driver_age) || 21} años.`,
     policy: refundPolicyText(s),
     company: [s.company_name, s.company_tax_id ? `${taxIdLabel()} ${s.company_tax_id}` : '', s.company_address, s.company_phone && `Tel. ${s.company_phone}`].filter(Boolean).join(' · '),
   };
@@ -2931,7 +2941,7 @@ function voucherWhatsapp(r) {
     `Total ${money(r.balance.due)} · Pagado ${money(r.balance.paid)} · Saldo ${money(r.balance.pending)}`,
     ...(Number(r.deposit) > 0 ? [`Garantía: ${money(r.deposit)} (se devuelve al entregar el auto)`] : []),
     '',
-    'Traé licencia de conducir, documento y tarjeta de crédito.',
+    state.settings.deposit_terms ? 'Traé licencia de conducir y documento.' : 'Traé licencia de conducir, documento y tarjeta de crédito.',
     `Cancelación: ${p}`,
     state.settings.company_phone ? `Consultas: ${state.settings.company_phone}` : '',
   ]
@@ -2977,7 +2987,7 @@ function sendVoucher(r) {
      <div class="stack" style="gap:10px">
        ${canShare ? '<button class="btn primary" type="button" id="v-share">Compartir el PDF (WhatsApp, email…)</button>' : ''}
        <a class="btn ${canShare ? '' : 'primary'}" href="${esc(wa)}" target="_blank" rel="noopener" id="v-wa">WhatsApp${phone ? ` a ${esc(r.customer_phone)}` : ' (elegís el contacto)'}</a>
-       <a class="btn" href="${esc(mail)}" id="v-mail">Email${r.customer_email ? ` a ${esc(r.customer_email)}` : ' (falta el email del cliente)'}</a>
+       ${hideEmail() && !r.customer_email ? '' : `<a class="btn" href="${esc(mail)}" id="v-mail">Email${r.customer_email ? ` a ${esc(r.customer_email)}` : ' (falta el email del cliente)'}</a>`}
        <button class="btn" type="button" id="v-pdf">Descargar el PDF</button>
      </div>
      ${phone && phone.length < 11 ? '<p class="error">El teléfono parece no tener código de país (por ejemplo 54 9 para Argentina): WhatsApp puede no encontrarlo.</p>' : ''}
@@ -4042,7 +4052,7 @@ const DELIVERY_CUSTOMER = [
 ];
 function licenseFields(r) {
   return [
-    ...DELIVERY_CUSTOMER.filter(([, key]) => !r[key]).map(([name, , f]) => ({ name, required: name !== 'email', ...f })), // el email es opcional
+    ...DELIVERY_CUSTOMER.filter(([name, key]) => !r[key] && !(name === 'email' && hideEmail())).map(([name, , f]) => ({ name, required: name !== 'email', ...f })), // el email es opcional
     // Si el cliente no maneja, su licencia no se pide: la de los conductores está en "Titular y conductores".
     ...(r.customer_no_drive ? [] : [{ name: 'license_number', label: 'Licencia del cliente N°' }, { name: 'license_expiry', label: 'Vencimiento de la licencia', type: 'date', required: true }]),
   ];
@@ -4108,7 +4118,7 @@ const CUSTOMER_FIELDS = [
   { name: 'doc_type', label: 'Tipo doc.', type: 'select', options: () => docTypes().map((x) => [x, x]), get default() { return docTypes()[0]; } },
   { name: 'doc_number', label: 'Número de documento' },
   { name: 'phone', label: 'Teléfono / WhatsApp' },
-  { name: 'email', label: 'Email', type: 'email' },
+  { name: 'email', label: 'Email', type: 'email', when: () => !hideEmail() },
   { name: 'birth_date', label: 'Fecha de nacimiento', type: 'date' },
   { name: 'license_number', label: 'Licencia de conducir N°' },
   { name: 'license_expiry', label: 'Vencimiento licencia', type: 'date' },
@@ -5202,6 +5212,8 @@ on(/^\/config$/, async (view) => {
       { name: 'voucher_text', label: 'Texto propio del mensaje de confirmación por WhatsApp (vacío = el de Floty). Se completan solos: {nombre} {reserva} {estado} {retiro} {devolucion} {auto} {seguro} {total} {pagado} {saldo} {garantia} {empresa} {telefono} {cancelacion}', type: 'textarea', full: true, rows: 8, when: () => !choferesMode() },
       { name: 'precontract_short', label: 'Precontrato sin los bloques de entrega, devolución y estado del vehículo (salen recién en el contrato), con botón para descargarlo firmado al mandar el contrato', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'fleet_grouped', label: 'Pantalla de Autos agrupada por categoría (un título por categoría y debajo sus autos)', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'reserve_now', label: '"Nueva reserva" arranca con la fecha y la hora actuales en el retiro (si no, mañana a las 10)', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'hide_customer_email', label: 'No pedir el email del cliente (ni en las pantallas de la agencia ni en el link de reservas)', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'reserve_by_category', label: 'En "Nueva reserva" se elige la categoría y no la patente (el auto se asigna después, al entregar)', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'public_branding', label: 'Logo de la agencia y "N.º de reserva" en las páginas que ve el cliente (contrato para firmar y tarjeta) y en la pantalla de la reserva, y logo en el cierre de caja', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'hide_deductible', label: 'No mostrar la franquicia del seguro: la cobertura figura sólo con su nombre en la reserva, los mensajes al cliente y el contrato', type: 'checkbox', full: true, when: () => !choferesMode() },
@@ -5222,6 +5234,7 @@ on(/^\/config$/, async (view) => {
       { name: 'refund_partial_pct', label: 'Porcentaje de la devolución parcial (%)', type: 'number', attrs: 'min="0" max="100"', when: () => !choferesMode() },
       { name: 'cancel_day_fee_hours', label: 'O cobrar 1 día de alquiler a quien cancela con menos de (horas, 0 = usar los porcentajes de arriba)', type: 'number', attrs: 'min="0"', when: () => !choferesMode() },
       { name: 'refund_terms', label: 'Condiciones extra de cancelación y devoluciones', type: 'textarea', full: true, rows: 3, when: () => !choferesMode() },
+      { name: 'deposit_terms', label: 'Texto de la garantía en el voucher (vacío = el de Floty; con texto propio el voucher deja de pedir tarjeta de crédito)', type: 'textarea', full: true, rows: 2, when: () => !choferesMode() },
       // Versión en inglés: contrato, voucher y política cuando la app está en inglés (i18n.js).
       { name: 'jurisdiction_en', label: 'Jurisdicción del contrato en inglés (courts of...)', full: true, when: () => !choferesMode() },
       { name: 'contract_terms_en', label: 'Condiciones generales del contrato en inglés (se usan cuando la app está en inglés)', type: 'textarea', full: true, rows: 12, when: () => !choferesMode() },
@@ -6455,7 +6468,7 @@ async function bookingPage() {
         <div style="display:flex;flex-direction:column;gap:8px">
           <label class="qr-field">${L('Nombre y apellido', 'Full name')}<input name="name" autocomplete="name" maxlength="120" required></label>
           <label class="qr-field">${L('WhatsApp (con código de país)', 'WhatsApp (with country code)')}<input name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" placeholder="${esc(cfg.phone_hint)}" required></label>
-          <label class="qr-field">${L('Email', 'Email')}<input name="email" type="email" autocomplete="email" maxlength="160"></label>
+          ${cfg.hide_email ? '' : `<label class="qr-field">${L('Email', 'Email')}<input name="email" type="email" autocomplete="email" maxlength="160"></label>`}
           <label class="qr-field">${L('Documento o pasaporte N°', 'ID or passport number')}<input name="doc_number" maxlength="40" required></label>
           <label class="qr-field">${L('Fecha de nacimiento', 'Date of birth')}<input name="birth_date" type="date" autocomplete="bday" required></label>
           ${cfg.young_driver ? `<p class="muted" style="margin:0;font-size:13px">${(() => {
@@ -6707,7 +6720,7 @@ async function bookingPage() {
         category: o.code,
         name,
         phone,
-        email: form.email.value.trim(),
+        email: form.email ? form.email.value.trim() : '',
         doc_number: form.doc_number.value.trim(),
         birth_date: form.birth_date.value,
         address: form.address.value.trim(),
