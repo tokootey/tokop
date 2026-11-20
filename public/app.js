@@ -85,6 +85,16 @@ const taxRows = (q, sp = '') =>
           [`${taxName()} ${q.tax_rate}${sp}%`, money(q.tax)],
         ]
       : [[`${taxName()} ${q.tax_rate}${sp}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)]];
+const agreedOn = () => String(state.settings.agreed_price) === '1';
+const payToolsOn = () => String(state.settings.payment_tools) === '1';
+/** Ajuste agreed_price: con precio acordado el cliente ve un solo renglón con ese precio y su impuesto, no los renglones de la tarifa. */
+const agreedRows = (r, sp = '') => {
+  const q = r.pricing || {};
+  if (!agreedOn() || q.calculated_total === undefined) return null;
+  // El impuesto guardado es el de la tarifa: acá va el que le corresponde al precio acordado, que ya es el final.
+  const tax = q.tax_rate ? Math.round(((q.total * q.tax_rate) / (100 + q.tax_rate)) * 100) / 100 : 0;
+  return [[`Alquiler ${r.days} día${r.days === 1 ? '' : 's'}`, money(q.total)], ...taxRows({ ...q, tax }, sp)];
+};
 const hideEmail = () => String(state.settings.hide_customer_email) === '1';
 // Ajuste reserve_now: el retiro de una reserva nueva arranca ahora, en la hora de la agencia (ajuste timezone) y no en la de la computadora.
 const reserveNow = () => {
@@ -1303,6 +1313,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
         <div class="form-grid" style="margin-top:12px">
           <label>Descuento %<input type="number" name="discount_pct" min="0" max="100" step="any" value="0"/></label>
           <label>Descuento en $ <small class="muted">(para redondear, ej. 10.000)</small><input type="number" name="discount_amount" min="0" step="any" value="0"/></label>
+          ${agreedOn() ? '<label>Precio final acordado <small class="muted">(opcional: reemplaza al precio de tarifa)</small><input type="number" name="price_override" min="0" step="any"/></label>' : ''}
           <label>Vuelo / referencia<input name="flight"/></label>
         </div>
         </details>
@@ -1527,6 +1538,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       return_at: f.return_at,
       discount_pct: f.discount_pct || 0,
       discount_amount: f.discount_amount || 0,
+      price_override: f.price_override === undefined || f.price_override === '' ? undefined : Number(f.price_override),
       no_deposit: !!f.no_deposit,
       express: !!f.express,
       flight: f.flight,
@@ -1804,6 +1816,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         <p class="field-error hidden" data-err="car"></p>
         ${insurances().length && !choferesMode() ? `<div style="margin-top:10px">${insuranceSelect('qr-field')}</div>` : ''}
         <label class="qr-field" style="margin-top:10px">Descuento en $ <small class="muted">(opcional, para redondear: 10.000, 20.000…)</small><input name="discount" type="number" inputmode="numeric" min="0" step="any" placeholder="0"></label>
+        ${agreedOn() ? '<label class="qr-field" style="margin-top:10px">Precio final acordado <small class="muted">(opcional: reemplaza al precio de tarifa)</small><input name="agreed" type="number" inputmode="decimal" min="0" step="any"></label>' : ''}
         ${choferesMode() ? '' : surchargeChecks()}
       </section>
       <section>
@@ -1848,6 +1861,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   });
   const days = () => Math.max(1, Math.round((to - from) / 86400000));
   const discount = () => Math.max(0, Number(form.discount.value) || 0);
+  const agreed = () => (form.agreed && form.agreed.value !== '' ? Math.max(0, Number(form.agreed.value) || 0) : null);
   const summary = () => {
     const c = cars.find((x) => x.id === sel.vehicle);
     $('#qr-what', form).textContent = c ? `${days()} ${days() === 1 ? L('día', 'day') : L('días', 'days')} · ${[c.brand, c.model].filter(Boolean).join(' ') || c.plate}` : 'Elegí un auto';
@@ -1856,7 +1870,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
     const gross = c ? c.quote.total + (sel.hotel ? hotelFee() : 0) + (ins ? insurancePrice(ins, days()) : 0) + recs : 0;
     // El descuento se resta antes del impuesto (como lo calcula el sistema): si el precio no lo incluye, el total baja un poco más.
     const off = c ? Math.min(gross, discount() * (c.quote.tax_included || !c.quote.tax_rate ? 1 : 1 + c.quote.tax_rate / 100)) : 0;
-    $('#qr-sum', form).textContent = c ? money(gross - off) : '';
+    $('#qr-sum', form).textContent = c ? money(agreed() !== null ? agreed() : gross - off) : '';
     // En el celular el resumen queda fijo abajo recién cuando hay auto elegido: antes ocupaba un tercio de la pantalla.
     $('.qr-total', form).classList.toggle('ready', Boolean(c));
   };
@@ -1909,7 +1923,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
       paint();
     }
   });
-  form.addEventListener('input', (e) => e.target.name === 'discount' && summary());
+  form.addEventListener('input', (e) => ['discount', 'agreed'].includes(e.target.name) && summary());
   form.addEventListener('change', (e) => {
     if (e.target.name === 'insurance' || e.target.dataset.rec) return summary();
     // El WhatsApp se revisa al salir del campo: así el voucher no se manda a un número mal cargado.
@@ -1971,6 +1985,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
         hotel: sel.hotel ? { ...hotelFrom(form), deliver: true, return: form.h_return.checked } : undefined,
         extras: [...(form.insurance ? [{ extra_id: Number(form.insurance.value), quantity: 1 }] : []), ...pickedSurcharges(form)],
         discount_amount: discount(),
+        price_override: agreed() !== null ? agreed() : undefined,
       });
     }, 'Reserva guardada');
     // Hotel sin datos: primero la reserva, donde está el botón para pedírselos al cliente.
@@ -2215,16 +2230,21 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           <dt>Garantía retenida</dt><dd>${money(r.balance.deposit_held)} <small class="muted">(sugerida ${money(r.deposit)})</small></dd>
         </dl>
         ${
-          r.payments.length
+          r.payments.length || (r.voided_payments || []).length
             ? `<div class="table-scroll"><table class="mini" style="margin-top:12px"><thead><tr><th>Fecha</th><th>Tipo</th><th>Medio</th><th class="right">Importe</th></tr></thead><tbody>${r.payments
                 .map(
                   (p) =>
-                    `<tr><td class="nowrap">${fmtDT(stampLocal(p.created_at)).slice(0, 5)} ${esc(stampLocal(p.created_at).slice(11, 16))}</td><td>${esc(PAYMENT_KINDS[p.kind] || p.kind)}</td><td>${esc(p.method || '')} ${p.reference ? `<small class="muted">${esc(p.reference)}</small>` : ''}${p.notes ? `<br><small class="muted">${esc(p.notes)}</small>` : ''}</td><td class="right">${money(p.amount)}</td></tr>`,
+                    `<tr><td class="nowrap">${fmtDT(stampLocal(p.created_at)).slice(0, 5)} ${esc(stampLocal(p.created_at).slice(11, 16))}</td><td>${esc(PAYMENT_KINDS[p.kind] || p.kind)}</td><td>${esc(p.method || '')} ${p.reference ? `<small class="muted">${esc(p.reference)}</small>` : ''}${p.notes ? `<br><small class="muted">${esc(p.notes)}</small>` : ''}</td><td class="right">${money(p.amount)}${canVoid(p) ? ` <button class="btn small no-print" type="button" data-void="${p.id}">Anular</button>` : ''}</td></tr>`,
+                )
+                .join('')}${(r.voided_payments || [])
+                .map(
+                  (p) =>
+                    `<tr class="muted"><td class="nowrap">${fmtDT(stampLocal(p.created_at)).slice(0, 5)} ${esc(stampLocal(p.created_at).slice(11, 16))}</td><td><s>${esc(PAYMENT_KINDS[p.kind] || p.kind)}</s></td><td><s>${esc(p.method || '')}</s><br><small>Anulado${p.voided_by_name ? ` por ${esc(p.voided_by_name)}` : ''}: ${esc(p.reason || '')}</small></td><td class="right"><s>${money(p.amount)}</s></td></tr>`,
                 )
                 .join('')}</tbody></table></div>`
             : ''
         }
-        <div class="actions no-print" style="margin-top:12px"><button class="btn" data-act="pay">+ Registrar pago / garantía</button></div>
+        <div class="actions no-print" style="margin-top:12px"><button class="btn" data-act="pay">+ Registrar pago / garantía</button>${payToolsOn() && r.balance.deposit_held > 0 ? '<button class="btn" data-act="depositCharge">Descontar de la garantía</button>' : ''}</div>
       </div>
       <div class="card"><h2>Historial</h2>
         <ol class="timeline">${r.log
@@ -2242,6 +2262,22 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
 `;
 
   const reload = () => route();
+  // Ajuste payment_tools: un administrador anula un movimiento de hoy mal cargado (los de otros días se corrigen con un movimiento contrario).
+  $$('[data-void]', view).forEach((b) =>
+    b.addEventListener('click', () => {
+      const p = r.payments.find((x) => x.id === Number(b.dataset.void));
+      openModal(
+        'Anular movimiento',
+        `<p style="margin-top:0">${esc(PAYMENT_KINDS[p.kind] || p.kind)} · ${esc(p.method || '')} · <b>${money(p.amount)}</b>. Deja de contar en el saldo y en la caja, y queda a la vista como anulado.</p>` +
+          formHtml([{ name: 'reason', label: 'Motivo de la anulación', required: true, full: true }], {}, 'Anular'),
+        async (d) => {
+          await POST(`/reservations/${r.id}/payments/${p.id}/void`, d);
+          toast('Movimiento anulado');
+          reload();
+        },
+      );
+    }),
+  );
   const handlers = {
     // Al confirmar se abre el envío del voucher, que es lo que sigue.
     confirm: () => run(() => POST(`/reservations/${r.id}/status`, { status: 'confirmada' }), 'Reserva confirmada').then(() => (location.hash = `#/reservas/${r.id}?accion=voucher`)),
@@ -2525,6 +2561,36 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
       await run(() => POST(`/reservations/${r.id}/close-contract`), 'Contrato cerrado');
       reload();
     },
+    // Ajuste payment_tools: un cargo (Panapass, daños, gastos legales) se cobra de la garantía retenida.
+    depositCharge: () =>
+      openModal(
+        'Descontar de la garantía',
+        `<p class="muted" style="margin-top:0">Garantía retenida: <b>${money(r.balance.deposit_held)}</b>. Lo que descuentes baja la garantía que queda por devolver.</p>` +
+          formHtml(
+            [
+              { name: 'concept', label: 'Concepto', type: 'select', required: true, options: ['Panapass', 'Golpes o daños', 'Gastos legales', 'Otro'].map((x) => [x, x]) },
+              { name: 'detail', label: 'Detalle (opcional)' },
+              { name: 'amount', label: 'Importe', type: 'number', required: true },
+              {
+                name: 'existing',
+                label: '¿Ya está sumado a la reserva?',
+                type: 'select',
+                full: true,
+                options: [
+                  ['', 'No: es un cargo nuevo (se suma a la reserva y se cobra de la garantía)'],
+                  ['1', 'Sí: es saldo que ya figura en la reserva (sólo se cobra de la garantía)'],
+                ],
+              },
+            ],
+            { concept: 'Panapass', existing: r.balance.pending > 0 ? '1' : '' },
+            'Descontar',
+          ),
+        async (d) => {
+          const x = await POST(`/reservations/${r.id}/deposit-charge`, { ...d, branch_id: state.branch || undefined });
+          toast(`Descontado. Garantía por devolver: ${money(x.balance.deposit_held)}`);
+          reload();
+        },
+      ),
     pay: () => {
       openModal(
         'Registrar movimiento',
@@ -2539,6 +2605,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
               required: true,
             },
             { name: 'amount', label: 'Importe', type: 'number', required: true },
+            { name: 'deposit_part', label: 'De ese importe, es garantía (si pagó alquiler y garantía juntos)', type: 'number', when: () => payToolsOn() },
             { name: 'reference', label: 'Referencia / comprobante' },
             { name: 'notes', label: 'Notas (por ejemplo: pagó $30.000 y $20.000 en una batería)', type: 'textarea', full: true },
           ],
@@ -2862,6 +2929,7 @@ function voucherLines(r) {
     r.vehicle_plate ? ` · ${r.vehicle_brand || ''} ${r.vehicle_model || ''} placa ${r.vehicle_plate}`.replace(/\s+/g, ' ') : ' (el auto se asigna al retirar)'
   }`;
   const price = [
+    ...(agreedRows(r, ' ') || [
     q.base !== undefined ? [`Tarifa ${days}${q.per_day ? ` × ${money(q.per_day)}` : ''}`, money(q.base)] : null,
     q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
     q.promo_discount ? [`Promoción: ${q.promo.name}`, '−' + money(q.promo_discount)] : null,
@@ -2875,6 +2943,7 @@ function voucherLines(r) {
     q.extra_hours_fee ? [`Horas adicionales (${q.extra_hours})`, money(q.extra_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct} %` : ''}`, `−${money(q.discount)}`] : null,
     ...taxRows(q, ' '),
+    ]),
     ['Total', money(r.balance.due)],
     ['Pagado', money(r.balance.paid)],
     ['Saldo a pagar', money(r.balance.pending)],
@@ -3061,6 +3130,8 @@ const LOG_LABEL = {
   renovado: 'Se renovó solo',
   cargo: 'Multa o cargo',
   cargo_borrado: 'Cargo borrado',
+  garantia_descontada: 'Descuento de la garantía',
+  pago_anulado: 'Movimiento anulado',
   lectura_km: 'Lectura de km',
 };
 const DETAIL_KEY = { porcentaje: 'porcentaje', devolver: 'a devolver', pagado: 'pagado', regla: 'cancelación', factura: 'factura', modo: 'modo', status: 'estado', source: 'origen', contrato: 'contrato', km: 'km', combustible: 'combustible', cargos: 'cargos' };
@@ -3390,6 +3461,8 @@ async function openDocuments(customerId, name) {
 }
 
 const FUEL_OPTS = [0, 1, 2, 3, 4, 5, 6, 7, 8].map((n) => [n, n === 8 ? '8/8 (lleno)' : n === 0 ? '0/8 (vacío)' : `${n}/8`]);
+// Se anulan sólo movimientos de hoy, y no los que anotó el banco (el servidor lo vuelve a controlar).
+const canVoid = (p) => isAdmin() && payToolsOn() && stampLocal(p.created_at).slice(0, 10) === localISO(new Date()).slice(0, 10) && !/^neopayment /.test(p.reference || '');
 const PAYMENT_KINDS = { pago: 'Pago', devolucion: 'Devolución de dinero', garantia: 'Garantía (depósito)', devolucion_garantia: 'Devolución de garantía', recargo: 'Recargo PayPal' };
 
 /**
@@ -3558,6 +3631,7 @@ async function printContract(r) {
   const q = r.pricing || {};
   const line = (label, value) => `<tr><th>${label}</th><td>${value || '<span class="blank"></span>'}</td></tr>`;
   const priceRows = [
+    ...(agreedRows(r) ? agreedRows(r).map(([k, v]) => [esc(k), v]) : [
     q.base !== undefined ? [`Alquiler ${baseLabel(q, r.days)}`, money(q.base)] : null,
     q.season_extra ? ['Recargo de temporada', money(q.season_extra)] : null,
     q.promo_discount ? [`Promoción: ${q.promo.name}`, '−' + money(q.promo_discount)] : null,
@@ -3570,6 +3644,7 @@ async function printContract(r) {
     q.extra_hours_fee ? [`Horas adicionales (${q.extra_hours})`, money(q.extra_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${esc(q.discount_pct)}%` : ''}`, '−' + money(q.discount)] : null,
     ...taxRows(q).map(([k, v]) => [esc(k), v]),
+    ]),
   ].filter(Boolean);
   const extra = looseCharges(r);
   const charges = [...(c && c.charges && c.charges.lines.length ? c.charges.lines : []), ...extra.lines];
@@ -5276,6 +5351,8 @@ on(/^\/config$/, async (view) => {
       { name: 'hide_customer_email', label: 'No pedir el email del cliente (ni en las pantallas de la agencia ni en el link de reservas)', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'fleet_search', label: 'Buscador por placa y modelo en el calendario y en Autos del auxiliar, rango de fechas en el calendario y elegir el día en Hoy del auxiliar', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'tax_breakdown', label: 'Reserva, contrato y factura muestran el importe gravable y el impuesto por separado, antes del total', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'agreed_price', label: 'Precio final acordado también al crear la reserva; con precio acordado, el voucher y el contrato muestran un solo renglón con ese precio (sin la tarifa)', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'payment_tools', label: 'Pagos: repartir un cobro entre alquiler y garantía, descontar cargos de la garantía retenida y anular movimientos del día (anular, sólo administradores)', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'reserve_by_category', label: 'En "Nueva reserva" se elige la categoría y no la patente (el auto se asigna después, al entregar)', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'public_branding', label: 'Logo de la agencia y "N.º de reserva" en las páginas que ve el cliente (contrato para firmar y tarjeta) y en la pantalla de la reserva, y logo en el cierre de caja', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'hide_deductible', label: 'No mostrar la franquicia del seguro: la cobertura figura sólo con su nombre en la reserva, los mensajes al cliente y el contrato', type: 'checkbox', full: true, when: () => !choferesMode() },
