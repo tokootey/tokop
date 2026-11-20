@@ -269,8 +269,29 @@ ${safe(read('public/app.js'))}
 </script>
 `;
 
+// Píxel de Meta: sólo en la demo pública (sin perfil), para medir las visitas que llegan de los anuncios.
+const metaPixel = profileCompany
+  ? ''
+  : `<!-- Meta Pixel Code -->
+<script>
+!function(f,b,e,v,n,t,s)
+{if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+n.queue=[];t=b.createElement(e);t.async=!0;
+t.src=v;s=b.getElementsByTagName(e)[0];
+s.parentNode.insertBefore(t,s)}(window, document,'script',
+'https://connect.facebook.net/en_US/fbevents.js');
+fbq('init', '1637153187370023');
+fbq('track', 'PageView');
+</script>
+<noscript><img height="1" width="1" style="display:none"
+src="https://www.facebook.com/tr?id=1637153187370023&ev=PageView&noscript=1"
+/></noscript>
+<!-- End Meta Pixel Code -->
+`;
 const page = standalone
-  ? html.replace(/^<title>/, '<!doctype html>\n<html lang="es">\n<head>\n<meta charset="utf-8">\n<title>').replace('</style>\n', '</style>\n</head>\n<body>\n') + '</body>\n</html>\n'
+  ? html.replace(/^<title>/, '<!doctype html>\n<html lang="es">\n<head>\n<meta charset="utf-8">\n<title>').replace('</style>\n', () => `</style>\n${metaPixel}</head>\n<body>\n`) + '</body>\n</html>\n'
   : html;
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, page);
