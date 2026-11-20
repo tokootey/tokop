@@ -74,6 +74,17 @@ const choferesMode = () => state.settings.business_mode === 'choferes';
 const payModes = () => choferesMode() && state.settings.rent_period === 'dia' && String(state.settings.pay_modes) === '1';
 // Funciones en prueba: las activa el dueño de Floty por agencia, desde el panel.
 const proOn = () => String(state.settings.pro_features) === '1';
+const searchOn = () => String(state.settings.fleet_search) === '1';
+/** Renglones del impuesto de un precio. Con el ajuste tax_breakdown: el importe gravable (sin impuesto) y el impuesto aparte; si no, un solo renglón. */
+const taxRows = (q, sp = '') =>
+  !q.tax_rate
+    ? []
+    : String(state.settings.tax_breakdown) === '1' && q.total !== undefined
+      ? [
+          [`Importe gravable (antes de ${taxName()})`, money(q.total - q.tax)],
+          [`${taxName()} ${q.tax_rate}${sp}%`, money(q.tax)],
+        ]
+      : [[`${taxName()} ${q.tax_rate}${sp}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)]];
 const hideEmail = () => String(state.settings.hide_customer_email) === '1';
 // Ajuste reserve_now: el retiro de una reserva nueva arranca ahora, en la hora de la agencia (ajuste timezone) y no en la de la computadora.
 const reserveNow = () => {
@@ -897,7 +908,11 @@ async function auxTrip(r) {
 }
 
 /** Hoy del auxiliar: qué autos salen y vuelven, y los vencimientos. */
-function auxPanel(view, d) {
+function auxPanel(view, d, day) {
+  const today = d.now.slice(0, 10);
+  day = day || today;
+  const when = day === today ? 'hoy' : `el ${fmtD(day)}`;
+  const none = day === today ? 'Hoy' : 'Ese día';
   const out = [...d.late_pickups, ...d.pickups_today];
   const back = [...d.overdue, ...d.returns_today];
   const trips = [...out, ...back];
@@ -911,7 +926,7 @@ function auxPanel(view, d) {
   // Pedidos que entraron y nadie confirmó todavía (por ejemplo, de noche): para escribirle al cliente a la mañana.
   const fresh = d.pending || [];
   view.innerHTML = `
-    <div class="page-head"><h1>Hoy</h1></div>
+    <div class="page-head"><h1>Hoy</h1>${searchOn() ? `<label>Día <input type="date" id="aux-day" value="${day}"/></label>` : ''}</div>
     ${
       fresh.length
         ? `<div class="card"><h2>Reservas nuevas para contactar <span class="count">${fresh.length}</span></h2><div class="daylist">${fresh
@@ -924,12 +939,18 @@ function auxPanel(view, d) {
             .join('')}</div></div>`
         : ''
     }
-    ${list('Salen hoy', out, true, 'Hoy no sale ningún auto.')}
-    ${list('Vuelven hoy', back, false, 'Hoy no vuelve ningún auto.')}
+    ${list(`Salen ${when}`, out, true, `${none} no sale ningún auto.`)}
+    ${list(`Vuelven ${when}`, back, false, `${none} no vuelve ningún auto.`)}
     <div class="card"><h2>Vencimientos de los próximos 30 días${docs.length ? ` <span class="count">${docs.length}</span>` : ''}</h2>
       ${docs.length ? `<div class="daylist">${docs.map(dueRow).join('')}</div>` : '<p class="muted">Ningún seguro, inspección, cédula ni service por vencer.</p>'}
     </div>`;
   $$('[data-trip]', view).forEach((b) => b.addEventListener('click', () => run(() => auxTrip(trips.find((r) => r.id === Number(b.dataset.trip))))));
+  $('#aux-day', view)?.addEventListener('change', (e) =>
+    run(async () => {
+      const v = e.target.value || today;
+      auxPanel(view, await GET(`/dashboard?date=${v}${branchQS('&')}`), v);
+    }),
+  );
 }
 
 /** Autos del auxiliar: dónde está cada uno, su km y combustible y sus vencimientos. Puede moverlos de sucursal. */
@@ -938,10 +959,11 @@ async function auxFleet(view) {
   const branches = fleetBranchOptions();
   view.innerHTML = `
     <div class="page-head"><h1>Autos</h1></div>
+    ${searchOn() ? '<div class="fleet-bar"><input id="aux-fleet-q" type="search" placeholder="Buscar por placa, marca o modelo" aria-label="Buscar auto"/></div>' : ''}
     <div class="table-wrap"><table><thead><tr><th>Placa</th><th>Auto</th><th>Estado</th><th>Sucursal</th><th>Km</th><th>Combustible</th><th>Vencimientos</th><th></th></tr></thead><tbody>
     ${rows
       .map(
-        (v) => `<tr data-id="${v.id}"><td class="nowrap"><span class="plate">${esc(v.plate)}</span></td><td>${esc([v.brand, v.model].filter(Boolean).join(' '))}</td><td>${badge(v.status)}</td>
+        (v) => `<tr data-id="${v.id}" data-find="${esc([v.plate, v.brand, v.model].filter(Boolean).join(' ').toLowerCase())}"><td class="nowrap"><span class="plate">${esc(v.plate)}</span></td><td>${esc([v.brand, v.model].filter(Boolean).join(' '))}</td><td>${badge(v.status)}</td>
           <td>${
             v.status === 'alquilado' || branches.length < 2
               ? esc(v.branch_name || '—')
@@ -953,6 +975,10 @@ async function auxFleet(view) {
       )
       .join('')}</tbody></table></div>`;
   const of = (el) => rows.find((v) => v.id === Number(el.closest('tr').dataset.id));
+  $('#aux-fleet-q', view)?.addEventListener('input', (e) => {
+    const t = e.target.value.trim().toLowerCase();
+    $$('tbody tr', view).forEach((tr) => (tr.style.display = !t || tr.dataset.find.includes(t) ? '' : 'none'));
+  });
   $$('[data-move]', view).forEach((sel) =>
     sel.addEventListener('change', async () => {
       await run(() => PUT(`/vehicles/${of(sel).id}`, { branch_id: Number(sel.value) }), 'Auto movido de sucursal');
@@ -2848,7 +2874,7 @@ function voucherLines(r) {
     ...(q.branch_fees || []).map((b) => [`Recargo ${b.name}`, money(b.amount)]),
     q.extra_hours_fee ? [`Horas adicionales (${q.extra_hours})`, money(q.extra_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct} %` : ''}`, `−${money(q.discount)}`] : null,
-    q.tax_rate ? [`${taxName()} ${q.tax_rate} %${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
+    ...taxRows(q, ' '),
     ['Total', money(r.balance.due)],
     ['Pagado', money(r.balance.paid)],
     ['Saldo a pagar', money(r.balance.pending)],
@@ -3543,7 +3569,7 @@ async function printContract(r) {
     ...(q.branch_fees || []).map((b) => [`Recargo ${b.name}`, money(b.amount)]),
     q.extra_hours_fee ? [`Horas adicionales (${q.extra_hours})`, money(q.extra_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${esc(q.discount_pct)}%` : ''}`, '−' + money(q.discount)] : null,
-    q.tax_rate ? [`${esc(taxName())} ${esc(q.tax_rate)}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
+    ...taxRows(q).map(([k, v]) => [esc(k), v]),
   ].filter(Boolean);
   const extra = looseCharges(r);
   const charges = [...(c && c.charges && c.charges.lines.length ? c.charges.lines : []), ...extra.lines];
@@ -3706,6 +3732,8 @@ ${
    Planning (grilla de ocupación, estilo Rently)
    ============================================================ */
 let planningFrom = null;
+let planningDays = 14; // con el ajuste fleet_search se elige un rango de fechas (hasta 62 días, el tope del servidor)
+let planQuery = '';
 // El calendario también se puede ver como listado; se recuerda en este navegador.
 const PLAN_VIEW_KEY = 'floty-calendario';
 const PLAN_LIST_STATES = [['pendiente', 'Pendientes'], ['confirmada', 'Confirmadas'], ['en_curso', 'En contrato'], ['finalizada', 'Cerradas'], ['', 'Todas']];
@@ -3723,7 +3751,7 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
     const t = new Date();
     planningFrom = new Date(t.getFullYear(), t.getMonth(), t.getDate() - 1);
   }
-  const days = 14;
+  const days = planningDays;
   const fromStr = localISO(planningFrom).slice(0, 10);
   const p = await GET(`/planning?from=${fromStr}&days=${days}${branchQS('&')}`);
   const start = planningFrom.getTime();
@@ -3799,6 +3827,13 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
     <div class="page-head"><h1>Calendario de autos</h1>
       <div class="actions"><button class="btn" data-plan-view>${asList ? 'Ver calendario' : 'Ver listado'}</button><button class="btn" data-nav="-7">◀ Semana</button><button class="btn" data-nav="0">Hoy</button><button class="btn" data-nav="7">Semana ▶</button></div></div>
     ${
+      searchOn()
+        ? `<div class="toolbar"><label>Buscar auto<input id="plan-q" type="search" placeholder="Placa, marca o modelo" value="${esc(planQuery)}"/></label>
+      <label>Desde<input type="date" id="plan-from" value="${fromStr}"/></label><label>Hasta<input type="date" id="plan-to" value="${localISO(addDays(planningFrom, days - 1)).slice(0, 10)}"/></label>
+      <button class="btn" type="button" data-plan-range>Ver</button></div>`
+        : ''
+    }
+    ${
       asList
         ? `<p class="muted">Reservas del ${fmtD(fromStr)} al ${fmtD(localISO(addDays(planningFrom, days - 1)))}.</p>
            <div class="chips" role="group" aria-label="Estado" style="margin-bottom:10px">${PLAN_LIST_STATES.map(([st, label]) => `<button type="button" class="chip${st === planListStatus ? ' on' : ''}" data-list-st="${st}" aria-pressed="${st === planListStatus}">${label} (${listed(st).length})</button>`).join('')}</div>${listHtml()}`
@@ -3825,11 +3860,36 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
   $$('[data-nav]', view).forEach((b) =>
     b.addEventListener('click', () => {
       const n = Number(b.dataset.nav);
-      if (n === 0) planningFrom = null;
-      else planningFrom = addDays(planningFrom, n);
+      if (n === 0) {
+        planningFrom = null;
+        planningDays = 14;
+      } else planningFrom = addDays(planningFrom, n);
       route();
     }),
   );
+  if (searchOn()) {
+    // Deja a la vista las filas del auto buscado (en el listado, los renglones); los títulos de categoría se ocultan mientras se busca.
+    const filter = () => {
+      planQuery = $('#plan-q', view).value;
+      const t = planQuery.trim().toLowerCase();
+      $$('.pl-row:not(.head), tbody tr', view).forEach((el) => {
+        const text = (el.querySelector('.pl-label') || el).textContent.toLowerCase();
+        el.style.display = !t || (!el.classList.contains('group') && text.includes(t)) ? '' : 'none';
+      });
+    };
+    $('#plan-q', view).addEventListener('input', filter);
+    filter();
+    $('[data-plan-range]', view).addEventListener('click', () => {
+      const a = $('#plan-from', view).value;
+      const b = $('#plan-to', view).value;
+      const n = Math.round((new Date(`${b}T00:00`) - new Date(`${a}T00:00`)) / 86400000) + 1;
+      if (!a || !b || !(n >= 1)) return toast('Elegí una fecha desde y una hasta igual o posterior', true);
+      if (n > 62) return toast('El calendario muestra hasta 62 días: achicá el rango', true);
+      planningFrom = new Date(`${a}T00:00`);
+      planningDays = n;
+      route();
+    });
+  }
   if (isAux()) {
     // El auxiliar no entra a la reserva: una barra abre sus fotos y el km del auto.
     $$('.pl-bar[data-id], .pl-item', view).forEach((b) => b.addEventListener('click', () => run(() => auxTrip(p.reservations.find((r) => r.id === Number(b.dataset.id))))));
@@ -5214,6 +5274,8 @@ on(/^\/config$/, async (view) => {
       { name: 'fleet_grouped', label: 'Pantalla de Autos agrupada por categoría (un título por categoría y debajo sus autos)', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'reserve_now', label: '"Nueva reserva" arranca con la fecha y la hora actuales en el retiro (si no, mañana a las 10)', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'hide_customer_email', label: 'No pedir el email del cliente (ni en las pantallas de la agencia ni en el link de reservas)', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'fleet_search', label: 'Buscador por placa y modelo en el calendario y en Autos del auxiliar, rango de fechas en el calendario y elegir el día en Hoy del auxiliar', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'tax_breakdown', label: 'Reserva, contrato y factura muestran el importe gravable y el impuesto por separado, antes del total', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'reserve_by_category', label: 'En "Nueva reserva" se elige la categoría y no la patente (el auto se asigna después, al entregar)', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'public_branding', label: 'Logo de la agencia y "N.º de reserva" en las páginas que ve el cliente (contrato para firmar y tarjeta) y en la pantalla de la reserva, y logo en el cierre de caja', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'hide_deductible', label: 'No mostrar la franquicia del seguro: la cobertura figura sólo con su nombre en la reserva, los mensajes al cliente y el contrato', type: 'checkbox', full: true, when: () => !choferesMode() },

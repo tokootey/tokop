@@ -562,6 +562,8 @@ const DEFAULT_SETTINGS = {
   reserve_now: '0', // '1': "Nueva reserva" arranca con el retiro en la fecha y hora actuales de la agencia (si no, mañana a las 10)
   hide_customer_email: '0', // '1': no se pide el email del cliente, ni en la agencia ni en el link de reservas
   deposit_terms: '', // texto propio de la garantía en el voucher (vacío = el de Floty); con texto propio el voucher deja de pedir tarjeta de crédito
+  fleet_search: '0', // '1': buscador por placa y modelo en el calendario y en Autos del auxiliar, rango de fechas en el calendario y elegir el día en Hoy del auxiliar
+  tax_breakdown: '0', // '1': reserva, contrato y factura muestran el importe gravable y el impuesto por separado, antes del total
   reserve_by_category: '0', // '1': en "Nueva reserva" se elige la categoría y no un auto puntual; la reserva queda sin auto y se asigna después
   public_branding: '0', // '1': logo de la agencia y "N.º de reserva" en el contrato para firmar, la página de la tarjeta y la pantalla de la reserva, y logo en el cierre de caja
   hide_deductible: '0', // '1': la cobertura figura sólo con su nombre, sin la franquicia (pantalla, mensajes y contrato)

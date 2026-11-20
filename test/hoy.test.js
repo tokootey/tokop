@@ -33,7 +33,13 @@ test('el panel trae lo que debe cada cliente y lo de mañana', async () => {
     // Una que sale hoy (a las 23:30, para que no quede en el pasado) con una seña, y otra que sale mañana.
     const today = (await call('POST', '/api/reservations', { customer_id: customer.id, category_id: category, pickup_at: day(0, 23), return_at: day(2, 23), status: 'confirmada', allow_overbooking: true })).data;
     await call('POST', `/api/reservations/${today.id}/payments`, { kind: 'pago', amount: 1000 });
-    await call('POST', '/api/reservations', { customer_id: customer.id, category_id: category, pickup_at: day(1, 10), return_at: day(3, 10), status: 'confirmada', allow_overbooking: true });
+    const next = (await call('POST', '/api/reservations', { customer_id: customer.id, category_id: category, pickup_at: day(1, 10), return_at: day(3, 10), status: 'confirmada', allow_overbooking: true })).data;
+    // Otro día (lo consulta el auxiliar): lo que sale y lo que vuelve esa fecha, sin los atrasados de hoy.
+    const d1 = (await call('GET', `/api/dashboard?date=${day(1, 10).slice(0, 10)}`)).data;
+    assert.ok(d1.pickups_today.some((r) => r.id === next.id), 'la de mañana figura saliendo mañana');
+    const d3 = (await call('GET', `/api/dashboard?date=${day(3, 10).slice(0, 10)}`)).data;
+    assert.ok(d3.returns_today.some((r) => r.id === next.id), 'y volviendo a los 3 días, aunque todavía no salió');
+    assert.deepEqual([d3.overdue.length, d3.late_pickups.length], [0, 0]);
 
     const after = (await call('GET', '/api/dashboard')).data;
     const row = after.pickups_today.find((r) => r.id === today.id);
