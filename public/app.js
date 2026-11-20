@@ -74,6 +74,26 @@ const choferesMode = () => state.settings.business_mode === 'choferes';
 const payModes = () => choferesMode() && state.settings.rent_period === 'dia' && String(state.settings.pay_modes) === '1';
 // Funciones en prueba: las activa el dueño de Floty por agencia, desde el panel.
 const proOn = () => String(state.settings.pro_features) === '1';
+const searchOn = () => String(state.settings.fleet_search) === '1';
+/** Renglones del impuesto de un precio. Con el ajuste tax_breakdown: el importe gravable (sin impuesto) y el impuesto aparte; si no, un solo renglón. */
+const taxRows = (q, sp = '') =>
+  !q.tax_rate
+    ? []
+    : String(state.settings.tax_breakdown) === '1' && q.total !== undefined
+      ? [
+          [`Importe gravable (antes de ${taxName()})`, money(q.total - q.tax)],
+          [`${taxName()} ${q.tax_rate}${sp}%`, money(q.tax)],
+        ]
+      : [[`${taxName()} ${q.tax_rate}${sp}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)]];
+const hideEmail = () => String(state.settings.hide_customer_email) === '1';
+// Ajuste reserve_now: el retiro de una reserva nueva arranca ahora, en la hora de la agencia (ajuste timezone) y no en la de la computadora.
+const reserveNow = () => {
+  if (String(state.settings.reserve_now) !== '1') return null;
+  const tz = state.settings.timezone;
+  const d = tz ? new Date(new Date().toLocaleString('sv-SE', { timeZone: tz }).replace(' ', 'T')) : new Date();
+  d.setSeconds(0, 0);
+  return d;
+};
 // Controles estrictos del contrato (los prende cada agencia en Configuración).
 const strictOn = () => String(state.settings.strict_contract) === '1';
 // Documentos a gusto de la agencia (Configuración): la cobertura sin su franquicia y el contrato sin la firma de la empresa.
@@ -888,7 +908,11 @@ async function auxTrip(r) {
 }
 
 /** Hoy del auxiliar: qué autos salen y vuelven, y los vencimientos. */
-function auxPanel(view, d) {
+function auxPanel(view, d, day) {
+  const today = d.now.slice(0, 10);
+  day = day || today;
+  const when = day === today ? 'hoy' : `el ${fmtD(day)}`;
+  const none = day === today ? 'Hoy' : 'Ese día';
   const out = [...d.late_pickups, ...d.pickups_today];
   const back = [...d.overdue, ...d.returns_today];
   const trips = [...out, ...back];
@@ -902,7 +926,7 @@ function auxPanel(view, d) {
   // Pedidos que entraron y nadie confirmó todavía (por ejemplo, de noche): para escribirle al cliente a la mañana.
   const fresh = d.pending || [];
   view.innerHTML = `
-    <div class="page-head"><h1>Hoy</h1></div>
+    <div class="page-head"><h1>Hoy</h1>${searchOn() ? `<label>Día <input type="date" id="aux-day" value="${day}"/></label>` : ''}</div>
     ${
       fresh.length
         ? `<div class="card"><h2>Reservas nuevas para contactar <span class="count">${fresh.length}</span></h2><div class="daylist">${fresh
@@ -915,12 +939,18 @@ function auxPanel(view, d) {
             .join('')}</div></div>`
         : ''
     }
-    ${list('Salen hoy', out, true, 'Hoy no sale ningún auto.')}
-    ${list('Vuelven hoy', back, false, 'Hoy no vuelve ningún auto.')}
+    ${list(`Salen ${when}`, out, true, `${none} no sale ningún auto.`)}
+    ${list(`Vuelven ${when}`, back, false, `${none} no vuelve ningún auto.`)}
     <div class="card"><h2>Vencimientos de los próximos 30 días${docs.length ? ` <span class="count">${docs.length}</span>` : ''}</h2>
       ${docs.length ? `<div class="daylist">${docs.map(dueRow).join('')}</div>` : '<p class="muted">Ningún seguro, inspección, cédula ni service por vencer.</p>'}
     </div>`;
   $$('[data-trip]', view).forEach((b) => b.addEventListener('click', () => run(() => auxTrip(trips.find((r) => r.id === Number(b.dataset.trip))))));
+  $('#aux-day', view)?.addEventListener('change', (e) =>
+    run(async () => {
+      const v = e.target.value || today;
+      auxPanel(view, await GET(`/dashboard?date=${v}${branchQS('&')}`), v);
+    }),
+  );
 }
 
 /** Autos del auxiliar: dónde está cada uno, su km y combustible y sus vencimientos. Puede moverlos de sucursal. */
@@ -929,21 +959,26 @@ async function auxFleet(view) {
   const branches = fleetBranchOptions();
   view.innerHTML = `
     <div class="page-head"><h1>Autos</h1></div>
+    ${searchOn() ? '<div class="fleet-bar"><input id="aux-fleet-q" type="search" placeholder="Buscar por placa, marca o modelo" aria-label="Buscar auto"/></div>' : ''}
     <div class="table-wrap"><table><thead><tr><th>Placa</th><th>Auto</th><th>Estado</th><th>Sucursal</th><th>Km</th><th>Combustible</th><th>Vencimientos</th><th></th></tr></thead><tbody>
     ${rows
       .map(
-        (v) => `<tr data-id="${v.id}"><td class="nowrap"><span class="plate">${esc(v.plate)}</span></td><td>${esc([v.brand, v.model].filter(Boolean).join(' '))}</td><td>${badge(v.status)}</td>
+        (v) => `<tr data-id="${v.id}" data-find="${esc([v.plate, v.brand, v.model].filter(Boolean).join(' ').toLowerCase())}"><td class="nowrap"><span class="plate">${esc(v.plate)}</span></td><td>${esc([v.brand, v.model].filter(Boolean).join(' '))}</td><td>${badge(v.status)}</td>
           <td>${
             v.status === 'alquilado' || branches.length < 2
               ? esc(v.branch_name || '—')
               : `<select data-move style="min-width:150px" aria-label="Sucursal de ${esc(v.plate)}">${v.branch_id ? '' : '<option value=""></option>'}${branches.map(([id, name]) => `<option value="${id}"${id === v.branch_id ? ' selected' : ''}>${esc(name)}</option>`).join('')}</select>`
           }</td>
           <td class="right">${num(v.km || 0)}</td><td>${fuel(v.fuel) || '—'}</td>
-          <td><div class="dayrow docs" style="grid-template-columns:repeat(${dueList(v).length},minmax(0,1fr));padding:0;border:0">${dueDocs(v)}</div></td>
+          <td><div class="dayrow docs" style="grid-template-columns:repeat(${dueList(v).length},minmax(84px,1fr));padding:0;border:0">${dueDocs(v)}</div></td>
           <td><button class="btn small" type="button" data-reading>Km y combustible</button></td></tr>`,
       )
       .join('')}</tbody></table></div>`;
   const of = (el) => rows.find((v) => v.id === Number(el.closest('tr').dataset.id));
+  $('#aux-fleet-q', view)?.addEventListener('input', (e) => {
+    const t = e.target.value.trim().toLowerCase();
+    $$('tbody tr', view).forEach((tr) => (tr.style.display = !t || tr.dataset.find.includes(t) ? '' : 'none'));
+  });
   $$('[data-move]', view).forEach((sel) =>
     sel.addEventListener('change', async () => {
       await run(() => PUT(`/vehicles/${of(sel).id}`, { branch_id: Number(sel.value) }), 'Auto movido de sucursal');
@@ -1197,8 +1232,8 @@ const placeOptions = () => [...branchOptions(), ...(choferesMode() ? [] : [['hot
 on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
   const now = new Date();
   now.setMinutes(0, 0, 0);
-  let p0 = addDays(now, 1);
-  p0.setHours(10);
+  let p0 = reserveNow() || addDays(now, 1);
+  if (!reserveNow()) p0.setHours(10);
   let r0 = addDays(p0, 3);
   const sel = { category_id: null, customer_id: null };
   // Datos que llegan al arrastrar sobre el Planning: ?vehiculo=ID&desde=AAAA-MM-DD&hasta=AAAA-MM-DD
@@ -1713,7 +1748,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   const dayAt10 = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(s || '') ? new Date(`${s}T10:00`) : null);
   const start = new Date();
   start.setHours(10, 0, 0, 0);
-  let from = dayAt10(pre.get('desde')) || addDays(start, 1);
+  let from = dayAt10(pre.get('desde')) || reserveNow() || addDays(start, 1);
   let to = dayAt10(pre.get('hasta')) || addDays(from, choferesMode() ? 7 : 3);
   const sel = { vehicle: Number(pre.get('vehiculo')) || null };
   // Ajuste reserve_by_category: una fila por categoría y la reserva queda sin auto. Si desde el calendario llega un auto puntual, se sigue eligiendo por auto.
@@ -2839,7 +2874,7 @@ function voucherLines(r) {
     ...(q.branch_fees || []).map((b) => [`Recargo ${b.name}`, money(b.amount)]),
     q.extra_hours_fee ? [`Horas adicionales (${q.extra_hours})`, money(q.extra_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct} %` : ''}`, `−${money(q.discount)}`] : null,
-    q.tax_rate ? [`${taxName()} ${q.tax_rate} %${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
+    ...taxRows(q, ' '),
     ['Total', money(r.balance.due)],
     ['Pagado', money(r.balance.paid)],
     ['Saldo a pagar', money(r.balance.pending)],
@@ -2875,12 +2910,13 @@ function voucherLines(r) {
       ].filter(Boolean),
     },
     { title: 'Precio', rows: price },
-    ...(Number(r.deposit) > 0 ? [{ title: 'Garantía', rows: [['Depósito', `${money(r.deposit)} (se toma al retirar el auto y se devuelve al entregarlo en las mismas condiciones)`]] }] : []),
+    ...(Number(r.deposit) > 0 ? [{ title: 'Garantía', rows: [['Depósito', s.deposit_terms ? `${money(r.deposit)}. ${s.deposit_terms}` : `${money(r.deposit)} (se toma al retirar el auto y se devuelve al entregarlo en las mismas condiciones)`]] }] : []),
   ];
   return {
     sections,
     statusLine: r.status === 'pendiente' ? 'Pendiente de confirmación' : r.status === 'en_curso' ? 'Alquiler en curso' : 'Reserva confirmada',
-    requirements: `Licencia de conducir vigente, documento o pasaporte y tarjeta de crédito para la garantía. Edad mínima: ${Number(s.min_driver_age) || 21} años.`,
+    // Con texto propio de garantía (deposit_terms) la agencia dice cómo la toma: no se pide tarjeta de crédito.
+    requirements: `Licencia de conducir vigente${s.deposit_terms ? ' y documento o pasaporte' : ', documento o pasaporte y tarjeta de crédito para la garantía'}. Edad mínima: ${Number(s.min_driver_age) || 21} años.`,
     policy: refundPolicyText(s),
     company: [s.company_name, s.company_tax_id ? `${taxIdLabel()} ${s.company_tax_id}` : '', s.company_address, s.company_phone && `Tel. ${s.company_phone}`].filter(Boolean).join(' · '),
   };
@@ -2931,7 +2967,7 @@ function voucherWhatsapp(r) {
     `Total ${money(r.balance.due)} · Pagado ${money(r.balance.paid)} · Saldo ${money(r.balance.pending)}`,
     ...(Number(r.deposit) > 0 ? [`Garantía: ${money(r.deposit)} (se devuelve al entregar el auto)`] : []),
     '',
-    'Traé licencia de conducir, documento y tarjeta de crédito.',
+    state.settings.deposit_terms ? 'Traé licencia de conducir y documento.' : 'Traé licencia de conducir, documento y tarjeta de crédito.',
     `Cancelación: ${p}`,
     state.settings.company_phone ? `Consultas: ${state.settings.company_phone}` : '',
   ]
@@ -2977,7 +3013,7 @@ function sendVoucher(r) {
      <div class="stack" style="gap:10px">
        ${canShare ? '<button class="btn primary" type="button" id="v-share">Compartir el PDF (WhatsApp, email…)</button>' : ''}
        <a class="btn ${canShare ? '' : 'primary'}" href="${esc(wa)}" target="_blank" rel="noopener" id="v-wa">WhatsApp${phone ? ` a ${esc(r.customer_phone)}` : ' (elegís el contacto)'}</a>
-       <a class="btn" href="${esc(mail)}" id="v-mail">Email${r.customer_email ? ` a ${esc(r.customer_email)}` : ' (falta el email del cliente)'}</a>
+       ${hideEmail() && !r.customer_email ? '' : `<a class="btn" href="${esc(mail)}" id="v-mail">Email${r.customer_email ? ` a ${esc(r.customer_email)}` : ' (falta el email del cliente)'}</a>`}
        <button class="btn" type="button" id="v-pdf">Descargar el PDF</button>
      </div>
      ${phone && phone.length < 11 ? '<p class="error">El teléfono parece no tener código de país (por ejemplo 54 9 para Argentina): WhatsApp puede no encontrarlo.</p>' : ''}
@@ -3533,7 +3569,7 @@ async function printContract(r) {
     ...(q.branch_fees || []).map((b) => [`Recargo ${b.name}`, money(b.amount)]),
     q.extra_hours_fee ? [`Horas adicionales (${q.extra_hours})`, money(q.extra_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${esc(q.discount_pct)}%` : ''}`, '−' + money(q.discount)] : null,
-    q.tax_rate ? [`${esc(taxName())} ${esc(q.tax_rate)}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
+    ...taxRows(q).map(([k, v]) => [esc(k), v]),
   ].filter(Boolean);
   const extra = looseCharges(r);
   const charges = [...(c && c.charges && c.charges.lines.length ? c.charges.lines : []), ...extra.lines];
@@ -3696,6 +3732,8 @@ ${
    Planning (grilla de ocupación, estilo Rently)
    ============================================================ */
 let planningFrom = null;
+let planningDays = 14; // con el ajuste fleet_search se elige un rango de fechas (hasta 62 días, el tope del servidor)
+let planQuery = '';
 // El calendario también se puede ver como listado; se recuerda en este navegador.
 const PLAN_VIEW_KEY = 'floty-calendario';
 const PLAN_LIST_STATES = [['pendiente', 'Pendientes'], ['confirmada', 'Confirmadas'], ['en_curso', 'En contrato'], ['finalizada', 'Cerradas'], ['', 'Todas']];
@@ -3713,7 +3751,7 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
     const t = new Date();
     planningFrom = new Date(t.getFullYear(), t.getMonth(), t.getDate() - 1);
   }
-  const days = 14;
+  const days = planningDays;
   const fromStr = localISO(planningFrom).slice(0, 10);
   const p = await GET(`/planning?from=${fromStr}&days=${days}${branchQS('&')}`);
   const start = planningFrom.getTime();
@@ -3789,6 +3827,13 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
     <div class="page-head"><h1>Calendario de autos</h1>
       <div class="actions"><button class="btn" data-plan-view>${asList ? 'Ver calendario' : 'Ver listado'}</button><button class="btn" data-nav="-7">◀ Semana</button><button class="btn" data-nav="0">Hoy</button><button class="btn" data-nav="7">Semana ▶</button></div></div>
     ${
+      searchOn()
+        ? `<div class="toolbar"><label>Buscar auto<input id="plan-q" type="search" placeholder="Placa, marca o modelo" value="${esc(planQuery)}"/></label>
+      <label>Desde<input type="date" id="plan-from" value="${fromStr}"/></label><label>Hasta<input type="date" id="plan-to" value="${localISO(addDays(planningFrom, days - 1)).slice(0, 10)}"/></label>
+      <button class="btn" type="button" data-plan-range>Ver</button></div>`
+        : ''
+    }
+    ${
       asList
         ? `<p class="muted">Reservas del ${fmtD(fromStr)} al ${fmtD(localISO(addDays(planningFrom, days - 1)))}.</p>
            <div class="chips" role="group" aria-label="Estado" style="margin-bottom:10px">${PLAN_LIST_STATES.map(([st, label]) => `<button type="button" class="chip${st === planListStatus ? ' on' : ''}" data-list-st="${st}" aria-pressed="${st === planListStatus}">${label} (${listed(st).length})</button>`).join('')}</div>${listHtml()}`
@@ -3815,11 +3860,36 @@ on(/^\/planning(?:\?r=(\d+))?$/, async (view, highlight) => {
   $$('[data-nav]', view).forEach((b) =>
     b.addEventListener('click', () => {
       const n = Number(b.dataset.nav);
-      if (n === 0) planningFrom = null;
-      else planningFrom = addDays(planningFrom, n);
+      if (n === 0) {
+        planningFrom = null;
+        planningDays = 14;
+      } else planningFrom = addDays(planningFrom, n);
       route();
     }),
   );
+  if (searchOn()) {
+    // Deja a la vista las filas del auto buscado (en el listado, los renglones); los títulos de categoría se ocultan mientras se busca.
+    const filter = () => {
+      planQuery = $('#plan-q', view).value;
+      const t = planQuery.trim().toLowerCase();
+      $$('.pl-row:not(.head), tbody tr', view).forEach((el) => {
+        const text = (el.querySelector('.pl-label') || el).textContent.toLowerCase();
+        el.style.display = !t || (!el.classList.contains('group') && text.includes(t)) ? '' : 'none';
+      });
+    };
+    $('#plan-q', view).addEventListener('input', filter);
+    filter();
+    $('[data-plan-range]', view).addEventListener('click', () => {
+      const a = $('#plan-from', view).value;
+      const b = $('#plan-to', view).value;
+      const n = Math.round((new Date(`${b}T00:00`) - new Date(`${a}T00:00`)) / 86400000) + 1;
+      if (!a || !b || !(n >= 1)) return toast('Elegí una fecha desde y una hasta igual o posterior', true);
+      if (n > 62) return toast('El calendario muestra hasta 62 días: achicá el rango', true);
+      planningFrom = new Date(`${a}T00:00`);
+      planningDays = n;
+      route();
+    });
+  }
   if (isAux()) {
     // El auxiliar no entra a la reserva: una barra abre sus fotos y el km del auto.
     $$('.pl-bar[data-id], .pl-item', view).forEach((b) => b.addEventListener('click', () => run(() => auxTrip(p.reservations.find((r) => r.id === Number(b.dataset.id))))));
@@ -4042,7 +4112,7 @@ const DELIVERY_CUSTOMER = [
 ];
 function licenseFields(r) {
   return [
-    ...DELIVERY_CUSTOMER.filter(([, key]) => !r[key]).map(([name, , f]) => ({ name, required: name !== 'email', ...f })), // el email es opcional
+    ...DELIVERY_CUSTOMER.filter(([name, key]) => !r[key] && !(name === 'email' && hideEmail())).map(([name, , f]) => ({ name, required: name !== 'email', ...f })), // el email es opcional
     // Si el cliente no maneja, su licencia no se pide: la de los conductores está en "Titular y conductores".
     ...(r.customer_no_drive ? [] : [{ name: 'license_number', label: 'Licencia del cliente N°' }, { name: 'license_expiry', label: 'Vencimiento de la licencia', type: 'date', required: true }]),
   ];
@@ -4108,7 +4178,7 @@ const CUSTOMER_FIELDS = [
   { name: 'doc_type', label: 'Tipo doc.', type: 'select', options: () => docTypes().map((x) => [x, x]), get default() { return docTypes()[0]; } },
   { name: 'doc_number', label: 'Número de documento' },
   { name: 'phone', label: 'Teléfono / WhatsApp' },
-  { name: 'email', label: 'Email', type: 'email' },
+  { name: 'email', label: 'Email', type: 'email', when: () => !hideEmail() },
   { name: 'birth_date', label: 'Fecha de nacimiento', type: 'date' },
   { name: 'license_number', label: 'Licencia de conducir N°' },
   { name: 'license_expiry', label: 'Vencimiento licencia', type: 'date' },
@@ -5202,6 +5272,10 @@ on(/^\/config$/, async (view) => {
       { name: 'voucher_text', label: 'Texto propio del mensaje de confirmación por WhatsApp (vacío = el de Floty). Se completan solos: {nombre} {reserva} {estado} {retiro} {devolucion} {auto} {seguro} {total} {pagado} {saldo} {garantia} {empresa} {telefono} {cancelacion}', type: 'textarea', full: true, rows: 8, when: () => !choferesMode() },
       { name: 'precontract_short', label: 'Precontrato sin los bloques de entrega, devolución y estado del vehículo (salen recién en el contrato), con botón para descargarlo firmado al mandar el contrato', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'fleet_grouped', label: 'Pantalla de Autos agrupada por categoría (un título por categoría y debajo sus autos)', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'reserve_now', label: '"Nueva reserva" arranca con la fecha y la hora actuales en el retiro (si no, mañana a las 10)', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'hide_customer_email', label: 'No pedir el email del cliente (ni en las pantallas de la agencia ni en el link de reservas)', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'fleet_search', label: 'Buscador por placa y modelo en el calendario y en Autos del auxiliar, rango de fechas en el calendario y elegir el día en Hoy del auxiliar', type: 'checkbox', full: true, when: () => !choferesMode() },
+      { name: 'tax_breakdown', label: 'Reserva, contrato y factura muestran el importe gravable y el impuesto por separado, antes del total', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'reserve_by_category', label: 'En "Nueva reserva" se elige la categoría y no la patente (el auto se asigna después, al entregar)', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'public_branding', label: 'Logo de la agencia y "N.º de reserva" en las páginas que ve el cliente (contrato para firmar y tarjeta) y en la pantalla de la reserva, y logo en el cierre de caja', type: 'checkbox', full: true, when: () => !choferesMode() },
       { name: 'hide_deductible', label: 'No mostrar la franquicia del seguro: la cobertura figura sólo con su nombre en la reserva, los mensajes al cliente y el contrato', type: 'checkbox', full: true, when: () => !choferesMode() },
@@ -5222,6 +5296,7 @@ on(/^\/config$/, async (view) => {
       { name: 'refund_partial_pct', label: 'Porcentaje de la devolución parcial (%)', type: 'number', attrs: 'min="0" max="100"', when: () => !choferesMode() },
       { name: 'cancel_day_fee_hours', label: 'O cobrar 1 día de alquiler a quien cancela con menos de (horas, 0 = usar los porcentajes de arriba)', type: 'number', attrs: 'min="0"', when: () => !choferesMode() },
       { name: 'refund_terms', label: 'Condiciones extra de cancelación y devoluciones', type: 'textarea', full: true, rows: 3, when: () => !choferesMode() },
+      { name: 'deposit_terms', label: 'Texto de la garantía en el voucher (vacío = el de Floty; con texto propio el voucher deja de pedir tarjeta de crédito)', type: 'textarea', full: true, rows: 2, when: () => !choferesMode() },
       // Versión en inglés: contrato, voucher y política cuando la app está en inglés (i18n.js).
       { name: 'jurisdiction_en', label: 'Jurisdicción del contrato en inglés (courts of...)', full: true, when: () => !choferesMode() },
       { name: 'contract_terms_en', label: 'Condiciones generales del contrato en inglés (se usan cuando la app está en inglés)', type: 'textarea', full: true, rows: 12, when: () => !choferesMode() },
@@ -6455,7 +6530,7 @@ async function bookingPage() {
         <div style="display:flex;flex-direction:column;gap:8px">
           <label class="qr-field">${L('Nombre y apellido', 'Full name')}<input name="name" autocomplete="name" maxlength="120" required></label>
           <label class="qr-field">${L('WhatsApp (con código de país)', 'WhatsApp (with country code)')}<input name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" placeholder="${esc(cfg.phone_hint)}" required></label>
-          <label class="qr-field">${L('Email', 'Email')}<input name="email" type="email" autocomplete="email" maxlength="160"></label>
+          ${cfg.hide_email ? '' : `<label class="qr-field">${L('Email', 'Email')}<input name="email" type="email" autocomplete="email" maxlength="160"></label>`}
           <label class="qr-field">${L('Documento o pasaporte N°', 'ID or passport number')}<input name="doc_number" maxlength="40" required></label>
           <label class="qr-field">${L('Fecha de nacimiento', 'Date of birth')}<input name="birth_date" type="date" autocomplete="bday" required></label>
           ${cfg.young_driver ? `<p class="muted" style="margin:0;font-size:13px">${(() => {
@@ -6707,7 +6782,7 @@ async function bookingPage() {
         category: o.code,
         name,
         phone,
-        email: form.email.value.trim(),
+        email: form.email ? form.email.value.trim() : '',
         doc_number: form.doc_number.value.trim(),
         birth_date: form.birth_date.value,
         address: form.address.value.trim(),

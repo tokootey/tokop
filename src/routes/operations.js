@@ -383,6 +383,8 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
   router.get('/dashboard', (req, res) => {
     const now = nowLocal();
     const today = now.slice(0, 10);
+    // ?date=AAAA-MM-DD: lo que sale y vuelve otro día (lo elige el auxiliar con el ajuste fleet_search). Los atrasados son sólo de hoy.
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || '')) ? String(req.query.date) : today;
     chargeInsurance(db, today);
     // Con una sucursal elegida, todo se cuenta solo para ella.
     const branch = branchOf(req);
@@ -409,11 +411,12 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
       now,
       fleet: { total, operational, ...byStatus },
       occupancy: operational ? Math.round(((byStatus.alquilado || 0) / operational) * 100) : 0,
-      pickups_today: db.prepare(`${baseSelect} WHERE r.status IN ('pendiente','confirmada') AND substr(r.pickup_at,1,10) = ?${atR} ORDER BY r.pickup_at`).all(today),
+      pickups_today: db.prepare(`${baseSelect} WHERE r.status IN ('pendiente','confirmada') AND substr(r.pickup_at,1,10) = ?${atR} ORDER BY r.pickup_at`).all(day),
       // Choferes: el alquiler es por tiempo indeterminado (se renueva solo); su fin de período no es una devolución.
-      returns_today: db.prepare(`${baseSelect} WHERE r.status = 'en_curso' AND substr(r.return_at,1,10) = ? AND ${FIXED}${atR} ORDER BY r.return_at`).all(today),
-      overdue: db.prepare(`${baseSelect} WHERE r.status = 'en_curso' AND r.return_at < ? AND ${FIXED}${atR} ORDER BY r.return_at`).all(now),
-      late_pickups: db.prepare(`${baseSelect} WHERE r.status IN ('pendiente','confirmada') AND substr(r.pickup_at,1,10) < ?${atR} ORDER BY r.pickup_at`).all(today),
+      // Otro día: también las confirmadas que todavía no salieron.
+      returns_today: db.prepare(`${baseSelect} WHERE r.status IN ('en_curso'${day === today ? '' : ", 'confirmada'"}) AND substr(r.return_at,1,10) = ? AND ${FIXED}${atR} ORDER BY r.return_at`).all(day),
+      overdue: day === today ? db.prepare(`${baseSelect} WHERE r.status = 'en_curso' AND r.return_at < ? AND ${FIXED}${atR} ORDER BY r.return_at`).all(now) : [],
+      late_pickups: day === today ? db.prepare(`${baseSelect} WHERE r.status IN ('pendiente','confirmada') AND substr(r.pickup_at,1,10) < ?${atR} ORDER BY r.pickup_at`).all(today) : [],
       pending_confirmation: db.prepare(`SELECT COUNT(*) AS n FROM reservations r WHERE r.status = 'pendiente'${atR}`).get().n,
       // Pedidos para confirmar (link de reservas, cotizador o cargados como pendientes): la pantalla Hoy los lista.
       pending: db.prepare(`${baseSelect} WHERE r.status = 'pendiente'${atR} ORDER BY r.pickup_at LIMIT 50`).all(),

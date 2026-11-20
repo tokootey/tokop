@@ -234,7 +234,7 @@ function buildContractPdf(r, photos = []) {
     ...(q.branch_fees || []).map((b) => [`Recargo ${b.name}`, money(b.amount)]),
     q.extra_hours_fee ? [`Horas adicionales (${q.extra_hours})`, money(q.extra_hours_fee)] : null,
     q.discount ? [`Descuento${q.discount_pct ? ` ${q.discount_pct}%` : ''}`, `- ${money(q.discount)}`] : null,
-    q.tax_rate ? [`${taxName()} ${q.tax_rate}%${q.tax_included ? ' (incluido)' : ''}`, money(q.tax)] : null,
+    ...taxRows(q),
     [{ content: 'Total del alquiler', styles: { fontStyle: 'bold' } }, { content: money(r.total), styles: { fontStyle: 'bold' } }],
     ...(c && c.charges ? c.charges.lines.map((l) => [l.concept, money(l.amount)]) : []),
     ...extra.lines.map((l) => [l.concept, money(l.amount)]),
