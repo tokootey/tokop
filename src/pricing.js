@@ -157,7 +157,7 @@ function computeQuote(db, input) {
       perDay = base / periods;
     }
   }
-  const promos = choferes ? [] : db.prepare('SELECT * FROM promotions WHERE active = 1 AND category_id = ? ORDER BY promo_rate').all(category.id);
+  const promos = choferes ? [] : db.prepare('SELECT * FROM promotions WHERE active = 1 AND category_id = ? AND min_days <= ? ORDER BY promo_rate').all(category.id, days);
   let promo = null;
   let promoDays = 0;
   let promoBase = 0;
