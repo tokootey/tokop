@@ -159,7 +159,9 @@ function buildContractPdf(r, photos = []) {
   }
 
   const category = `${r.category_code} · ${r.category_name}`;
-  const panapass = panapassOn() && r.vehicle_panapass_number ? txt(r.vehicle_panapass_number) : '';
+  // Funciones en prueba: al lado de la cuenta va el saldo con el que salió el auto.
+  const outPanapass = proOn() && c && c.out_panapass !== null && c.out_panapass !== undefined ? ` · saldo ${money(c.out_panapass)}` : '';
+  const panapass = panapassOn() && r.vehicle_panapass_number ? `${txt(r.vehicle_panapass_number)}${outPanapass}` : '';
   y = section('Vehículo y período', lastY() + gap);
   kv(y, [
     ['Marca y modelo', r.vehicle_plate ? `${txt(r.vehicle_brand)} ${txt(r.vehicle_model)}` : '', 'Placa', txt(r.vehicle_plate)],
@@ -279,6 +281,8 @@ function buildContractPdf(r, photos = []) {
   const drvLabels = signedDrivers(r).map((d) => `Conductor: ${d.name}`.slice(0, 34));
   signatures(y + 18, ['Firma del cliente', ...(drvLabels.length ? drvLabels : [choferesMode() ? 'Garante' : 'Conductor adicional']), ...(companySigns() ? [`Por ${company}`] : [])]);
 
+  const frontPages = doc.getNumberOfPages();
+
   /* ---------- Hoja 2: condiciones generales ---------- */
   doc.addPage();
   doc.setFont('helvetica', 'bold').setFontSize(9).text(company, M, 14);
@@ -341,6 +345,9 @@ function buildContractPdf(r, photos = []) {
       doc.setFont('helvetica', 'normal').setFontSize(7).setTextColor(70).text(doc.splitTextToSize(p.label, cw), x, py + ch + 3.5);
     });
   }
+
+  // Funciones en prueba: la factura sale sólo con los datos del alquiler, sin condiciones ni documentación.
+  if (invoiced(r) && proOn()) while (doc.getNumberOfPages() > frontPages) doc.deletePage(doc.getNumberOfPages());
 
   /* ---------- Pie de página ---------- */
   const pages = doc.getNumberOfPages();

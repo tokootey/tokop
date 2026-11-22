@@ -346,7 +346,9 @@ function renderBranchPick() {
   try {
     saved = Number(localStorage.getItem(BRANCH_KEY));
   } catch {}
-  state.branch = list.length > 1 && list.some((b) => b.id === saved) ? saved : null;
+  // Sin una elegida en este navegador, arranca en la sucursal asignada al usuario (si tiene).
+  const mine = Number(state.user.branch_id);
+  state.branch = list.length < 2 ? null : list.some((b) => b.id === saved) ? saved : list.some((b) => b.id === mine) ? mine : null;
   $('#branch-pick').classList.toggle('hidden', list.length < 2 || !!state.user.owner_mode);
   $('#branch-select').innerHTML = `<option value="">${L('Todas', 'All')}</option>${list.map((b) => `<option value="${b.id}"${b.id === state.branch ? ' selected' : ''}>${esc(b.name)}</option>`).join('')}`;
 }
@@ -862,7 +864,8 @@ const dueDocs = (v) =>
 const auxReadingFields = (v) => [
   { name: 'km', label: `Km (tiene ${num(v.km || 0)})`, type: 'number', required: true, attrs: `min="${Number(v.km) || 0}"` },
   { name: 'fuel', label: 'Combustible (octavos)', type: 'select', options: [['', 'Elegí…'], ...FUEL_OPTS], required: true },
-  ...panapassField('panapass', `Saldo de Panapass${v.panapass === null || v.panapass === undefined ? '' : ` (tiene ${num(v.panapass)})`}`),
+  // Funciones en prueba: el saldo de Panapass lo carga la oficina, no el auxiliar.
+  ...(proOn() ? [] : panapassField('panapass', `Saldo de Panapass${v.panapass === null || v.panapass === undefined ? '' : ` (tiene ${num(v.panapass)})`}`)),
 ];
 const auxSaveReading = (v, d) => {
   const panapass = d.panapass === undefined || d.panapass === '' || d.panapass === null ? v.panapass : Number(d.panapass);
@@ -981,7 +984,7 @@ async function auxFleet(view) {
           }</td>
           <td class="right">${num(v.km || 0)}</td><td>${fuel(v.fuel) || '—'}</td>
           <td><div class="dayrow docs" style="grid-template-columns:repeat(${dueList(v).length},minmax(84px,1fr));padding:0;border:0">${dueDocs(v)}</div></td>
-          <td><button class="btn small" type="button" data-reading>Km y combustible</button></td></tr>`,
+          <td class="nowrap"><button class="btn small" type="button" data-reading>Km y combustible</button>${proOn() && v.status !== 'alquilado' ? ` <button class="btn small" type="button" data-shop>${v.status === 'mantenimiento' ? 'Sacar del taller' : 'Mandar al taller'}</button>` : ''}</td></tr>`,
       )
       .join('')}</tbody></table></div>`;
   const of = (el) => rows.find((v) => v.id === Number(el.closest('tr').dataset.id));
@@ -991,7 +994,41 @@ async function auxFleet(view) {
   });
   $$('[data-move]', view).forEach((sel) =>
     sel.addEventListener('change', async () => {
+      // Funciones en prueba: se confirma antes de mover, por si fue un toque sin querer.
+      if (proOn() && !(await confirmModal({ title: `Mover ${of(sel).plate}`, text: `El auto pasa a ${sel.selectedOptions[0].text}.`, ok: 'Mover' }))) return route();
       await run(() => PUT(`/vehicles/${of(sel).id}`, { branch_id: Number(sel.value) }), 'Auto movido de sucursal');
+      route();
+    }),
+  );
+  // Funciones en prueba: el auxiliar manda un auto al taller (con el motivo) y lo saca cuando vuelve.
+  $$('[data-shop]', view).forEach((b) =>
+    b.addEventListener('click', async () => {
+      const v = of(b);
+      const today = new Date().toISOString().slice(0, 10);
+      if (v.status !== 'mantenimiento') {
+        return openModal(
+          `Mandar al taller · ${v.plate}`,
+          formHtml(
+            [
+              { name: 'kind', label: 'Qué se le hace', type: 'select', required: true, options: MAINT_KINDS },
+              { name: 'description', label: 'Justificación (por qué va al taller)', type: 'textarea', full: true, rows: 2, required: true },
+            ],
+            { kind: 'service' },
+            'Mandar al taller',
+          ) + '<p class="muted">Mientras esté en el taller no se puede reservar ni entregar.</p>',
+          async (d) => {
+            await POST('/maintenance', { ...d, vehicle_id: v.id, start_date: today, km: v.km, status: 'abierto' });
+            toast(`${v.plate} quedó en el taller`);
+            route();
+          },
+        );
+      }
+      const open = (await GET(`/maintenance?q=${encodeURIComponent(v.plate)}`)).filter((m) => m.vehicle_id === v.id && m.status === 'abierto');
+      if (!open.length) return toast('Este auto se puso en taller a mano: lo saca un administrador desde Autos', true);
+      if (!(await confirmModal({ title: `Sacar del taller · ${v.plate}`, text: 'El auto vuelve a Disponible.', ok: 'Sacar del taller' }))) return;
+      await run(async () => {
+        for (const m of open) await PUT(`/maintenance/${m.id}`, { status: 'cerrado', end_date: today });
+      }, `${v.plate} volvió a la flota`);
       route();
     }),
   );
@@ -2445,6 +2482,7 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
             { name: 'in_km', label: `Km de llegada (salió con ${c.out_km})`, type: 'number', required: true, attrs: `min="${c.out_km}"` },
             { name: 'in_fuel', label: `Combustible (salió con ${c.out_fuel}/8)`, type: 'select', options: FUEL_OPTS, required: true },
             ...panapassField('in_panapass', `Saldo de Panapass al volver${c.out_panapass === null || c.out_panapass === undefined ? '' : ` (salió con ${money(c.out_panapass)})`}`),
+            { name: 'fuel_amount', label: 'Combustible: importe acordado (vacío = el de la tabla)', type: 'number', attrs: 'min="0"', when: () => proOn() },
             { name: 'damage_charge', label: 'Cargo por daños', type: 'number', default: 0 },
             { name: 'in_notes', label: 'Observaciones / daños detectados', type: 'textarea', full: true },
             { name: 'fotos', label: 'Fotos del auto al recibirlo (daños, km y combustible)', type: 'photos' },
@@ -2456,7 +2494,8 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
           'Cerrar contrato',
         ),
         async (d, form) => {
-          if (!(await photosFirst(r, 'devolucion', form))) return false;
+          // Funciones en prueba: si el contrato queda pendiente, el auto se recibe sin fotos (se piden al cerrarlo).
+          if (!(await photosFirst(r, 'devolucion', form, proOn() && Boolean(d.pending_note)))) return false;
           await POST(`/reservations/${r.id}/checkin`, { ...d, return_branch_id: Number(d.return_branch_id), in_fuel: Number(d.in_fuel) });
           toast('Devolución registrada');
           // Si quedó saldo (km o combustible de más, daños), se abre el cobro directo.
@@ -2884,7 +2923,11 @@ on(/^\/reservas\/(\d+)(?:\?accion=(\w+))?$/, async (view, id, accion) => {
   // Los datos del cliente también se completan desde la reserva (p. ej. al entregar), sin ir a Clientes.
   $('[data-edit-customer]', view)?.addEventListener('click', async () => {
     const cust = await run(() => GET(`/customers/${r.customer_id}`));
-    openModal(`Datos de ${cust.full_name}`, formHtml(CUSTOMER_FIELDS, cust), async (d) => {
+    // Funciones en prueba: desde la reserva no se cambian el nombre, el documento ni el nacimiento ya cargados; eso va por Clientes.
+    const locked = proOn() ? ['full_name', 'doc_number', 'birth_date'].filter((f) => cust[f]) : [];
+    const fields = CUSTOMER_FIELDS.map((f) => (locked.includes(f.name) ? { ...f, attrs: `${f.attrs || ''} readonly` } : f));
+    openModal(`Datos de ${cust.full_name}`, formHtml(fields, cust) + (locked.length ? '<p class="muted">El nombre, el documento y la fecha de nacimiento se cambian desde Clientes.</p>' : ''), async (d) => {
+      for (const f of locked) delete d[f];
       await PUT(`/customers/${cust.id}`, d);
       toast('Datos del cliente guardados');
       reload();
@@ -3220,9 +3263,10 @@ async function shrinkImage(file, max = 1600, quality = 0.75) {
  * No se entrega ni se recibe un auto sin fotos: las elegidas se suben antes de guardar,
  * y si no hay ninguna (ni subida antes por el auxiliar) se avisa y el formulario queda abierto.
  */
-async function photosFirst(r, stage, form) {
+async function photosFirst(r, stage, form, optional = false) {
   const have = (r.files || []).some((f) => f.stage === stage && f.mime.startsWith('image/'));
   if (!have && !form.fotos.files.length) {
+    if (optional) return true;
     toast('Faltan las fotos del auto: sacá al menos una', true);
     return false;
   }
@@ -3728,7 +3772,7 @@ ${String(s.contract_front_notes || '').trim() ? `<div style="border:2px solid #1
     ${line('Placa', r.vehicle_plate ? `<b>${esc(r.vehicle_plate)}</b>` : '')}
     ${line('Color / año', r.vehicle_plate ? `${esc(r.vehicle_color || '')} ${r.vehicle_year ? '· ' + esc(r.vehicle_year) : ''}` : '')}
     ${line('Categoría', `${esc(r.category_code)} · ${esc(r.category_name)}`)}
-    ${panapassOn() && r.vehicle_panapass_number ? line('Cuenta Panapass', esc(r.vehicle_panapass_number)) : ''}
+    ${panapassOn() && r.vehicle_panapass_number ? line('Cuenta Panapass', esc(r.vehicle_panapass_number) + (proOn() && c && c.out_panapass !== null && c.out_panapass !== undefined ? ` · saldo ${money(c.out_panapass)}` : '')) : ''}
   </table>
   <h2>Período del alquiler</h2><table>
     ${line('Retiro', `${fmtDT(r.pickup_at)} · ${esc(r.pickup_branch_name || '')}`)}
@@ -3781,7 +3825,7 @@ ${String(s.contract_front_notes || '').trim() ? `<div style="border:2px solid #1
   ${signedDrivers(r).length ? signedDrivers(r).map((d) => `<div><img class="sig" src="${esc(d.image)}" alt="Firma"/><small class="sig-by">Firma electrónica: ${esc(d.name)} · ${esc(d.doc)}</small>Conductor adicional</div>`).join('') : `<div>${choferesMode() ? 'Garante' : 'Conductor adicional'}<small>Aclaración:<br>${docWord()}:</small></div>`}
   ${companySigns() ? `<div>Por ${esc(s.company_name || 'la Empresa')}<small>Aclaración:</small></div>` : ''}
 </div>
-
+${/* Funciones en prueba: la factura sale sólo con los datos del alquiler. */ invoiced(r) && proOn() ? '<style>.page2,.annex{display:none}</style>' : ''}
 <div class="page2">
   <div class="head"><div><b>${esc(s.company_name || '')}</b></div><div class="right">Condiciones generales · ${invoiced(r) ? 'Factura N° ' + esc(c.number) : delivered ? 'Contrato N° ' + esc(c.number) : 'Reserva ' + esc(r.code)}</div></div>
   <h2>Condiciones generales del alquiler</h2>
@@ -4312,7 +4356,7 @@ const VEHICLE_FIELDS = [
 /** Pantalla de listado + alta/edición/baja genérica. */
 // rowFilter: qué filas mostrar (p. ej. solo los seguros); defaults: valores que se agregan al crear.
 // summary(rows): una línea arriba de la tabla (p. ej. el total de los gastos que se ven).
-function crudPage({ title, endpoint, fields, columns, searchable, after, before, extraActions, onEdit, canWrite = () => true, canDelete, nav, rowFilter, defaults, summary }) {
+function crudPage({ title, endpoint, fields, columns, searchable, after, before, extraActions, onEdit, confirmEdit, canWrite = () => true, canDelete, nav, rowFilter, defaults, summary }) {
   const mayDelete = () => (canDelete ? canDelete() : canWrite());
   return async (view) => {
     if (before) await before();
@@ -4337,6 +4381,7 @@ function crudPage({ title, endpoint, fields, columns, searchable, after, before,
         b.addEventListener('click', () => {
           const row = rows.find((r) => r.id === Number(b.closest('tr').dataset.id));
           openModal(`Editar · ${title}`, formHtml(fields, row), async (d) => {
+            if (confirmEdit && !(await confirmEdit(row, d))) return false;
             await PUT(`/${endpoint}/${row.id}`, d);
             toast('Guardado');
             if (after) await after();
@@ -4523,7 +4568,15 @@ on(
       const v = rows.find((x) => x.id === Number(box.dataset.id));
       const shopJobs = async () => (await GET(`/maintenance?q=${encodeURIComponent(v.plate)}`)).filter((m) => m.vehicle_id === v.id);
       if (e.target.closest('[data-hist]')) {
-        const [hist, jobs] = await Promise.all([GET(`/reservations?vehicle_id=${v.id}&limit=50`), shopJobs()]);
+        const [hist, jobs, moves] = await Promise.all([GET(`/reservations?vehicle_id=${v.id}&limit=50`), shopJobs(), proOn() ? GET(`/vehicles/${v.id}/moves`) : []]);
+        // Funciones en prueba: los traslados entre sucursales, con quién lo movió.
+        const movesHtml = !proOn()
+          ? ''
+          : `<h3>Traslados entre sucursales</h3>${
+              moves.length
+                ? `<table class="mini"><thead><tr><th>Fecha</th><th>De</th><th>A</th><th>Quién</th></tr></thead><tbody>${moves.map((m) => `<tr><td class="nowrap">${fmtDT(m.at)}</td><td>${esc(m.from_name || '—')}</td><td>${esc(m.to_name || '—')}</td><td>${esc(m.user_name || '')}</td></tr>`).join('')}</tbody></table>`
+                : '<p class="muted">Sin traslados registrados.</p>'
+            }`;
         openModal(
           `Historial · ${v.plate}`,
           `<h3>Reservas</h3>${historyTable(hist)}<h3>Fotos de los alquileres</h3><div id="hist-photos">${
@@ -4538,7 +4591,7 @@ on(
                   )
                   .join('')}</tbody></table>`
               : '<p class="muted">Nunca fue al taller.</p>'
-          }`,
+          }${movesHtml}`,
           null,
           { wide: true },
         );
@@ -4674,6 +4727,11 @@ on(
     title: 'Clientes',
     endpoint: 'customers',
     fields: CUSTOMER_FIELDS,
+    // Funciones en prueba: cambiar el nombre, el documento o el nacimiento de un cliente pide confirmación.
+    confirmEdit: (row, d) =>
+      !proOn() ||
+      !['full_name', 'doc_number', 'birth_date'].some((f) => String(row[f] ?? '') !== String(d[f] ?? '')) ||
+      confirmModal({ title: 'Cambiar datos del cliente', text: `Vas a cambiar el nombre, el documento o la fecha de nacimiento de ${row.full_name}. Queda así en todas sus reservas.`, ok: 'Cambiar' }),
     searchable: true,
     canWrite: () => true,
     canDelete: () => isAdmin(),
@@ -5513,6 +5571,8 @@ on(/^\/usuarios$/, async (view) => {
           .join('') || '<tr><td colspan="5" class="muted">Sin actividad registrada.</td></tr>'
       }</tbody></table></div></div>`;
   const roleField = { name: 'role', label: 'Rol', type: 'select', options: Object.entries(ROLE_LABEL).filter(([k]) => k !== 'contable' || proOn()).reverse(), required: true }; // Contabilidad: sólo en agencias con funciones en prueba
+  // Funciones en prueba: la sucursal del usuario. Lo que cobra entra en la caja de esa sucursal.
+  const branchField = proOn() ? [{ name: 'branch_id', label: 'Sucursal (lo que cobra entra en esa caja)', type: 'select', options: state.branches.filter((b) => b.active && !b.pickup_only).map((b) => [b.id, b.name]) }] : [];
   $('[data-new]', view).addEventListener('click', () =>
     openModal(
       'Nuevo usuario',
@@ -5522,6 +5582,7 @@ on(/^\/usuarios$/, async (view) => {
           { name: 'email', label: 'Email', type: 'email', required: true },
           { name: 'password', label: 'Contraseña inicial (la persona la cambia al entrar)', type: 'password', required: true, attrs: 'minlength="8" autocomplete="new-password"' },
           roleField,
+          ...branchField,
         ],
         { role: 'operador' },
       ) + `<p class="muted">${PASSWORD_HINT}</p>`,
@@ -5537,7 +5598,7 @@ on(/^\/usuarios$/, async (view) => {
       const u = users.find((x) => x.id === Number(b.closest('tr').dataset.id));
       openModal(
         `Editar ${u.name}`,
-        formHtml([{ name: 'name', label: 'Nombre', required: true }, roleField, { name: 'active', label: 'Activo', type: 'checkbox' }, { name: 'password', label: 'Nueva contraseña (dejar vacío para no cambiar)', type: 'password', attrs: 'minlength="8" autocomplete="new-password"' }], u) +
+        formHtml([{ name: 'name', label: 'Nombre', required: true }, roleField, ...branchField, { name: 'active', label: 'Activo', type: 'checkbox' }, { name: 'password', label: 'Nueva contraseña (dejar vacío para no cambiar)', type: 'password', attrs: 'minlength="8" autocomplete="new-password"' }], u) +
           `<p class="muted">${PASSWORD_HINT} Si le ponés una contraseña nueva, la persona la tiene que cambiar en su próximo ingreso y se cierran sus sesiones abiertas.</p>`,
         async (d) => {
           await PUT(`/users/${u.id}`, d);
@@ -7107,13 +7168,15 @@ async function signPage() {
     return;
   }
   // En la demo la firma es una simulación (scripts/demo/runtime.js).
-  const demoNote = window.__demo ? `<p class="notice warn">${L('Esto es una demostración: la firma no se guarda ni se envía a ningún lado.', 'This is a demo: the signature is not saved or sent anywhere.')}</p>` : '';
+  // Quien firma: con lock_signer (funciones en prueba) el nombre y el documento vienen de la reserva y no se cambian.
+  const signer = d.driver || { name: d.customer_name, doc: d.customer_doc };
+  const demoNote = window.__demo ?`<p class="notice warn">${L('Esto es una demostración: la firma no se guarda ni se envía a ningún lado.', 'This is a demo: the signature is not saved or sent anywhere.')}</p>` : '';
   const page = publicPage(`${head}
     <form class="card qr" id="sign-form">
       ${demoNote}
       ${d.driver ? `<p class="notice">${L('Firmás como conductor adicional de esta reserva.', 'You are signing as an additional driver on this booking.')}</p>` : ''}
-      <label>${L('Nombre y apellido', 'Full name')}<input name="name" required maxlength="120" value="${esc((d.driver ? d.driver.name : d.customer_name) || '')}"/></label>
-      <label>${L('Documento', 'ID or passport')}<input name="doc" required maxlength="40" value="${esc((d.driver ? d.driver.doc : d.customer_doc) || '')}"/></label>
+      <label>${L('Nombre y apellido', 'Full name')}<input name="name" required maxlength="120" value="${esc(signer.name || '')}"${d.lock_signer && signer.name ? ' readonly' : ''}/></label>
+      <label>${L('Documento', 'ID or passport')}<input name="doc" required maxlength="40" value="${esc(signer.doc || '')}"${d.lock_signer && signer.doc ? ' readonly' : ''}/></label>
       <label class="check"><input type="checkbox" name="accepted" required/> ${L('Leí y acepto este contrato y sus condiciones', 'I have read and accept this agreement and its terms')}${seen}</label>
       <div><b>${L('Firmá acá con el dedo', 'Sign here with your finger')}</b><canvas class="sign-pad" id="sign-pad" aria-label="${L('Espacio para firmar', 'Signature area')}"></canvas>
       <button class="btn small link" type="button" id="sign-clear">${L('Borrar y volver a firmar', 'Clear and sign again')}</button></div>

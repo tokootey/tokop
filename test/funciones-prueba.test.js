@@ -78,6 +78,7 @@ test('precios por demanda: sube según la ocupación y una reserva hecha conserv
 
 test('firma: el cliente firma una copia fija; si la reserva cambia, hay que pedirla de nuevo', () => {
   const { db, at, book } = setup();
+  setSetting(db, 'pro_features', '0'); // con funciones en prueba el nombre y el documento salen de la reserva: pedidos-nay.test.js
   const settings = { company_name: 'Austral', currency: 'ARS', locale: 'es-AR' };
   const r = book(at(50), at(52));
   const s = D.requestSignature(db, r.id, TERMS, settings, null);

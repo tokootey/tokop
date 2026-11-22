@@ -220,6 +220,28 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     if (rented && status !== 'alquilado') fail(409, 'Este auto lo tiene un cliente: vuelve a "Disponible" al registrar la devolución');
     next();
   });
+  // Traslados entre sucursales: cada cambio queda anotado para el historial del auto.
+  router.put('/vehicles/:id', (req, res, next) => {
+    const at = () => db.prepare('SELECT branch_id FROM vehicles WHERE id = ?').get(req.params.id);
+    const before = at();
+    res.on('finish', () => {
+      const after = before && res.statusCode < 400 && at();
+      if (after && after.branch_id !== before.branch_id)
+        db.prepare('INSERT INTO vehicle_moves (vehicle_id, at, from_branch_id, to_branch_id, user_id) VALUES (?, ?, ?, ?, ?)').run(req.params.id, nowLocal(), before.branch_id, after.branch_id, req.user ? req.user.id : null);
+    });
+    next();
+  });
+  router.get('/vehicles/:id/moves', (req, res) =>
+    res.json(
+      db
+        .prepare(
+          `SELECT m.at, f.name AS from_name, t.name AS to_name, u.name AS user_name FROM vehicle_moves m
+           LEFT JOIN branches f ON f.id = m.from_branch_id LEFT JOIN branches t ON t.id = m.to_branch_id LEFT JOIN users u ON u.id = m.user_id
+           WHERE m.vehicle_id = ? ORDER BY m.id DESC`,
+        )
+        .all(req.params.id),
+    ),
+  );
   router.use(
     '/vehicles',
     crud(db, {
@@ -246,6 +268,17 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     if (!['POST', 'PUT'].includes(req.method) || !phone) return next();
     const digits = phone.replace(/\D/g, '').length;
     if (!/^[+\d\s().-]+$/.test(phone) || digits < 8 || digits > 15) fail(400, `El WhatsApp tiene que ser un número con código de país, por ejemplo ${phoneHint(getSetting(db, 'country'))}`);
+    next();
+  });
+  // Funciones en prueba: un cliente por documento. No se crea otro con el mismo número ni se le pone a otro cliente.
+  router.use('/customers', (req, _res, next) => {
+    const doc = String((req.body || {}).doc_number || '').trim();
+    if (!proOn(db) || !['POST', 'PUT'].includes(req.method) || !doc) return next();
+    const id = Number(req.path.slice(1)) || 0;
+    const same = db.prepare('SELECT id, full_name FROM customers WHERE doc_number = ? COLLATE NOCASE AND anonymized_at IS NULL').all(doc);
+    // Los repetidos que ya venían cargados se pueden seguir editando sin cambiarles el documento.
+    const other = same.some((c) => c.id === id) ? null : same[0];
+    if (other) fail(409, `Ya hay un cliente con ese documento: ${other.full_name}. Buscalo por nombre o por documento.`);
     next();
   });
   // Licencia vencida: no se guarda, así no queda un cliente que después no puede retirar el auto.

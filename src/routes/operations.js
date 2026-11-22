@@ -6,7 +6,7 @@ const { categoryAvailability, availableVehicles, BLOCKING } = require('../availa
 const R = require('../reservations');
 const { placeSql, saveHotel, withHotelExtra } = require('../hotel');
 const invoicing = require('../invoicing/index');
-const { getSettings } = require('../db');
+const { getSettings, proOn } = require('../db');
 const { refundFor } = require('../refunds');
 const choferes = require('../choferes');
 const { requireAdmin } = require('../auth');
@@ -192,7 +192,9 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
   });
   // Antes de entregar o recibir: fotos del auto (ver R.requireHandover).
   const handover = (stage) => (req, res, next) => {
-    R.requireHandover(db, req.params.id, stage);
+    // Funciones en prueba: si el contrato queda pendiente, el auto se recibe sin fotos; se piden al cerrarlo.
+    const later = stage === 'devolucion' && proOn(db) && String((req.body || {}).pending_note || '').trim();
+    if (!later) R.requireHandover(db, req.params.id, stage);
     next();
   };
   // Controles estrictos (delivery.requireOpen / requireClose): van antes que las fotos, para avisar de una vez todo lo que falta.
@@ -231,8 +233,12 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
   router.post('/reservations/:id/checkout', strictOpen(), handover('entrega'), (req, res) => res.json(R.checkout(db, req.params.id, req.body, req.user.id)));
   router.post('/reservations/:id/checkin', strictClose, handover('devolucion'), (req, res) => res.json(R.checkin(db, req.params.id, req.body, req.user.id)));
   router.post('/reservations/:id/checkin-preview', (req, res) => res.json(R.checkinPreview(db, req.params.id, req.body || {})));
-  router.post('/reservations/:id/close-contract', (req, res) => res.json(R.closeContract(db, req.params.id, req.user.id)));
-  router.post('/reservations/:id/payments', (req, res) => res.json(R.addPayment(db, req.params.id, req.body, req.user.id)));
+  router.post('/reservations/:id/close-contract', (req, res) => {
+    if (proOn(db)) R.requireHandover(db, req.params.id, 'devolucion');
+    res.json(R.closeContract(db, req.params.id, req.user.id));
+  });
+  // Funciones en prueba: el cobro entra en la caja de la sucursal del usuario, si tiene una asignada.
+  router.post('/reservations/:id/payments', (req, res) => res.json(R.addPayment(db, req.params.id, proOn(db) && req.user.branch_id ? { ...req.body, branch_id: req.user.branch_id } : req.body, req.user.id)));
   // Ajuste payment_tools: descontar un cargo de la garantía retenida y anular un movimiento del día (esto último, sólo administradores).
   router.post('/reservations/:id/deposit-charge', (req, res) => res.json(R.chargeDeposit(db, req.params.id, req.body || {}, req.user.id)));
   router.post('/reservations/:id/payments/:payment/void', requireAdmin, (req, res) => res.json(R.voidPayment(db, req.params.id, req.params.payment, req.body || {}, req.user.id)));

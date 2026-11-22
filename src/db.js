@@ -713,6 +713,10 @@ function migrate(db) {
   if (!has('payments', 'notes')) db.exec('ALTER TABLE payments ADD COLUMN notes TEXT');
   // Sucursal donde se cobró (caja diaria). En los pagos viejos queda vacía: cuenta la sucursal de retiro.
   if (!has('payments', 'branch_id')) db.exec('ALTER TABLE payments ADD COLUMN branch_id INTEGER');
+  // Sucursal de cada usuario: lo que cobra entra en la caja de esa sucursal (funciones en prueba).
+  if (!has('users', 'branch_id')) db.exec('ALTER TABLE users ADD COLUMN branch_id INTEGER');
+  // Traslados de autos entre sucursales, para el historial del auto.
+  db.exec('CREATE TABLE IF NOT EXISTS vehicle_moves (id INTEGER PRIMARY KEY, vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE, at TEXT NOT NULL, from_branch_id INTEGER, to_branch_id INTEGER, user_id INTEGER)');
   // Gastos que se cargan solos (la cuota del seguro de cada mes): la clave evita cargarlos dos veces.
   if (!has('expenses', 'auto_key')) db.exec('ALTER TABLE expenses ADD COLUMN auto_key TEXT');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ix_expenses_auto ON expenses(auto_key)');

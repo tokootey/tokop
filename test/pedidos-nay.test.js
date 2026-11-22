@@ -4,6 +4,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { start, at } = require('./etapa2-helper');
+const { setSetting } = require('../src/db');
 
 test('seguro con kilometraje libre: no hay km incluidos ni se cobran excedentes', async () => {
   const app = await start();
@@ -59,6 +60,30 @@ test('cliente titular que no maneja: se pide la licencia de un conductor, no la 
 
     await parties({ customer_no_drive: 1, drivers: [{ full_name: 'Carla Conductora', doc_number: '8-1-1', license_number: 'L-9', license_expiry: '2035-01-01' }] });
     assert.equal((await out()).data.status, 'en_curso');
+  } finally {
+    app.close();
+  }
+});
+
+test('firma con funciones en prueba: el nombre y el documento salen de la reserva, no de lo que escribe el cliente', async () => {
+  const app = await start();
+  try {
+    const call = await app.as('admin');
+    const image = 'data:image/png;base64,iVBORw0KGgo=';
+    const signAs = async (body) => {
+      const r = app.reserve({ name: 'Marcela Ríos', vehicle_id: null });
+      const { token } = (await call('POST', `/api/reservations/${r.id}/signature`, { terms: [{ title: '1. OBJETO.', body: 'Texto.' }] })).data;
+      const url = `${app.base}/api/public/entrega/contrato/${token}`;
+      const lock = (await (await fetch(url)).json()).lock_signer;
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, accepted: true, image }) });
+      assert.equal(res.status, 200, await res.text());
+      const s = (await call('GET', `/api/reservations/${r.id}`)).data.signature;
+      return [lock, s.name, s.doc];
+    };
+    // Apagado: vale lo que escribe quien firma, como siempre.
+    assert.deepEqual(await signAs({ name: 'Otro Nombre', doc: '9-999-999' }), [false, 'Otro Nombre', '9-999-999']);
+    setSetting(app.db, 'pro_features', '1');
+    assert.deepEqual(await signAs({ name: 'Otro Nombre', doc: '9-999-999' }), [true, 'Marcela Ríos', '8-2']);
   } finally {
     app.close();
   }
