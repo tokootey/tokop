@@ -4985,7 +4985,7 @@ on(/^\/tarifas$/, async (view) => {
         { name: 'start_date', label: 'Desde', type: 'date', required: true },
         { name: 'days', label: 'Cantidad de días', type: 'number' },
         { name: 'end_date', label: 'O hasta esta fecha', type: 'date' },
-        { name: 'min_days', label: 'Días mínimos de alquiler', type: 'number' },
+        { name: 'min_days', label: 'Días mínimos de alquiler', type: 'number', when: () => proOn() },
         { name: 'active', label: 'Activa', type: 'checkbox', default: 1 },
       ],
       columns: [
