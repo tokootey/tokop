@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { getSettings } = require('./db');
+const { getSettings, proOn } = require('./db');
 const { fail } = require('./util');
 const R = require('./reservations');
 
@@ -344,6 +344,7 @@ function viewContract(db, token) {
       condition: conditionOf(db, dc.r.id),
       left_place: null,
       driver: { name: drv.driver_name, doc: drv.driver_doc },
+      lock_signer: proOn(db),
       can_sign: !drv.signed_at && !dc.stale && OPEN.includes(dc.r.status),
       stale: dc.stale,
       signed: drv.signed_at ? { at: drv.signed_at, name: drv.signed_name, doc: drv.signed_doc, hash: drv.signed_hash, image: drv.signed_image } : null,
@@ -357,6 +358,7 @@ function viewContract(db, token) {
     photos: photoFiles(db, r.id).map((f) => ({ id: f.id, name: f.name })),
     condition: conditionOf(db, r.id),
     left_place: row.signed_at ? row.left_place : null, // el lugar del auto se conoce recién al firmar
+    lock_signer: proOn(db),
     can_sign: !row.signed_at && !stale && OPEN.includes(r.status),
     stale,
     signed: row.signed_at ? { at: row.signed_at, name: row.signed_name, doc: row.signed_doc, hash: row.signed_hash, image: row.signed_image } : null,
@@ -370,11 +372,12 @@ const validImage = (image) => {
 };
 
 /** Lo que escribe y dibuja quien firma, revisado. */
-function signatureInput(body) {
-  const name = String(body.name || '').trim().slice(0, 120);
-  const doc = String(body.doc || '').trim().slice(0, 40);
-  if (name.length < 3) fail(400, 'Escribí tu nombre y apellido');
-  if (doc.length < 5) fail(400, 'Escribí tu número de documento');
+function signatureInput(body, fixed = {}) {
+  // Funciones en prueba: firma con el nombre y el documento de la reserva; lo que escriba sólo vale si la agencia no lo cargó.
+  const name = String(fixed.name || body.name || '').trim().slice(0, 120);
+  const doc = String(fixed.doc || body.doc || '').trim().slice(0, 40);
+  if (!fixed.name && name.length < 3) fail(400, 'Escribí tu nombre y apellido');
+  if (!fixed.doc && doc.length < 5) fail(400, 'Escribí tu número de documento');
   if (body.accepted !== true) fail(400, 'Tenés que aceptar el contrato para firmarlo');
   if (!validImage(body.image)) fail(400, 'Dibujá tu firma');
   return { name, doc };
@@ -385,7 +388,7 @@ function signDriver(db, { drv, row, r, stale }, body, ip) {
   if (drv.signed_at) fail(409, 'Este contrato ya está firmado');
   if (stale) fail(409, 'La reserva cambió: pedile a la agencia un link nuevo');
   if (!OPEN.includes(r.status)) fail(409, 'Esta reserva ya no se puede firmar');
-  const { name, doc } = signatureInput(body);
+  const { name, doc } = signatureInput(body, proOn(db) ? { name: drv.driver_name, doc: drv.driver_doc } : {});
   const at = new Date().toISOString();
   const hash = crypto.createHash('sha256').update([row.snapshot, name, doc, at, body.image].join('|')).digest('hex');
   db.prepare('UPDATE driver_signatures SET signed_at = ?, signed_name = ?, signed_doc = ?, signed_ip = ?, signed_image = ?, signed_hash = ? WHERE id = ?').run(at, name, doc, String(ip || '').slice(0, 64), body.image, hash, drv.id);
@@ -397,11 +400,11 @@ function signDriver(db, { drv, row, r, stale }, body, ip) {
 function sign(db, token, body, { ip, userAgent }) {
   const dc = driverContract(db, token);
   if (dc) return signDriver(db, dc, body, ip);
-  const { row, r, stale } = publicContract(db, token);
+  const { row, r, snap, stale } = publicContract(db, token);
   if (row.signed_at) fail(409, 'Este contrato ya está firmado');
   if (stale) fail(409, 'La reserva cambió: pedile a la agencia un link nuevo');
   if (!OPEN.includes(r.status)) fail(409, 'Esta reserva ya no se puede firmar');
-  const { name, doc } = signatureInput(body);
+  const { name, doc } = signatureInput(body, proOn(db) ? { name: snap.customer_name, doc: snap.customer_doc } : {});
   // Con pre-entrega, firmar completa la entrega. Si no se puede, la firma no se guarda: nunca queda firmado sin alquiler abierto.
   if (row.pre_delivery && r.status === 'confirmada') {
     // Por si se devolvió un pago o se sumó un cargo después de la pre-entrega.

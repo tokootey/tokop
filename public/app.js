@@ -862,7 +862,8 @@ const dueDocs = (v) =>
 const auxReadingFields = (v) => [
   { name: 'km', label: `Km (tiene ${num(v.km || 0)})`, type: 'number', required: true, attrs: `min="${Number(v.km) || 0}"` },
   { name: 'fuel', label: 'Combustible (octavos)', type: 'select', options: [['', 'Elegí…'], ...FUEL_OPTS], required: true },
-  ...panapassField('panapass', `Saldo de Panapass${v.panapass === null || v.panapass === undefined ? '' : ` (tiene ${num(v.panapass)})`}`),
+  // Funciones en prueba: el saldo de Panapass lo carga la oficina, no el auxiliar.
+  ...(proOn() ? [] : panapassField('panapass', `Saldo de Panapass${v.panapass === null || v.panapass === undefined ? '' : ` (tiene ${num(v.panapass)})`}`)),
 ];
 const auxSaveReading = (v, d) => {
   const panapass = d.panapass === undefined || d.panapass === '' || d.panapass === null ? v.panapass : Number(d.panapass);
@@ -991,6 +992,8 @@ async function auxFleet(view) {
   });
   $$('[data-move]', view).forEach((sel) =>
     sel.addEventListener('change', async () => {
+      // Funciones en prueba: se confirma antes de mover, por si fue un toque sin querer.
+      if (proOn() && !(await confirmModal({ title: `Mover ${of(sel).plate}`, text: `El auto pasa a ${sel.selectedOptions[0].text}.`, ok: 'Mover' }))) return route();
       await run(() => PUT(`/vehicles/${of(sel).id}`, { branch_id: Number(sel.value) }), 'Auto movido de sucursal');
       route();
     }),
@@ -3728,7 +3731,7 @@ ${String(s.contract_front_notes || '').trim() ? `<div style="border:2px solid #1
     ${line('Placa', r.vehicle_plate ? `<b>${esc(r.vehicle_plate)}</b>` : '')}
     ${line('Color / año', r.vehicle_plate ? `${esc(r.vehicle_color || '')} ${r.vehicle_year ? '· ' + esc(r.vehicle_year) : ''}` : '')}
     ${line('Categoría', `${esc(r.category_code)} · ${esc(r.category_name)}`)}
-    ${panapassOn() && r.vehicle_panapass_number ? line('Cuenta Panapass', esc(r.vehicle_panapass_number)) : ''}
+    ${panapassOn() && r.vehicle_panapass_number ? line('Cuenta Panapass', esc(r.vehicle_panapass_number) + (proOn() && c && c.out_panapass !== null && c.out_panapass !== undefined ? ` · saldo ${money(c.out_panapass)}` : '')) : ''}
   </table>
   <h2>Período del alquiler</h2><table>
     ${line('Retiro', `${fmtDT(r.pickup_at)} · ${esc(r.pickup_branch_name || '')}`)}
@@ -3781,7 +3784,7 @@ ${String(s.contract_front_notes || '').trim() ? `<div style="border:2px solid #1
   ${signedDrivers(r).length ? signedDrivers(r).map((d) => `<div><img class="sig" src="${esc(d.image)}" alt="Firma"/><small class="sig-by">Firma electrónica: ${esc(d.name)} · ${esc(d.doc)}</small>Conductor adicional</div>`).join('') : `<div>${choferesMode() ? 'Garante' : 'Conductor adicional'}<small>Aclaración:<br>${docWord()}:</small></div>`}
   ${companySigns() ? `<div>Por ${esc(s.company_name || 'la Empresa')}<small>Aclaración:</small></div>` : ''}
 </div>
-
+${/* Funciones en prueba: la factura sale sólo con los datos del alquiler. */ invoiced(r) && proOn() ? '<style>.page2,.annex{display:none}</style>' : ''}
 <div class="page2">
   <div class="head"><div><b>${esc(s.company_name || '')}</b></div><div class="right">Condiciones generales · ${invoiced(r) ? 'Factura N° ' + esc(c.number) : delivered ? 'Contrato N° ' + esc(c.number) : 'Reserva ' + esc(r.code)}</div></div>
   <h2>Condiciones generales del alquiler</h2>
@@ -7107,13 +7110,15 @@ async function signPage() {
     return;
   }
   // En la demo la firma es una simulación (scripts/demo/runtime.js).
-  const demoNote = window.__demo ? `<p class="notice warn">${L('Esto es una demostración: la firma no se guarda ni se envía a ningún lado.', 'This is a demo: the signature is not saved or sent anywhere.')}</p>` : '';
+  // Quien firma: con lock_signer (funciones en prueba) el nombre y el documento vienen de la reserva y no se cambian.
+  const signer = d.driver || { name: d.customer_name, doc: d.customer_doc };
+  const demoNote = window.__demo ?`<p class="notice warn">${L('Esto es una demostración: la firma no se guarda ni se envía a ningún lado.', 'This is a demo: the signature is not saved or sent anywhere.')}</p>` : '';
   const page = publicPage(`${head}
     <form class="card qr" id="sign-form">
       ${demoNote}
       ${d.driver ? `<p class="notice">${L('Firmás como conductor adicional de esta reserva.', 'You are signing as an additional driver on this booking.')}</p>` : ''}
-      <label>${L('Nombre y apellido', 'Full name')}<input name="name" required maxlength="120" value="${esc((d.driver ? d.driver.name : d.customer_name) || '')}"/></label>
-      <label>${L('Documento', 'ID or passport')}<input name="doc" required maxlength="40" value="${esc((d.driver ? d.driver.doc : d.customer_doc) || '')}"/></label>
+      <label>${L('Nombre y apellido', 'Full name')}<input name="name" required maxlength="120" value="${esc(signer.name || '')}"${d.lock_signer && signer.name ? ' readonly' : ''}/></label>
+      <label>${L('Documento', 'ID or passport')}<input name="doc" required maxlength="40" value="${esc(signer.doc || '')}"${d.lock_signer && signer.doc ? ' readonly' : ''}/></label>
       <label class="check"><input type="checkbox" name="accepted" required/> ${L('Leí y acepto este contrato y sus condiciones', 'I have read and accept this agreement and its terms')}${seen}</label>
       <div><b>${L('Firmá acá con el dedo', 'Sign here with your finger')}</b><canvas class="sign-pad" id="sign-pad" aria-label="${L('Espacio para firmar', 'Signature area')}"></canvas>
       <button class="btn small link" type="button" id="sign-clear">${L('Borrar y volver a firmar', 'Clear and sign again')}</button></div>
