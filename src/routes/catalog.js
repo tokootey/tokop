@@ -4,7 +4,7 @@ const express = require('express');
 const { requireAdmin, audit } = require('../auth');
 const { fail, pick, normDate, nowLocal, fmtLocal } = require('../util');
 const { removeCustomerDocuments } = require('./files');
-const { getSetting, phoneHint } = require('../db');
+const { getSetting, phoneHint, proOn } = require('../db');
 
 /**
  * CRUD genérico para tablas maestras.
@@ -179,6 +179,8 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     }
     if (!b.end_date) fail(400, 'Poné la cantidad de días o hasta qué fecha dura la promo');
     if (normDate(b.end_date) < start) fail(400, 'La promo termina antes de empezar');
+    // Días mínimos: sólo en agencias con funciones en prueba; en las demás queda en 0.
+    b.min_days = proOn(db) ? Math.max(0, Math.floor(Number(b.min_days) || 0)) : 0;
     const category = db.prepare('SELECT daily_rate FROM categories WHERE id = ?').get(Number(b.category_id));
     if (!category) fail(400, 'Elegí el auto de la promo');
     if (!(Number(b.promo_rate) > 0) || Number(b.promo_rate) >= category.daily_rate) fail(400, `El precio de promo tiene que ser mayor que 0 y menor que la tarifa del auto (${category.daily_rate})`);
@@ -188,7 +190,7 @@ function catalogRoutes(db, { uploadsDir } = {}) {
     '/promotions',
     crud(db, {
       table: 'promotions',
-      fields: ['name', 'category_id', 'start_date', 'end_date', 'promo_rate', 'active'],
+      fields: ['name', 'category_id', 'start_date', 'end_date', 'promo_rate', 'active', 'min_days'],
       required: ['name', 'category_id', 'start_date', 'end_date', 'promo_rate'],
       order: 'start_date DESC',
       adminWrite: true,

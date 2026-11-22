@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS promotions (
   start_date TEXT NOT NULL,
   end_date TEXT NOT NULL,
   promo_rate REAL NOT NULL,
-  active INTEGER NOT NULL DEFAULT 1
+  active INTEGER NOT NULL DEFAULT 1,
+  min_days INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS extras (
@@ -727,6 +728,8 @@ function migrate(db) {
   // Precios propios de cada categoría (0 = no usar): conductor joven, sin depósito y combustible faltante. Y del lugar: recargo por categoría y horarios.
   for (const col of ['young_rate', 'no_deposit_fee', 'fuel_charge']) if (!has('categories', col)) db.exec(`ALTER TABLE categories ADD COLUMN ${col} REAL NOT NULL DEFAULT 0`);
   for (const col of ['fee_by_category', 'hours']) if (!has('branches', col)) db.exec(`ALTER TABLE branches ADD COLUMN ${col} TEXT`);
+  // Promo que vale recién desde N días de alquiler (0 = cualquier cantidad).
+  if (!has('promotions', 'min_days')) db.exec('ALTER TABLE promotions ADD COLUMN min_days INTEGER NOT NULL DEFAULT 0');
   // Horario de retiro que acepta el cotizador público en cada sucursal (vacío = sin límite).
   for (const col of ['pickup_from', 'late_after', 'late_pickup_from']) {
     if (!has('branches', col)) db.exec(`ALTER TABLE branches ADD COLUMN ${col} TEXT`);

@@ -4985,10 +4985,11 @@ on(/^\/tarifas$/, async (view) => {
         { name: 'start_date', label: 'Desde', type: 'date', required: true },
         { name: 'days', label: 'Cantidad de días', type: 'number' },
         { name: 'end_date', label: 'O hasta esta fecha', type: 'date' },
+        { name: 'min_days', label: 'Días mínimos de alquiler', type: 'number', when: () => proOn() },
         { name: 'active', label: 'Activa', type: 'checkbox', default: 1 },
       ],
       columns: [
-        { label: 'Promo', render: (r) => `<b>${esc(r.name)}</b>${r.active ? '' : ' <span class="badge">pausada</span>'}` },
+        { label: 'Promo', render: (r) => `<b>${esc(r.name)}</b>${r.min_days > 1 ? ` <span class="badge">desde ${r.min_days} días</span>` : ''}${r.active ? '' : ' <span class="badge">pausada</span>'}` },
         { label: 'Auto', render: (r) => esc((state.categories.find((x) => x.id === r.category_id) || {}).name || '—') },
         { label: 'Precio por día', render: (r) => `<s>${money((state.categories.find((x) => x.id === r.category_id) || {}).daily_rate || 0)}</s> ${money(r.promo_rate)}` },
         { label: 'Días', render: (r) => `${fmtD(r.start_date)} → ${fmtD(r.end_date)}` },

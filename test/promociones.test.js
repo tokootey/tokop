@@ -69,6 +69,18 @@ test('promoción: el precio fijado no suma temporada ni demanda, y pausada no se
   assert.equal(computeQuote(db, range).total, rate * 6);
 });
 
+test('promoción desde N días: los alquileres más cortos pagan la tarifa normal', () => {
+  const { db, car, rate, promo } = setup();
+  promo('2099-05-01', '2099-05-31', rate / 2);
+  db.prepare('UPDATE promotions SET min_days = 3').run();
+  const quote = (returnAt) => computeQuote(db, { category_id: car.category_id, pickup_at: TRIP.pickup_at, return_at: returnAt });
+
+  const two = quote('2099-05-12T10:00');
+  assert.equal(two.promo, null);
+  assert.equal(two.total, rate * 2);
+  assert.equal(quote(TRIP.return_at).total, (rate / 2) * 3, 'con 3 días ya entra');
+});
+
 test('precio final: reemplaza al calculado, se conserva al editar y se puede volver a las tarifas', () => {
   const { db, car, customer } = setup();
   const r = R.createReservation(db, { customer_id: customer, category_id: car.category_id, vehicle_id: car.id, ...TRIP, status: 'confirmada' });
