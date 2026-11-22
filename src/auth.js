@@ -152,7 +152,7 @@ function requireUser(db) {
     const now = new Date();
     const row = db
       .prepare(
-        `SELECT u.id, u.name, u.email, u.role, u.must_change_password, s.created_at, s.last_seen
+        `SELECT u.id, u.name, u.email, u.role, u.branch_id, u.must_change_password, s.created_at, s.last_seen
          FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.token = ? AND s.expires_at > ? AND u.active = 1`,
       )
@@ -168,7 +168,7 @@ function requireUser(db) {
         h,
       );
     }
-    req.user = { id: row.id, name: row.name, email: row.email, role: row.role, must_change_password: Boolean(row.must_change_password) };
+    req.user = { id: row.id, name: row.name, email: row.email, role: row.role, branch_id: row.branch_id || null, must_change_password: Boolean(row.must_change_password) };
     req.sessionHash = h;
     next();
   };

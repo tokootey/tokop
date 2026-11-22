@@ -285,8 +285,14 @@ function computeReturnCharges(db, reservation, contract, input, { byPeriods = fa
 
   const missingEighths = Math.max(0, Number(contract.out_fuel) - Number(input.in_fuel));
   const perEighth = category.fuel_charge > 0 ? category.fuel_charge : Number(settings.fuel_charge_per_eighth) || 0;
-  if (missingEighths > 0 && perEighth > 0) {
-    lines.push({ concept: `Combustible faltante (${missingEighths}/8)`, amount: round2(missingEighths * perEighth) });
+  // Funciones en prueba: se cobra por cuartos enteros (1/8 faltante cuenta como 1/4), o el importe acordado con el cliente si se cargó uno.
+  const pro = settings.pro_features === '1';
+  const agreed = pro && input.fuel_amount !== undefined && input.fuel_amount !== null && input.fuel_amount !== '' ? Number(input.fuel_amount) : null;
+  const quarters = Math.ceil(missingEighths / 2);
+  if (agreed !== null) {
+    if (agreed > 0) lines.push({ concept: 'Combustible (importe acordado)', amount: round2(agreed) });
+  } else if (missingEighths > 0 && perEighth > 0) {
+    lines.push(pro ? { concept: `Combustible faltante (${quarters}/4)`, amount: round2(quarters * 2 * perEighth) } : { concept: `Combustible faltante (${missingEighths}/8)`, amount: round2(missingEighths * perEighth) });
   }
 
   // Panapass (peajes de Panamá): si vuelve con menos saldo del que salió, la diferencia la paga el cliente. Si vuelve con más, no se cobra ni se devuelve.

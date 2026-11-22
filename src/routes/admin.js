@@ -121,7 +121,7 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
 
   // --- Usuarios ---
   router.get('/users', requireAdmin, (_req, res) => {
-    res.json(db.prepare('SELECT id, name, email, role, active, must_change_password, created_at FROM users ORDER BY name').all());
+    res.json(db.prepare('SELECT id, name, email, role, branch_id, active, must_change_password, created_at FROM users ORDER BY name').all());
   });
 
   router.post('/users', requireAdmin, (req, res) => {
@@ -134,8 +134,8 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
     try {
       // La contraseña la eligió el administrador: la persona la cambia en su primer ingreso.
       const r = db
-        .prepare('INSERT INTO users (name, email, password_hash, role, must_change_password) VALUES (?, ?, ?, ?, 1)')
-        .run(name, email, hashPassword(password), ROLES.includes(role) ? role : 'operador');
+        .prepare('INSERT INTO users (name, email, password_hash, role, must_change_password, branch_id) VALUES (?, ?, ?, ?, 1, ?)')
+        .run(name, email, hashPassword(password), ROLES.includes(role) ? role : 'operador', Number(req.body.branch_id) || null);
       audit(db, req, 'usuario_creado', `${email} (${ROLES.includes(role) ? role : 'operador'})`);
       res.status(201).json({ id: Number(r.lastInsertRowid) });
     } catch (err) {
@@ -151,10 +151,11 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
     if (Number(req.params.id) === req.user.id && ((ROLES.includes(role) && role !== 'admin') || active === 0 || active === false)) {
       fail(400, 'No podés quitarte permisos de administrador ni desactivarte');
     }
-    db.prepare('UPDATE users SET name = ?, role = ?, active = ? WHERE id = ?').run(
+    db.prepare('UPDATE users SET name = ?, role = ?, active = ?, branch_id = ? WHERE id = ?').run(
       name || u.name,
       ROLES.includes(role) ? role : u.role,
       active === undefined ? u.active : active ? 1 : 0,
+      req.body.branch_id === undefined ? u.branch_id : Number(req.body.branch_id) || null,
       u.id,
     );
     if (password) {

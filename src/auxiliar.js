@@ -1,6 +1,7 @@
 'use strict';
 
 const { HttpError, pick } = require('./util');
+const { proOn } = require('./db');
 
 const ROLES = ['admin', 'operador', 'auxiliar', 'contable'];
 
@@ -18,6 +19,14 @@ const ALLOWED = [
   ['POST', /^\/reservations\/\d+\/note$/],
   ['GET', /^\/files\/\d+$/],
 ];
+// Funciones en prueba: también manda autos al taller y los saca. Costos no ve ni carga.
+// shortcut: no reasigna las reservas que tenía ese auto; eso lo hace un operador desde Autos.
+const SHOP = [
+  ['GET', /^\/maintenance$/],
+  ['POST', /^\/maintenance$/],
+  ['PUT', /^\/maintenance\/\d+$/],
+];
+const SHOP_FIELDS = ['vehicle_id', 'kind', 'description', 'start_date', 'end_date', 'km', 'status'];
 const PHOTO_STAGES = ['entrega', 'devolucion'];
 // De un auto solo cambia dónde está y cómo está.
 const VEHICLE_FIELDS = ['branch_id', 'km', 'fuel', 'panapass'];
@@ -34,8 +43,11 @@ function auxiliarGuard(db) {
   return (req, res, next) => {
     if (!req.user || req.user.role !== 'auxiliar') return next();
     const deny = () => next(new HttpError(403, 'Tu usuario no tiene permiso para eso'));
-    if (!ALLOWED.some(([method, path]) => method === req.method && path.test(req.path))) return deny();
-    if (req.method === 'PUT') req.body = pick(req.body, VEHICLE_FIELDS);
+    const is = (list) => list.some(([method, path]) => method === req.method && path.test(req.path));
+    const shop = proOn(db) && is(SHOP);
+    if (!is(ALLOWED) && !shop) return deny();
+    if (shop && req.method !== 'GET') req.body = pick(req.body, SHOP_FIELDS);
+    else if (req.method === 'PUT') req.body = pick(req.body, VEHICLE_FIELDS);
     if (req.method === 'POST' && /\/files$/.test(req.path) && !PHOTO_STAGES.includes(req.query.stage)) return deny();
     const file = req.path.match(/^\/files\/(\d+)$/);
     if (file && !PHOTO_STAGES.includes((db.prepare('SELECT stage FROM reservation_files WHERE id = ?').get(Number(file[1])) || {}).stage)) return deny();
