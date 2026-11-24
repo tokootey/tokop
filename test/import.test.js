@@ -193,6 +193,22 @@ test('clientes: nombre y apellido separados, duplicados por documento/email y na
   assert.equal(same.counts.sin_cambios, 1);
 });
 
+test('clientes: la lista de bloqueados bloquea al que ya estaba (sin tocarle el nombre) y crea bloqueado al que no', async () => {
+  const id = db.prepare("INSERT INTO customers (full_name, doc_number) VALUES ('Omar Augusto Pérez', '8-848-1863')").run().lastInsertRowid;
+  const csv = 'Nombre,Documento,Motivo de bloqueo\nOMAR AUGUSTO,88481863,Mala paga · NO ALQUILAR\nKEVIN ANTONIO,8-1023-999,Interno bloqueado\nANA LIBRE,8-1-1,No\n';
+  const a = await analyze('clientes', csv);
+  assert.equal(a.data.mapping.blocked_reason, 2);
+  const r = await importAuto('clientes', csv);
+  assert.deepEqual([r.counts.actualizado, r.counts.creado], [1, 2], JSON.stringify(r.rows));
+  const reason = (doc) => db.prepare('SELECT full_name, blocked_reason FROM customers WHERE doc_number = ?').get(doc);
+  assert.deepEqual({ ...reason('8-848-1863') }, { full_name: 'Omar Augusto Pérez', blocked_reason: 'Mala paga · NO ALQUILAR' });
+  assert.equal(reason('8-1023-999').blocked_reason, 'Interno bloqueado');
+  assert.equal(reason('8-1-1').blocked_reason, null, '"No" no es un motivo');
+  // Volver a importar no pisa un motivo ya cargado.
+  await importAuto('clientes', 'Nombre,Documento,Motivo de bloqueo\nOMAR AUGUSTO,88481863,Otro motivo\n');
+  assert.equal(db.prepare('SELECT blocked_reason FROM customers WHERE id = ?').get(id).blocked_reason, 'Mala paga · NO ALQUILAR');
+});
+
 test('reservas: fechas, horas, clientes, autos, estados, pagos y sin duplicar', async () => {
   const csv = [
     'Nro reserva\tCliente\tDNI\tFecha entrega\tHora entrega\tFecha devolución\tHora devolución\tLugar de entrega\tPatente\tEstado\tTotal\tSeña',

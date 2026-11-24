@@ -123,6 +123,8 @@ const KINDS = {
       { key: 'phone', label: 'Teléfono', test: (k) => PHONE.test(k) },
       { key: 'address', label: 'Domicilio', test: (k) => /direcc|domicilio|address|calle/.test(k) },
       { key: 'last_name', label: 'Apellido (si está aparte)', test: (k) => /^apellidos?$|last_?name|surname/.test(k) },
+      // Va antes que el nombre: "cliente_bloqueado" es el motivo, no el nombre.
+      { key: 'blocked_reason', label: 'Motivo de bloqueo (no se le alquila)', test: (k) => /bloque|blocked|no_alquilar|lista_negra/.test(k) },
       { key: 'full_name', label: 'Nombre', required: true, test: (k) => /nombre|cliente|titular|full_?name|^name$|razon_social|pasajero/.test(k) },
       { key: 'notes', label: 'Observaciones', test: (k) => NOTES.test(k) },
     ],
@@ -181,7 +183,7 @@ const KINDS = {
 
 // Orden en que se muestran los campos en pantalla (el de arriba es el orden en que se reconocen).
 const DISPLAY_ORDER = {
-  clientes: ['full_name', 'last_name', 'doc_type', 'doc_number', 'email', 'phone', 'address', 'birth_date', 'license_number', 'license_expiry', 'notes'],
+  clientes: ['full_name', 'last_name', 'doc_type', 'doc_number', 'email', 'phone', 'address', 'birth_date', 'license_number', 'license_expiry', 'notes', 'blocked_reason'],
   flota: ['plate', 'brand', 'model', 'year', 'color', 'category', 'branch', 'status', 'km', 'fuel', 'insurance_company', 'insurance_policy', 'insurance_expiry', 'vtv_expiry', 'panapass_number', 'notes'],
   reservas: ['external_id', 'customer_name', 'customer_last_name', 'customer_doc', 'customer_email', 'customer_phone', 'pickup_date', 'pickup_time', 'pickup_branch', 'return_date', 'return_time', 'return_branch', 'days', 'plate', 'category', 'status', 'total', 'paid', 'flight', 'notes'],
 };
@@ -382,7 +384,7 @@ function lookup(db, table, text) {
   return rows.length === 1 ? rows[0] : null;
 }
 
-const CUSTOMER_FIELDS = ['full_name', 'doc_type', 'doc_number', 'email', 'phone', 'address', 'birth_date', 'license_number', 'license_expiry', 'notes'];
+const CUSTOMER_FIELDS = ['full_name', 'doc_type', 'doc_number', 'email', 'phone', 'address', 'birth_date', 'license_number', 'license_expiry', 'notes', 'blocked_reason'];
 const VEHICLE_FIELDS = ['plate', 'brand', 'model', 'year', 'color', 'category_id', 'branch_id', 'status', 'km', 'fuel', 'insurance_company', 'insurance_policy', 'insurance_expiry', 'vtv_expiry', 'panapass_number', 'notes'];
 
 /**
@@ -459,6 +461,10 @@ function importCustomer(db, ctx, row) {
     else warn(`Fecha no reconocida en "${ctx.label(k)}": ${read.get(row, k)}`);
   }
   data.notes = joinNotes(read.get(row, 'notes'), read.extra(row)) || undefined;
+  // Lista de bloqueados: con motivo, a ese cliente no se le toman reservas (mismo tope que al bloquear a mano).
+  // Una columna "Bloqueado" con "No" o "0" no es un motivo: ese cliente no queda bloqueado.
+  const blocked = read.get(row, 'blocked_reason');
+  if (blocked && !/^(no|n|0|false|-+)$/i.test(blocked)) data.blocked_reason = blocked.slice(0, 300);
   const existingId = findCustomer(idx, data);
   const existing = existingId ? db.prepare('SELECT * FROM customers WHERE id = ?').get(existingId) : null;
   const res = upsert(db, 'customers', CUSTOMER_FIELDS, existing, data, mode);
