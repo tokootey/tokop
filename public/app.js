@@ -6281,7 +6281,7 @@ async function logoDataUrl(file) {
    ============================================================ */
 const IMPORT_KINDS = [
   { key: 'flota', label: '1 · Flota', hint: 'Placa, marca, modelo, año, categoría, estado, km, vencimientos de seguro e inspección técnica.' },
-  { key: 'clientes', label: '2 · Clientes', hint: 'Nombre, documento, email, teléfono, domicilio, licencia, fecha de nacimiento.' },
+  { key: 'clientes', label: '2 · Clientes', hint: 'Nombre, documento, email, teléfono, domicilio, licencia, fecha de nacimiento. Para una lista de bloqueados, sumá una columna "Motivo de bloqueo".' },
   { key: 'reservas', label: '3 · Reservas', hint: 'Cliente, fechas y horas de entrega y devolución, placa o categoría, estado, total y seña.' },
 ];
 const IMPORT_ACTION = {
