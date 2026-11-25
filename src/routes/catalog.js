@@ -47,7 +47,9 @@ function crud(db, { table, fields, required = [], order = 'id', search = [], adm
       params.push(req.query.branch);
     }
     if (where.length) sql = `SELECT * FROM (${sql}) WHERE ${where.join(' AND ')}`;
-    res.json(db.prepare(`${sql} ORDER BY ${order}`).all(...params));
+    // ?limit=N: sólo los primeros N (la lista de clientes de una agencia grande no se dibuja entera).
+    const limit = Math.min(parseInt(req.query.limit, 10) || 0, 5000);
+    res.json(db.prepare(`${sql} ORDER BY ${order}${limit ? ' LIMIT ?' : ''}`).all(...params, ...(limit ? [limit] : [])));
   });
 
   router.get('/:id', (req, res) => {
@@ -262,10 +264,14 @@ function catalogRoutes(db, { uploadsDir } = {}) {
                 FROM vehicles v JOIN categories c ON c.id = v.category_id LEFT JOIN branches b ON b.id = v.branch_id`,
     }),
   );
+  // Al editar, un dato que ya estaba guardado no se vuelve a controlar: un cliente importado con el teléfono o la licencia
+  // viejos se tiene que poder completar igual. El control vale cuando se escribe un dato nuevo.
+  const saved = (req, field, value) =>
+    req.method === 'PUT' && String(db.prepare(`SELECT ${field} AS v FROM customers WHERE id = ?`).get(Number(req.path.slice(1)) || 0)?.v ?? '').trim() === value;
   // WhatsApp del cliente: un número de 8 a 15 dígitos, para que el voucher no se mande a un número mal cargado.
   router.use('/customers', (req, _res, next) => {
     const phone = String((req.body || {}).phone || '').trim();
-    if (!['POST', 'PUT'].includes(req.method) || !phone) return next();
+    if (!['POST', 'PUT'].includes(req.method) || !phone || saved(req, 'phone', phone)) return next();
     const digits = phone.replace(/\D/g, '').length;
     if (!/^[+\d\s().-]+$/.test(phone) || digits < 8 || digits > 15) fail(400, `El WhatsApp tiene que ser un número con código de país, por ejemplo ${phoneHint(getSetting(db, 'country'))}`);
     next();
@@ -284,7 +290,7 @@ function catalogRoutes(db, { uploadsDir } = {}) {
   // Licencia vencida: no se guarda, así no queda un cliente que después no puede retirar el auto.
   router.use('/customers', (req, _res, next) => {
     const expiry = ['POST', 'PUT'].includes(req.method) ? normDate((req.body || {}).license_expiry) : null;
-    if (expiry && expiry < nowLocal().slice(0, 10)) fail(400, 'La licencia está vencida: cargá una vigente');
+    if (expiry && expiry < nowLocal().slice(0, 10) && !saved(req, 'license_expiry', expiry)) fail(400, 'La licencia está vencida: cargá una vigente');
     next();
   });
   router.use(
