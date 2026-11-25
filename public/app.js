@@ -669,9 +669,12 @@ on(/^\/panel$/, async (view) => {
       ${pendAlerts(r).length ? `<p class="pend-alerts">${ICON.alert}${pendAlerts(r).map(esc).join(' · ')}</p>` : ''}
       <div class="trip-actions"><button class="btn primary" type="button" data-confirm="${r.id}">${ICON.check}Confirmar</button><a class="btn" href="#/reservas/${r.id}">Ver detalle</a>${waLink(r.customer_phone)}</div>
     </div>`;
+  // Salen y Vuelven hoy se pueden cerrar: quedan cerrados en este dispositivo hasta que los abran.
+  const shut = foldedHoy();
   const column = (title, icon, color, rows, kind, empty) => `<div class="hoy-col">
-      <h2><svg viewBox="0 0 24 24" stroke="${color}" aria-hidden="true"><path d="${icon}"/></svg>${title}${rows.length ? ` <span class="count">${rows.length}</span>` : ''}</h2>
-      ${rows.length ? rows.map((r) => trip(r, kind)).join('') : `<p class="hoy-empty">${ICON.calm}${empty}</p>`}
+      <h2><svg viewBox="0 0 24 24" stroke="${color}" aria-hidden="true"><path d="${icon}"/></svg>${title}${rows.length ? ` <span class="count">${rows.length}</span>` : ''}
+        <button type="button" class="btn small" style="margin-left:auto" data-fold="${kind}" aria-expanded="${!shut[kind]}">${shut[kind] ? 'Abrir ▼' : 'Cerrar ▲'}</button></h2>
+      <div data-fold-body${shut[kind] ? ' hidden' : ''}>${rows.length ? rows.map((r) => trip(r, kind)).join('') : `<p class="hoy-empty">${ICON.calm}${empty}</p>`}</div>
     </div>`;
   const now = new Date();
   const first = String(state.user.name || '').split(' ')[0];
@@ -742,6 +745,15 @@ on(/^\/panel$/, async (view) => {
     }`;
   // Antes de confirmar se ve lo importante (auto, notas, lo que falta); al confirmar se abre el voucher.
   // Con el WhatsApp de la agencia conectado lo manda el sistema; si no, se abre WhatsApp con el mensaje escrito y queda anotado.
+  $$('[data-fold]', view).forEach((b) =>
+    b.addEventListener('click', () => {
+      const body = b.closest('.hoy-col').querySelector('[data-fold-body]');
+      body.hidden = !body.hidden;
+      b.textContent = body.hidden ? 'Abrir ▼' : 'Cerrar ▲';
+      b.setAttribute('aria-expanded', String(!body.hidden));
+      saveFoldedHoy({ ...foldedHoy(), [b.dataset.fold]: body.hidden });
+    }),
+  );
   $$('[data-remind]', view).forEach((a) =>
     a.addEventListener('click', async (e) => {
       if (state.settings.whatsapp_api) e.preventDefault();
@@ -841,6 +853,19 @@ document.addEventListener('click', (e) => {
    Auxiliar de flota: fotos, km y combustible. No entra a las reservas ni ve precios.
    ============================================================ */
 const isAux = () => !!state.user && state.user.role === 'auxiliar';
+// Qué listas de Hoy cerró esta persona (sólo en este dispositivo; si el navegador no guarda, quedan abiertas).
+const foldedHoy = () => {
+  try {
+    return JSON.parse(localStorage.getItem('floty_hoy_cerrado')) || {};
+  } catch {
+    return {};
+  }
+};
+const saveFoldedHoy = (v) => {
+  try {
+    localStorage.setItem('floty_hoy_cerrado', JSON.stringify(v));
+  } catch {}
+};
 const ROLE_LABEL = { admin: 'Administrador', operador: 'Operador', auxiliar: 'Auxiliar de flota', contable: 'Contabilidad (consulta y gastos)' };
 const isContable = () => !!state.user && state.user.role === 'contable';
 // Palabra que se entiende en todos los países; Panamá (Ancon) pidió "Revisado".
@@ -862,12 +887,15 @@ const dueDocs = (v) =>
 
 /** Km y combustible de un auto: quedan como punto de partida de la entrega y de la devolución. */
 const auxReadingFields = (v) => [
-  { name: 'km', label: `Km (tiene ${num(v.km || 0)})`, type: 'number', required: true, attrs: `min="${Number(v.km) || 0}"` },
+  // Texto y no número: "41.200" o "41,200" el navegador los rechazaba y el auxiliar no podía guardar.
+  { name: 'km', label: `Km (tiene ${num(v.km || 0)})`, required: true, attrs: 'inputmode="numeric" autocomplete="off"' },
   { name: 'fuel', label: 'Combustible (octavos)', type: 'select', options: [['', 'Elegí…'], ...FUEL_OPTS], required: true },
   // Funciones en prueba: el saldo de Panapass lo carga la oficina, no el auxiliar.
   ...(proOn() ? [] : panapassField('panapass', `Saldo de Panapass${v.panapass === null || v.panapass === undefined ? '' : ` (tiene ${num(v.panapass)})`}`)),
 ];
 const auxSaveReading = (v, d) => {
+  d = { ...d, km: Number(String(d.km).replace(/\D/g, '')) }; // sólo los dígitos: los puntos y comas son de miles
+  if (d.km < (Number(v.km) || 0)) throw new Error(`El km no puede ser menor al que ya tiene el auto (${num(v.km)})`);
   const panapass = d.panapass === undefined || d.panapass === '' || d.panapass === null ? v.panapass : Number(d.panapass);
   return d.km !== v.km || Number(d.fuel) !== v.fuel || panapass !== v.panapass ? PUT(`/vehicles/${v.id}`, { km: d.km, fuel: Number(d.fuel), ...(panapassOn() ? { panapass } : {}) }) : null;
 };
@@ -4356,16 +4384,19 @@ const VEHICLE_FIELDS = [
 /** Pantalla de listado + alta/edición/baja genérica. */
 // rowFilter: qué filas mostrar (p. ej. solo los seguros); defaults: valores que se agregan al crear.
 // summary(rows): una línea arriba de la tabla (p. ej. el total de los gastos que se ven).
-function crudPage({ title, endpoint, fields, columns, searchable, after, before, extraActions, onEdit, confirmEdit, canWrite = () => true, canDelete, nav, rowFilter, defaults, summary }) {
+function crudPage({ title, endpoint, fields, columns, searchable, after, before, extraActions, onEdit, confirmEdit, canWrite = () => true, canDelete, nav, rowFilter, defaults, summary, limit, searchHint }) {
   const mayDelete = () => (canDelete ? canDelete() : canWrite());
   return async (view) => {
     if (before) await before();
     view.innerHTML = `<div class="page-head"><h1>${esc(title)}</h1>${canWrite() ? '<button class="btn primary" data-new>+ Agregar</button>' : ''}</div>
-      ${searchable ? '<div class="toolbar"><input id="crud-q" placeholder="Buscar…"/></div>' : ''}
+      ${searchable ? `<div class="toolbar"><input id="crud-q" type="search" placeholder="${esc(searchHint || 'Buscar…')}"/></div>` : ''}
       ${summary ? '<div id="crud-summary"></div>' : ''}<div class="table-wrap" id="crud-table"></div>`;
     const load = async () => {
       const q = searchable ? $('#crud-q').value.trim() : '';
-      const all = await GET(`/${endpoint}${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+      // Con limit se pide uno de más, para saber si quedan otros sin mostrar.
+      const got = await GET(`/${endpoint}?${new URLSearchParams({ ...(q && { q }), ...(limit && { limit: limit + 1 }) })}`);
+      const more = limit && got.length > limit;
+      const all = more ? got.slice(0, limit) : got;
       const rows = rowFilter ? all.filter(rowFilter) : all;
       if (summary) $('#crud-summary').innerHTML = summary(rows);
       $('#crud-table').innerHTML = rows.length
@@ -4375,8 +4406,8 @@ function crudPage({ title, endpoint, fields, columns, searchable, after, before,
               (r) => `<tr data-id="${r.id}">${columns.map((c) => `<td>${c.render ? c.render(r) : esc(r[c.key])}</td>`).join('')}
               <td class="right nowrap">${extraActions ? extraActions(r) : ''}${canWrite() ? '<button class="btn small" data-edit>Editar</button>' : ''}${mayDelete() ? ' <button class="btn small danger" data-del>Borrar</button>' : ''}</td></tr>`,
             )
-            .join('')}</tbody></table>`
-        : '<div class="card muted">Todavía no hay registros.</div>';
+            .join('')}</tbody></table>${more ? `<p class="muted" style="padding:10px 12px">Se ven los primeros ${limit}. Escribí arriba para encontrar a los demás.</p>` : ''}`
+        : `<div class="card muted">${q ? 'No hay ninguno con eso.' : 'Todavía no hay registros.'}</div>`;
       $$('[data-edit]', view).forEach((b) =>
         b.addEventListener('click', () => {
           const row = rows.find((r) => r.id === Number(b.closest('tr').dataset.id));
@@ -4733,6 +4764,8 @@ on(
       !['full_name', 'doc_number', 'birth_date'].some((f) => String(row[f] ?? '') !== String(d[f] ?? '')) ||
       confirmModal({ title: 'Cambiar datos del cliente', text: `Vas a cambiar el nombre, el documento o la fecha de nacimiento de ${row.full_name}. Queda así en todas sus reservas.`, ok: 'Cambiar' }),
     searchable: true,
+    searchHint: 'Buscar por nombre, documento o teléfono',
+    limit: 100,
     canWrite: () => true,
     canDelete: () => isAdmin(),
     columns: [
@@ -4776,9 +4809,6 @@ on(
               },
             ),
       );
-    },
-    onEdit: (r) => {
-      if (!r.anonymized_at) docsButton(r);
       const a = tr.querySelector('[data-anon]');
       if (a)
         a.addEventListener('click', () =>
@@ -4795,6 +4825,9 @@ on(
             },
           ),
         );
+    },
+    onEdit: (r) => {
+      if (!r.anonymized_at) docsButton(r);
     },
   }),
   'clientes',
