@@ -634,6 +634,8 @@ function openDb(file = process.env.DB_FILE || path.join(__dirname, '..', 'data',
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) insert.run(k, v);
   // Instalaciones con el texto de contrato original: pasan a las condiciones completas.
   if (getSetting(db, 'contract_terms') === OLD_CONTRACT_TERMS) setSetting(db, 'contract_terms', CONTRACT_TERMS);
+  // La casilla vacía de "Otros medios de pago" se guardaba como el texto "null" y salía como medio de pago al cobrar.
+  if (getSetting(db, 'extra_pay_methods') === 'null') setSetting(db, 'extra_pay_methods', '');
   if (!getSetting(db, 'api_key')) setSetting(db, 'api_key', newApiKey());
   if (!getSetting(db, 'webhook_secret')) setSetting(db, 'webhook_secret', crypto.randomBytes(24).toString('hex'));
   return db;

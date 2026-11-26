@@ -97,7 +97,7 @@ function adminRoutes(db, { emailTaken = () => false, publicQuery = '' } = {}) {
     if (body.timezone !== undefined && body.timezone !== '' && body.timezone !== null && !validZone(String(body.timezone))) fail(400, 'Esa zona horaria no existe');
     if (body.voucher_text !== undefined) body.voucher_text = String(body.voucher_text ?? '').slice(0, 2000);
     if (body.contract_front_notes !== undefined) body.contract_front_notes = String(body.contract_front_notes ?? '').slice(0, 1500);
-    if (body.extra_pay_methods !== undefined) body.extra_pay_methods = String(body.extra_pay_methods).slice(0, 500);
+    if (body.extra_pay_methods !== undefined) body.extra_pay_methods = String(body.extra_pay_methods ?? '').slice(0, 500);
     for (const k of ['payment_link_url', 'deposit_link_url']) if (body[k] && !String(body[k]).trim().toLowerCase().startsWith('https://')) fail(400, 'El link de pago tiene que empezar con https://');
     if (body.after_hours_fee !== undefined && !(Number(body.after_hours_fee) >= 0)) fail(400, 'El recargo fuera de hora tiene que ser un número positivo');
     for (const k of ['after_hours_from', 'after_hours_to']) if (body[k] !== undefined && !/^[0-9]{2}:[0-9]{2}$/.test(body[k])) fail(400, 'Cargá el horario fuera de hora como 20:00');
