@@ -7155,17 +7155,39 @@ function signaturePad(canvas) {
   };
 }
 
+/** Sólo en la demo: pide la firma de una reserva abierta de los datos de ejemplo y devuelve su link. */
+async function demoSignToken() {
+  await POST('/auth/login', { email: 'admin@rentacar.local', password: 'admin123' }); // el mismo ingreso automático de la demo
+  state.settings = await GET('/settings');
+  const list = await GET('/reservations');
+  const open = list.find((r) => r.vehicle_plate && ['confirmada', 'pendiente', 'en_curso'].includes(r.status)) || list.find((r) => ['confirmada', 'pendiente', 'en_curso'].includes(r.status));
+  if (!open) return null;
+  const r = await GET(`/reservations/${open.id}`);
+  const s = await POST(`/reservations/${r.id}/signature`, signTerms(r));
+  history.replaceState(null, '', `/firmar/${s.token}${location.search}`); // si recarga, abre este mismo
+  return s.token;
+}
+
 /** /firmar/<código>: el cliente lee el contrato y lo firma desde el celular. */
 async function signPage() {
-  const url = `/api/public/entrega/contrato/${encodeURIComponent(location.pathname.split('/')[2] || '')}${empresaQuery()}`;
+  const contractUrl = (token) => `/api/public/entrega/contrato/${encodeURIComponent(token)}${empresaQuery()}`;
+  const load = async (u) => {
+    const res = await fetch(u);
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error);
+    return j;
+  };
+  let url = contractUrl(location.pathname.split('/')[2] || '');
   let d;
   try {
-    const res = await fetch(url);
-    d = await res.json();
-    if (!res.ok) throw new Error(d.error);
+    d = await load(url);
   } catch {
-    linkGone(L('Contrato', 'Agreement'));
-    return;
+    // En la demo los datos viven en el navegador que pidió la firma: abierto en otro celular, el link no existe ahí.
+    // Se firma igual un contrato de ejemplo con los datos de demo de este navegador.
+    const token = window.__demo && (await demoSignToken().catch(() => null));
+    if (!token) return linkGone(L('Contrato', 'Agreement'));
+    url = contractUrl(token);
+    d = await load(url);
   }
   state.settings = { ...state.settings, currency: d.currency, locale: d.locale };
   document.title = `${d.company} · ${L('Contrato', 'Agreement')} ${d.code}`;
