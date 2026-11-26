@@ -531,6 +531,10 @@ test('recargo de PayPal: se anota aparte, entra a caja y no descuenta de la deud
   await call('PUT', '/api/settings', { company_logo: '', contract_front_notes: '' });
   // Medios de pago propios de la agencia: se guardan y vuelven con los ajustes.
   assert.equal((await call('PUT', '/api/settings', { extra_pay_methods: 'ACH\nCheque' })).status, 200);
+  // La casilla vacía llega como null: se guarda vacía, no como el texto "null".
+  await call('PUT', '/api/settings', { extra_pay_methods: null });
+  assert.equal((await call('GET', '/api/settings')).data.extra_pay_methods, '');
+  assert.equal((await call('PUT', '/api/settings', { extra_pay_methods: 'ACH\nCheque' })).status, 200);
   assert.equal((await call('GET', '/api/settings')).data.extra_pay_methods, 'ACH\nCheque');
   const cust = await call('POST', '/api/customers', { full_name: 'Paga PayPal' });
   const r = (await call('POST', '/api/reservations', { customer_id: cust.data.id, category_id: 1, pickup_at: '2027-09-01T10:00', return_at: '2027-09-02T10:00' })).data;
