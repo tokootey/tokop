@@ -927,7 +927,9 @@ async function auxTrip(r) {
        { stage: r.status === 'en_curso' ? 'devolucion' : 'entrega', ...(v || {}), km: '', fuel: '' },
      )}`,
     async (d, form) => {
-      if (!form.fotos.files.length && !files.some((f) => f.stage === d.stage && f.mime.startsWith('image/'))) {
+      // Funciones en prueba: al recibir el auto las fotos no son obligatorias; el km y el combustible sí.
+      const photosOptional = proOn() && d.stage === 'devolucion';
+      if (!photosOptional && !form.fotos.files.length && !files.some((f) => f.stage === d.stage && f.mime.startsWith('image/'))) {
         toast('Faltan las fotos del auto: sacá al menos una', true);
         return false;
       }
