@@ -49,6 +49,9 @@ test('tramos de días, fin de semana y feriados', async () => {
     assert.equal(quote(db, '2030-01-07T10:00', '2030-01-10T10:00').base, 150);
     setSetting(db, 'holiday_rates_on', '1');
     assert.equal(quote(db, '2030-01-07T10:00', '2030-01-10T10:00').base, 180);
+    // La cotización dice qué días fueron feriado y a cuánto, para mostrarlos en su renglón; sin feriados, no va.
+    assert.deepEqual(quote(db, '2030-01-07T10:00', '2030-01-10T10:00').holiday, { dates: ['2030-01-08'], rate: 80, amount: 80 });
+    assert.equal(quote(db, '2030-01-14T10:00', '2030-01-17T10:00').holiday, undefined);
     // Temporada: un rango de fechas lleva la tarifa de feriado en todos sus días; lo mal escrito se ignora.
     setSetting(db, 'holidays', '25/12/2029, 8/1/2030-9/1/2030, enero, 1/2/2030-');
     assert.equal(quote(db, '2030-01-07T10:00', '2030-01-10T10:00').base, 210);
