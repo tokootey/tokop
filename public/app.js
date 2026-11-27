@@ -133,7 +133,7 @@ async function api(method, path, body) {
   }
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `Error ${res.status}`), { details: data.details });
   // Cotizaciones que se cayeron porque esta reserva quedó firme: se avisa después del mensaje normal de la acción.
   if (data && Array.isArray(data.dropped) && data.dropped.length) {
     setTimeout(() => toast(`Se ${data.dropped.length === 1 ? 'canceló la cotización' : 'cancelaron las cotizaciones'} ${data.dropped.join(', ')}: pedía${data.dropped.length === 1 ? '' : 'n'} el mismo auto y fechas`, true), 3200);
@@ -927,7 +927,9 @@ async function auxTrip(r) {
        { stage: r.status === 'en_curso' ? 'devolucion' : 'entrega', ...(v || {}), km: '', fuel: '' },
      )}`,
     async (d, form) => {
-      if (!form.fotos.files.length && !files.some((f) => f.stage === d.stage && f.mime.startsWith('image/'))) {
+      // Funciones en prueba: al recibir el auto las fotos no son obligatorias; el km y el combustible sí.
+      const photosOptional = proOn() && d.stage === 'devolucion';
+      if (!photosOptional && !form.fotos.files.length && !files.some((f) => f.stage === d.stage && f.mime.startsWith('image/'))) {
         toast('Faltan las fotos del auto: sacá al menos una', true);
         return false;
       }
@@ -1322,11 +1324,13 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
     r0 = dayAt10(pre.get('hasta'));
   }
   if (preVehicle) sel.category_id = preVehicle.category_id;
-  // Cliente escrito en la reserva rápida: se busca por su WhatsApp; si no está, se carga al guardar.
+  // Cliente escrito en la reserva rápida: se busca por su documento; si no está, se carga al guardar.
+  // Sin documento se busca por su WhatsApp, salvo con las funciones en prueba (ahí el teléfono no identifica a nadie).
   const preName = (pre.get('nombre') || '').trim();
   const prePhone = (pre.get('tel') || '').trim();
-  let preCustomer = null;
-  if (prePhone.replace(/\D/g, '').length >= 6) {
+  const preDoc = (pre.get('doc') || '').trim();
+  let preCustomer = await customerByDoc(preDoc);
+  if (!preDoc && !proOn() && prePhone.replace(/\D/g, '').length >= 6) {
     const digits = prePhone.replace(/\D/g, '');
     preCustomer = (await GET(`/customers?q=${encodeURIComponent(digits.slice(-6))}`).catch(() => [])).find((x) => String(x.phone || '').replace(/\D/g, '') === digits) || null;
   }
@@ -1567,16 +1571,19 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
   $('#cust-q').addEventListener('keydown', (e) => e.key === 'Enter' && e.preventDefault());
   // Lo que se escribió en la búsqueda pasa al formulario: así no hay que tipearlo dos veces.
   const newCustomer = (q = '') => {
-    const pre = q.includes('@') ? { email: q } : /^[\d.\s-]+$/.test(q) ? { doc_number: q.replace(/\D/g, '') } : { full_name: q };
+    // El documento va como se escribió (con sus guiones o letras: E-8-12345).
+    const pre = q.includes('@') ? { email: q } : q.startsWith('+') ? { phone: q } : /\d/.test(q) ? { doc_number: q } : { full_name: q };
     openModal('Cliente nuevo', formHtml(CUSTOMER_FIELDS, pre), async (data) => {
-      pickCustomer(await POST('/customers', data));
+      const c = await POST('/customers', data).catch(existingCustomer);
+      if (!c) return false; // "Volver": la ventana queda abierta con lo cargado
+      pickCustomer(c);
     });
   };
   $('#cust-new').addEventListener('click', () => newCustomer($('#cust-q').value.trim()));
   if (preCustomer) pickCustomer(preCustomer);
   else if (preName) {
     $('#cust-selected').classList.remove('muted');
-    $('#cust-selected').innerHTML = `Cliente nuevo: <b>${esc(preName)}</b>${prePhone ? ` · ${esc(prePhone)}` : ''} <span class="muted">(se carga al guardar)</span>`;
+    $('#cust-selected').innerHTML = `Cliente nuevo: <b>${esc(preName)}</b>${preDoc ? ` · ${esc(preDoc)}` : ''}${prePhone ? ` · ${esc(prePhone)}` : ''} <span class="muted">(se carga al guardar)</span>`;
   }
   syncHotel();
 
@@ -1592,7 +1599,7 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
     if (isPast(new Date(f.pickup_at)) && !(await confirmModal({ title: 'El retiro es en el pasado', text: `La reserva se retira el ${fmtDT(f.pickup_at)}, que ya pasó. ¿La guardás igual?`, ok: 'Guardar igual' }))) return;
     const c = quotes.find((x) => x.id === sel.category_id);
     if (!c || !c.available) return toast('No hay autos libres en esa categoría para esas fechas. Elegí otra.', true);
-    if (!sel.customer_id) sel.customer_id = (await run(() => POST('/customers', { full_name: preName, phone: prePhone }))).id;
+    if (!sel.customer_id) sel.customer_id = (await run(() => POST('/customers', { full_name: preName, phone: prePhone, doc_number: preDoc || undefined }))).id;
     const body = {
       customer_id: sel.customer_id,
       category_id: sel.category_id,
@@ -1887,6 +1894,9 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
       <section>
         <h2>¿Quién lo alquila?</h2>
         <div style="display:flex;flex-direction:column;gap:8px">
+          <label class="qr-field">Documento (${state.settings.country === 'AR' ? 'DNI, pasaporte o CUIT' : 'cédula, pasaporte o RUC'})${proOn() ? ' <span class="req">*</span>' : ''}<input name="doc" autocomplete="off" maxlength="40" aria-describedby="err-doc qr-known"></label>
+          <p class="field-error hidden" data-err="doc" id="err-doc"></p>
+          <p class="muted hidden" id="qr-known" role="status"></p>
           <label class="qr-field">Nombre y apellido <span class="req">*</span><input name="name" autocomplete="off" required aria-describedby="err-name"></label>
           <p class="field-error hidden" data-err="name" id="err-name"></p>
           <label class="qr-field">WhatsApp (con código de país)<input name="phone" type="tel" inputmode="tel" placeholder="${esc(phoneHint())}" aria-describedby="err-phone"></label>
@@ -1922,6 +1932,7 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
     if (sel.vehicle && !byCat) q.set('vehiculo', sel.vehicle);
     if (form.name.value.trim()) q.set('nombre', form.name.value.trim());
     if (form.phone.value.trim()) q.set('tel', form.phone.value.trim());
+    if (form.doc.value.trim()) q.set('doc', form.doc.value.trim());
     location.hash = `#/reservas/completa?${q}`;
   });
   const days = () => Math.max(1, Math.round((to - from) / 86400000));
@@ -1988,12 +1999,38 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
       paint();
     }
   });
+  // El cliente se reconoce por el documento: si ya está cargado se usa ese, con su nombre y su WhatsApp.
+  let known = null;
+  let knownKey = '';
+  let looking = Promise.resolve();
+  const lookup = () => {
+    const key = docKey(form.doc.value);
+    if (key === knownKey) return looking;
+    knownKey = key;
+    return (looking = customerByDoc(form.doc.value).then((c) => {
+      if (key !== knownKey) return; // ya se escribió otro documento
+      // Al cambiar el documento por el de otro, no quedan el nombre y el WhatsApp del cliente anterior.
+      if (known && !c) form.name.value = form.phone.value = '';
+      known = c;
+      $('#qr-known', form).textContent = c ? `✔ Ya es cliente: ${c.full_name}` : '';
+      $('#qr-known', form).classList.toggle('hidden', !c);
+      form.name.readOnly = Boolean(c);
+      if (!c) return;
+      form.name.value = c.full_name;
+      form.phone.value = c.phone || form.phone.value;
+      showErr('name');
+    }));
+  };
   form.addEventListener('input', (e) => ['discount', 'agreed'].includes(e.target.name) && summary());
   form.addEventListener('change', (e) => {
     if (e.target.name === 'insurance' || e.target.dataset.rec) return summary();
     // El WhatsApp se revisa al salir del campo: así el voucher no se manda a un número mal cargado.
     if (e.target.name === 'phone') return showErr('phone', validPhone(e.target.value.trim()) ? '' : phoneError());
     if (e.target.name === 'name') return showErr('name', e.target.value.trim() ? '' : 'Escribí el nombre y apellido del cliente.');
+    if (e.target.name === 'doc') {
+      showErr('doc');
+      return lookup();
+    }
     // "Hotel" en el lugar de entrega abre el formulario del hotel ahí mismo.
     if (e.target.name === 'place') {
       sel.hotel = e.target.value === 'hotel';
@@ -2016,26 +2053,33 @@ on(/^\/reservas\/nueva(?:\?(.*))?$/, async (view, query) => {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const send = Boolean(e.submitter && e.submitter.dataset.send);
+    await lookup();
     const c = cars.find((x) => x.id === sel.vehicle);
     const name = form.name.value.trim();
     const phone = form.phone.value.trim();
+    const doc = form.doc.value.trim();
+    // Con las funciones en prueba no se guarda sin documento: es lo que identifica al cliente.
+    const docOk = Boolean(docKey(doc)) || !proOn();
+    showErr('doc', docOk ? '' : 'Escribí el documento del cliente.');
     showErr('car', c ? '' : 'Elegí un auto de la lista.');
     showErr('name', name ? '' : 'Escribí el nombre y apellido del cliente.');
     showErr('phone', validPhone(phone) ? '' : phoneError());
-    if (!c || !name || !validPhone(phone)) {
+    if (!c || !name || !validPhone(phone) || !docOk) {
       $('.field-error:not(.hidden)', form)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       return;
     }
     if (isPast(from) && !(await confirmModal({ title: 'El retiro es en el pasado', text: `La reserva se retira el ${fmtDT(localISO(from))}, que ya pasó. ¿La guardás igual (por ejemplo, para cargar un alquiler que ya empezó)?`, ok: 'Guardar igual' }))) return;
-    // Si ya existe un cliente con ese WhatsApp, se usa ese (así no se duplica).
+    // Sin documento, si ya existe un cliente con ese WhatsApp se usa ese (así no se duplica).
     const digits = phone.replace(/\D/g, '');
-    let customer = null;
-    if (digits.length >= 6) {
+    let customer = known;
+    if (!docKey(doc) && digits.length >= 6) {
       const found = await GET(`/customers?q=${encodeURIComponent(digits.slice(-6))}`).catch(() => []);
       customer = found.find((x) => String(x.phone || '').replace(/\D/g, '') === digits) || null;
     }
     const r = await run(async () => {
-      if (!customer) customer = await POST('/customers', { full_name: name, phone });
+      if (!customer) customer = await POST('/customers', { full_name: name, phone, doc_number: doc || undefined });
+      // El WhatsApp es un dato de contacto: si cambió, se actualiza en el cliente de siempre.
+      else if (known && phone && phone !== (known.phone || '')) await PUT(`/customers/${known.id}`, { phone });
       // Sucursal: la elegida como lugar de entrega; con hotel, de la que sale el auto (o la única).
       const branch = sel.hotel ? (form.branch ? Number(form.branch.value) : branches[0] && branches[0].id) : Number(form.place.value);
       return POST('/reservations', {
@@ -4322,6 +4366,16 @@ const panapassField = (name, label) => (panapassOn() ? [{ name, label, type: 'nu
 const docTypeOf = (t) => (!t || (t === 'DNI' && state.settings.country !== 'AR') ? docTypes()[0] : t);
 const docTypes = () => (state.settings.country === 'AR' ? ['DNI', 'Pasaporte', 'CI', 'CUIT', 'RUT', 'Otro'] : ['Cédula', 'Pasaporte', 'R.U.C.', 'Otro']);
 const docWord = () => 'Documento';
+// Un cliente se reconoce por su documento, escrito con o sin guiones, puntos o espacios (igual que en el servidor).
+const docKey = (d) => String(d || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const customerByDoc = async (doc) => (docKey(doc) ? (await GET(`/customers?q=${encodeURIComponent(doc)}`).catch(() => [])).find((x) => docKey(x.doc_number) === docKey(doc)) || null : null);
+/** Al cargar un cliente, el documento ya era de otro: se muestra su ficha y se ofrece seguir con él. Devuelve ese cliente, o null con "Volver". */
+const existingCustomer = async (e) => {
+  const c = e.details && e.details.customer;
+  if (!c) throw e;
+  const card = [c.full_name, `${docTypeOf(c.doc_type)} ${c.doc_number}`, c.phone].filter(Boolean).join(' · ');
+  return (await confirmModal({ title: 'Ese cliente ya está cargado', text: card, ok: 'Usar este cliente' })) ? c : null;
+};
 // Titular y conductores adicionales, lugar de trabajo y contacto alternativo: agencias con funciones en prueba, alquiler por días.
 const partiesOn = () => !choferesMode();
 

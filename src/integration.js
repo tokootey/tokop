@@ -2,7 +2,7 @@
 
 const { getSetting, getSettings, DEFAULT_MAPPING, WEBFORM_MAPPING } = require('./db');
 const { createReservation, getReservation, publicView } = require('./reservations');
-const { getPath, normDateTime, fail, HttpError } = require('./util');
+const { getPath, normDateTime, fail, HttpError, compactDoc, docSql } = require('./util');
 
 /**
  * Integración con el cotizador.
@@ -153,7 +153,8 @@ function upsertCustomer(db, c) {
   }
   if (!c.full_name) fail(422, 'La cotización no trae el nombre del cliente (revisá el mapeo "customer.full_name")');
   let existing = null;
-  if (c.doc_number) existing = db.prepare('SELECT * FROM customers WHERE doc_number = ?').get(String(c.doc_number));
+  // Con o sin guiones es el mismo documento (uno hecho sólo de signos no identifica a nadie).
+  if (compactDoc(c.doc_number)) existing = db.prepare(`SELECT * FROM customers WHERE ${docSql('doc_number')} = ?`).get(compactDoc(c.doc_number));
   if (!existing && c.email) existing = db.prepare('SELECT * FROM customers WHERE email = ? COLLATE NOCASE').get(String(c.email));
   const fields = ['full_name', 'doc_type', 'doc_number', 'email', 'phone', 'license_number'];
   if (existing) {

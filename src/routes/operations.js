@@ -16,7 +16,7 @@ const whatsapp = require('../whatsapp');
 const neopayment = require('../neopayment');
 const reminders = require('../reminders');
 const { cashDay } = require('../cash');
-const { fail, normDateTime, nowLocal, parseLocal, fmtLocal, toCsv, dmy, hm, toAgency } = require('../util');
+const { fail, normDateTime, nowLocal, parseLocal, fmtLocal, toCsv, dmy, hm, toAgency, compactDoc, docSql } = require('../util');
 
 /**
  * Primeros pasos para una empresa que recién empieza a usar el sistema. El Panel los muestra
@@ -112,8 +112,11 @@ function operationsRoutes(db, { publicQuery = '' } = {}) {
       params.push(normDateTime(req.query.to, '23:59'));
     }
     if (req.query.q) {
-      where.push('(r.code LIKE ? OR c.full_name LIKE ? OR c.doc_number LIKE ? OR v.plate LIKE ? OR r.external_id LIKE ?)');
+      // El documento también se encuentra escrito sin guiones (o con otros).
+      const doc = compactDoc(req.query.q);
+      where.push(`(r.code LIKE ? OR c.full_name LIKE ? OR c.doc_number LIKE ? OR v.plate LIKE ? OR r.external_id LIKE ?${doc ? ` OR ${docSql('c.doc_number')} LIKE ?` : ''})`);
       for (let i = 0; i < 5; i++) params.push(`%${req.query.q}%`);
+      if (doc) params.push(`%${doc}%`);
     }
     const rows = db
       .prepare(

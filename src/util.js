@@ -12,6 +12,11 @@ const fail = (status, message, details) => {
   throw new HttpError(status, message, details);
 };
 
+/** Un documento se compara sin guiones, puntos ni espacios: "8-123-456" y "8123456" son el mismo. */
+const compactDoc = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+/** Lo mismo del lado de la base, para una columna. */
+const docSql = (col) => `REPLACE(REPLACE(REPLACE(REPLACE(UPPER(${col}), '-', ''), '.', ''), ' ', ''), '/', '')`;
+
 /**
  * Normaliza una fecha/hora a "YYYY-MM-DDTHH:MM" (hora local, sin zona).
  * Acepta "2026-10-02", "2026-10-02 10:00", "2026-10-02T10:00:00", "02/10/2026 10:00".
@@ -147,6 +152,8 @@ module.exports = {
   hm,
   HttpError,
   fail,
+  compactDoc,
+  docSql,
   normDateTime,
   normDate,
   parseLocal,
