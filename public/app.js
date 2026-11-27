@@ -1610,7 +1610,8 @@ on(/^\/reservas\/completa(?:\?(.*))?$/, async (view, query) => {
       return_at: f.return_at,
       discount_pct: f.discount_pct || 0,
       discount_amount: f.discount_amount || 0,
-      price_override: f.price_override === undefined || f.price_override === '' ? undefined : Number(f.price_override),
+      // Vacío llega como null: no es un precio acordado de 0 (antes la reserva se guardaba con total 0).
+      price_override: f.price_override ?? undefined,
       no_deposit: !!f.no_deposit,
       express: !!f.express,
       flight: f.flight,
