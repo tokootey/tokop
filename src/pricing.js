@@ -162,10 +162,12 @@ function computeQuote(db, input) {
   let promoDays = 0;
   let promoBase = 0;
   let promoDiscount = 0;
+  const holidayDates = []; // los días que van con la tarifa de feriado: la pantalla los muestra en su renglón
   for (let i = 0; i < (choferes ? 0 : days); i++) {
     const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
     const day = fmtLocal(d).slice(0, 10);
     const dayRate = holidays(day) ? category.holiday_rate : perDay;
+    if (holidays(day)) holidayDates.push(day);
     base += dayRate;
     // El precio de promo es final: esos días no suman temporada ni demanda. Si la tarifa semanal ya es más barata, queda esa.
     const p = promos.find((x) => day >= x.start_date && day <= x.end_date && x.promo_rate < dayRate);
@@ -235,6 +237,7 @@ function computeQuote(db, input) {
     days,
     per_day: round2(perDay),
     base: round2(base),
+    ...(holidayDates.length ? { holiday: { dates: holidayDates, rate: category.holiday_rate, amount: round2(holidayDates.length * category.holiday_rate) } } : {}),
     season_extra: round2(seasonExtra),
     dynamic_pct: demandPct,
     dynamic_extra: round2(demandExtra),

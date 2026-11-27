@@ -2169,8 +2169,15 @@ on(/^\/mas$/, async (view) => {
 
 function breakdownHtml(q) {
   const row = (l, v, cls = '') => `<tr class="${cls}"><td>${l}</td><td class="right">${v}</td></tr>`;
+  const name = esc(q.category ? q.category.name : '');
+  // Los días con tarifa de feriado van en su renglón: así la cuenta cierra (2 días × 40 + 1 feriado × 42,80).
+  const h = q.holiday;
+  const normal = h ? q.days - h.dates.length : q.days;
+  // Hasta 3 fechas se nombran (28/11); una temporada entera, no.
+  const when = h && h.dates.length <= 3 ? ` (${h.dates.map((d) => `${Number(d.slice(8))}/${Number(d.slice(5, 7))}`).join(', ')})` : '';
   return `<table class="breakdown"><tbody>
-    ${row(`${esc(q.category ? q.category.name : '')} · ${baseLabel(q, q.days)}`, money(q.base))}
+    ${normal > 0 ? row(`${name} · ${baseLabel(q, normal)}`, money(h ? q.base - h.amount : q.base)) : ''}
+    ${h ? row(`${normal > 0 ? '' : `${name} · `}${h.dates.length > 3 ? 'Feriados y temporada' : h.dates.length > 1 ? 'Feriados' : 'Feriado'}${when} · ${plural(h.dates.length, 'día', 'días')} × ${money(h.rate)}`, money(h.amount)) : ''}
     ${q.season_extra ? row('Recargo de temporada', money(q.season_extra)) : ''}
     ${q.promo_discount ? row(`Promoción: ${esc(q.promo.name)}`, '−' + money(q.promo_discount)) : ''}
     ${q.dynamic_extra ? row(`Recargo por alta demanda ${q.dynamic_pct}%`, money(q.dynamic_extra)) : ''}
