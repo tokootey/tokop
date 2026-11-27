@@ -5,7 +5,7 @@ const { normKey, fold, parseAmount, findByCodeOrName } = require('./integration'
 const { computeQuote, rentalDays } = require('./pricing');
 const { isVehicleFree } = require('./availability');
 const { nextCode, log } = require('./reservations');
-const { fail, nowLocal, round2 } = require('./util');
+const { fail, nowLocal, round2, compactDoc } = require('./util');
 
 /**
  * Importación de datos de sistemas anteriores (planillas de Google Drive, Excel, otra página).
@@ -298,7 +298,6 @@ function addDays(date, n) {
 }
 
 const compactPlate = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-const compactDoc = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const validEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 
 function parseFuel(value) {

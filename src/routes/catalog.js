@@ -2,7 +2,7 @@
 
 const express = require('express');
 const { requireAdmin, audit } = require('../auth');
-const { fail, pick, normDate, nowLocal, fmtLocal } = require('../util');
+const { fail, pick, normDate, nowLocal, fmtLocal, compactDoc, docSql } = require('../util');
 const { removeCustomerDocuments } = require('./files');
 const { getSetting, phoneHint, proOn } = require('../db');
 
@@ -10,7 +10,7 @@ const { getSetting, phoneHint, proOn } = require('../db');
  * CRUD genérico para tablas maestras.
  * `adminWrite`: sólo administradores pueden crear/editar/borrar (tarifas, sucursales).
  */
-function crud(db, { table, fields, required = [], order = 'id', search = [], adminWrite = false, listSql, dateFields = [], afterWrite, afterDelete, adminDelete = false, needOnCreate = {} }) {
+function crud(db, { table, fields, required = [], order = 'id', search = [], compact = [], adminWrite = false, listSql, dateFields = [], afterWrite, afterDelete, adminDelete = false, needOnCreate = {} }) {
   const router = express.Router();
   const guard = adminWrite ? [requireAdmin] : [];
   const deleteGuard = adminWrite || adminDelete ? [requireAdmin] : [];
@@ -38,8 +38,15 @@ function crud(db, { table, fields, required = [], order = 'id', search = [], adm
     const params = [];
     const where = [];
     if (req.query.q && search.length) {
-      where.push(`(${search.map((f) => `${f} LIKE ?`).join(' OR ')})`);
+      const ors = search.map((f) => `${f} LIKE ?`);
       for (let i = 0; i < search.length; i++) params.push(`%${req.query.q}%`);
+      // `compact`: campos que se encuentran aunque se escriban con otros guiones, puntos o espacios (el documento).
+      const key = compactDoc(req.query.q);
+      for (const f of key ? compact : []) {
+        ors.push(`${docSql(f)} LIKE ?`);
+        params.push(`%${key}%`);
+      }
+      where.push(`(${ors.join(' OR ')})`);
     }
     // Los autos de una sucursal (selector de sucursal).
     if (req.query.branch && fields.includes('branch_id')) {
@@ -278,13 +285,14 @@ function catalogRoutes(db, { uploadsDir } = {}) {
   });
   // Funciones en prueba: un cliente por documento. No se crea otro con el mismo número ni se le pone a otro cliente.
   router.use('/customers', (req, _res, next) => {
-    const doc = String((req.body || {}).doc_number || '').trim();
+    const doc = compactDoc((req.body || {}).doc_number);
     if (!proOn(db) || !['POST', 'PUT'].includes(req.method) || !doc) return next();
     const id = Number(req.path.slice(1)) || 0;
-    const same = db.prepare('SELECT id, full_name FROM customers WHERE doc_number = ? COLLATE NOCASE AND anonymized_at IS NULL').all(doc);
+    const same = db.prepare(`SELECT * FROM customers WHERE ${docSql('doc_number')} = ? AND anonymized_at IS NULL`).all(doc);
     // Los repetidos que ya venían cargados se pueden seguir editando sin cambiarles el documento.
     const other = same.some((c) => c.id === id) ? null : same[0];
-    if (other) fail(409, `Ya hay un cliente con ese documento: ${other.full_name}. Buscalo por nombre o por documento.`);
+    // Va la ficha del que ya está, para que la pantalla lo pueda ofrecer en vez de cargarlo de nuevo.
+    if (other) fail(409, `Ya hay un cliente con ese documento: ${other.full_name}. Buscalo por nombre o por documento.`, { customer: other });
     next();
   });
   // Licencia vencida: no se guarda, así no queda un cliente que después no puede retirar el auto.
@@ -302,6 +310,7 @@ function catalogRoutes(db, { uploadsDir } = {}) {
       required: ['full_name'],
       order: 'full_name',
       search: ['full_name', 'doc_number', 'email', 'phone'],
+      compact: ['doc_number'],
       dateFields: ['birth_date', 'license_expiry'],
       adminDelete: true,
       afterDelete: dropDocuments,
